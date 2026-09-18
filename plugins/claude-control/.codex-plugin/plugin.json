@@ -1,0 +1,35 @@
+{
+  "name": "claude-control",
+  "version": "0.1.0",
+  "description": "Manage persistent local Claude sessions from Codex with explicit models and verified results.",
+  "author": {
+    "name": "kimstitute",
+    "url": "https://github.com/kimstitute"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Codex Control Claude",
+    "shortDescription": "Manage local Sonnet and Fable sessions.",
+    "longDescription": "Create, inspect, stop and resume tools-disabled Claude sessions on this Linux host. Includes a local CLI and a Codex workflow skill; no cross-host dispatch.",
+    "developerName": "kimstitute",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": "Use Claude Control to delegate a local task and verify its result.",
+    "websiteURL": "https://github.com/kimstitute/codex-control-claude",
+    "brandColor": "#149E96",
+    "logo": "./assets/logo.png",
+    "composerIcon": "./assets/logo.png"
+  },
+  "homepage": "https://github.com/kimstitute/codex-control-claude",
+  "repository": "https://github.com/kimstitute/codex-control-claude",
+  "keywords": [
+    "codex",
+    "claude",
+    "sessions",
+    "orchestration",
+    "local"
+  ]
+}

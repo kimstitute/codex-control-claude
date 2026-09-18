@@ -1,0 +1,6 @@
+interface:
+  display_name: "Claude Control"
+  short_description: "Manage local Claude sessions with verified results"
+  default_prompt: "Use $claude-control to delegate a local task and verify its result."
+policy:
+  allow_implicit_invocation: true

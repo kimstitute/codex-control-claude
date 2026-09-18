@@ -1,0 +1,42 @@
+# Python and local test output
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+.fake-claude/
+
+# Build and runtime output
+dist/
+build/
+outputs/
+artifacts/
+state/
+logs/
+*.log
+*.jsonl
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.sqlite3-*
+*.pid
+.claude-control-install.json
+
+# Local agent settings, credentials and personal files
+.omx/
+.claude/
+.codex/
+.agents/
+.env
+.env.*
+*.pem
+*.key
+credentials.json
+auth.json
+.DS_Store
+.idea/
+.vscode/
