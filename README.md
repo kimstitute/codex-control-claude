@@ -16,16 +16,17 @@
 
 Codex Control Claude gives Codex a practical way to delegate work to Claude, keep conversations separate, and collect their results. It bundles a local session controller with a Codex skill, so you can ask for a review or a small implementation task without managing terminal panes yourself.
 
-**Version 0.1 works with supplied text.** Claude returns analysis, proposed code, or review notes; Codex checks the result and applies any edits. Claude's file and shell tools and MCP are disabled in this profile.
+**Version 0.2 works with supplied text.** Claude returns analysis, proposed code, or review notes; Codex checks the result and applies any edits. Claude's file and shell tools and MCP are disabled in this profile.
 
 ## What you can do
 
 | Capability | Behavior |
 |---|---|
-| Assign roles and models | Use explicit `sonnet` or `fable` sessions for different tasks. |
+| Delegate by role | Inject versioned role instructions and a structured assignment; resolve an explicit `sonnet` or `fable` model. |
 | Work in parallel | Run independent conversations within a configurable limit; the default is two. |
 | Continue a conversation | Send a follow-up to its exact managed session ID. |
-| Inspect progress | Read status, bounded logs, and structured JSON results. |
+| Inspect progress | Observe several runs together, or read individual status, bounded logs, and results. |
+| Inspect structured reports | Check task identity and report format while leaving content acceptance to Codex. |
 | Cancel one task | Stop an owned run while other sessions continue. |
 | Recover deliberately | Reconcile uncertain runs or explicitly start a new backend conversation. |
 | Check execution evidence | Validate the reported model, session ID, exit status, and result integrity. |
@@ -109,6 +110,16 @@ python3 ~/plugins/claude-control/scripts/claude_control_cli.py result --run <run
 
 See the [CLI reference](docs/cli.md) for follow-ups, cancellation, restart, and recovery.
 
+For role presets and a structured output contract, use `roles`, then `delegate
+--assignment-file <file> --request-id <id>`. Collect its report with `report
+--run <run-uuid>`. `observe --run <id> --run <id> --seconds 30` watches selected
+executions together. The [structured delegation guide](docs/cli.md#delegate-with-a-role-and-an-output-contract)
+includes a complete assignment example. Existing `start --role` remains a
+metadata label; it does not inject preset instructions.
+
+The role and reporting design draws on an analysis of OMX, with a smaller
+host-local implementation. See [what we adopted and deferred](docs/omx-adoption.md).
+
 ## What stays on your machine
 
 Controller configuration and records live in `$XDG_STATE_HOME/claude-control`, or `~/.local/state/claude-control` by default. They include prompts, responses, session IDs, process metadata, and logs, and use user-only permissions. Claude also maintains its own normal local session history.
@@ -140,6 +151,6 @@ To deliberately run the live suite using your own Claude account, see [testing](
 
 ## Current scope
 
-Version 0.1 supports Linux, supplied-text tasks, and sessions created by this controller. File/shell execution by Claude, adopting arbitrary existing sessions, conversation forking, Windows/macOS support, an MCP adapter, cross-host dispatch, and automatic Codex wake-up are future work.
+Version 0.2 supports Linux, supplied-text tasks, and sessions created by this controller. File/shell execution by Claude, adopting arbitrary existing sessions, conversation forking, Windows/macOS support, an MCP adapter, cross-host dispatch, and automatic Codex wake-up are future work.
 
 Maintained by [kimstitute](https://github.com/kimstitute). This is an independent project, not an official OpenAI or Anthropic integration.

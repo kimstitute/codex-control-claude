@@ -26,7 +26,7 @@ class ControlError(Exception):
 
 def host_identity():
     if sys.platform != "linux":
-        raise ControlError("unsupported_platform", "Version 0.1 supports Linux only.")
+        raise ControlError("unsupported_platform", "This controller supports Linux only.")
     machine = Path("/etc/machine-id").read_text().strip()
     if not machine:
         raise ControlError("host_identity", "A nonempty /etc/machine-id is required.")

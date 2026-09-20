@@ -10,6 +10,8 @@ import time
 import uuid
 from pathlib import Path
 
+ASSIGNMENT_PROTOCOL = "claude-control.assignment.v1"
+
 
 def _print_json(value: object) -> None:
     print(json.dumps(value, separators=(",", ":")), flush=True)
@@ -55,6 +57,59 @@ def _save_state(session_id: str, value: dict[str, object]) -> None:
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps(value), encoding="utf-8")
     os.replace(temporary, path)
+
+
+def _save_invocation(session_id: str, arguments: list[str], prompt: dict[str, object]) -> None:
+    """Persist fixture-only input evidence without changing conversation state."""
+    path = _state_path(f"{session_id}.invocation")
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps({"argv": arguments, "prompt": prompt}), encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def _assignment_fixture(context: object) -> dict[str, object]:
+    """Read an opt-in fixture control from assignment context for controller tests."""
+    if not isinstance(context, str):
+        return {}
+    try:
+        value = json.loads(context)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(value, dict):
+        return {}
+    fixture = value.get("__fake_assignment__")
+    return fixture if isinstance(fixture, dict) else {}
+
+
+def _assignment_text(prompt: dict[str, object]) -> tuple[str, dict[str, object]] | None:
+    if prompt.get("protocol") != ASSIGNMENT_PROTOCOL:
+        return None
+    assignment = prompt.get("assignment")
+    role = prompt.get("role")
+    if not isinstance(assignment, dict) or not isinstance(role, dict):
+        return None
+    task_id = assignment.get("id")
+    role_name = assignment.get("role")
+    if not isinstance(task_id, str) or not isinstance(role_name, str):
+        return None
+    fixture = _assignment_fixture(assignment.get("context"))
+    report: dict[str, object] = {
+        "task_id": task_id,
+        "role": role_name,
+        "status": "complete",
+        "summary": f"Fixture report for {role_name}.",
+        "deliverable": f"Fixture deliverable for {task_id}.",
+        "evidence": [],
+        "limitations": ["Fixture supplies no external evidence."],
+        "handoff": "",
+    }
+    override = fixture.get("report")
+    if isinstance(override, dict):
+        report.update(override)
+    response = fixture.get("response")
+    if isinstance(response, str):
+        return response, fixture
+    return json.dumps(report, separators=(",", ":")), fixture
 
 
 def _assistant_text(prompt: dict[str, object], session_id: str) -> str:
@@ -106,7 +161,10 @@ def _run(arguments: list[str]) -> int:
         return 2
 
     prompt = _prompt()
-    behavior = prompt.get("behavior", "success")
+    _save_invocation(session_id, arguments, prompt)
+    assignment = _assignment_text(prompt)
+    fixture = assignment[1] if assignment else {}
+    behavior = fixture.get("behavior", prompt.get("behavior", "success"))
     response_session = session_id
     if behavior == "mismatch_session":
         response_session = str(uuid.UUID(int=(uuid.UUID(session_id).int + 1) % (1 << 128)))
@@ -121,9 +179,9 @@ def _run(arguments: list[str]) -> int:
     )
 
     # Persist before a deliberate sleep so cancellation followed by resume is testable.
-    text = _assistant_text(prompt, session_id)
+    text = assignment[0] if assignment else _assistant_text(prompt, session_id)
     if behavior == "sleep":
-        seconds = prompt.get("sleep_seconds", 30)
+        seconds = fixture.get("sleep_seconds", prompt.get("sleep_seconds", 30))
         time.sleep(float(seconds) if isinstance(seconds, (int, float)) else 30.0)
     if behavior == "malformed":
         print("{not-json", flush=True)

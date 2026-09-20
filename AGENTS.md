@@ -6,7 +6,8 @@ The plugin ID is `claude-control`; the repository name is `codex-control-claude`
 - Keep runtime code and its skill together under `plugins/claude-control/`.
 - Preserve explicit model selection, per-session serialization, request idempotency, and host ownership.
 - Never silently replace a conversation, switch a requested model, or retry ambiguous execution.
-- Keep version 0.1's supplied-text profile: Claude tools and MCP remain disabled.
+- Keep the supplied-text profile: Claude tools and MCP remain disabled.
+- Preserve versioned assignment snapshots; report formatting is separate from semantic acceptance.
 - Keep credentials, real session transcripts, local paths, host inventories, and runtime databases out of commits.
 - Use synthetic examples and temporary directories in tests. Do not change HOME or target unrelated processes.
 - Run `python3 -m unittest discover -s tests -v` before submitting behavior changes. These tests use fake processes.

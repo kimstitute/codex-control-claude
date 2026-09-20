@@ -34,6 +34,70 @@ The executable and project paths are explicit. The store belongs to its originat
 
 ## Start a conversation
 
+### Delegate with a role and an output contract
+
+`roles` lists the bundled role instructions and resolved default models without
+requiring an initialized store:
+
+```bash
+claude_control roles
+```
+
+| Role | Default model | Supplied-text task |
+|---|---|---|
+| `executor` | `sonnet` | Propose a bounded code or configuration change |
+| `researcher` | `sonnet` | Summarize supplied sources and identify missing evidence |
+| `planner` | `fable` | Plan research, experiments, or implementation |
+| `architect` | `fable` | Design interfaces and assess technical tradeoffs |
+| `critic` | `fable` | Identify weaknesses and unsupported claims |
+| `verifier` | `fable` | Assess supplied results against acceptance criteria |
+
+Write an assignment JSON file, using an existing project in your configured roots:
+
+```json
+{
+  "id": "review-parser",
+  "name": "parser-review",
+  "role": "critic",
+  "project": "/absolute/path/to/project",
+  "objective": "Assess the supplied parser for ambiguous input handling.",
+  "context": "Paste the relevant source code and existing test evidence here.",
+  "scope": ["Only the supplied parser"],
+  "acceptance_criteria": ["Identify concrete failure cases and distinguish assumptions"],
+  "deliverable": "A concise review with proposed regression cases.",
+  "timeout": 300
+}
+```
+
+```bash
+claude_control delegate --assignment-file /absolute/path/to/assignment.json \
+  --request-id parser-review-001
+```
+
+`model` and `timeout` are optional; defaults are the role's model and 300 seconds.
+An explicit `"model": "sonnet"` or `"model": "fable"` overrides the preset. The
+resolved model is always passed explicitly to Claude. There is no automatic
+classifier or model fallback. All other fields are required. `context` may be
+empty; scope and acceptance criteria must be nonempty string lists. IDs match
+`[a-z0-9][a-z0-9_-]{0,63}`; names are nonempty and at most 120 characters. Timeout
+must be a finite number from 1 to 3600 seconds. Unknown fields, duplicate JSON
+keys, null options, and wrong types are rejected.
+
+Each delegate creates a **new named session**. A matching request ID and inputs
+return the original run; a different request with an existing name is rejected.
+Changes to context, timeout, model, or the bundled role instructions conflict
+with an existing request ID. The absolute project path is checked and
+canonicalized before rendering. Both the assignment file and the rendered
+prompt must fit within 1 MiB; JSON escaping and role instructions count toward
+the latter. Context is supplied text, never an instruction for the controller
+to read another file.
+
+The exact versioned role instructions and task are stored as canonical JSON in
+`prompt.txt`, sent over stdin, and covered by the run-intent fingerprint. They
+do not grant Claude tool access.
+
+### Use an unstructured prompt
+
 ```bash
 claude_control start \
   --name implementation \
@@ -48,6 +112,7 @@ claude_control start \
 - Use `sonnet` for bounded routine work and `fable` for important planning or critique, when available to your account.
 - Give the prompt enough source text and context to solve the task without tools. Prompts are limited to 1 MiB.
 - The model, role, and project are fixed for that managed session.
+- `start --role` is a free-form metadata label; only `delegate` injects preset role instructions.
 - A returned run record means the request was accepted; it does not mean it finished.
 - Keep the same request ID and inputs when retrying an uncertain submission. Reusing the ID with different inputs is rejected.
 
@@ -72,6 +137,64 @@ claude_control result --run <run-uuid>
 `wait` is bounded to at most 60 seconds per call. A wait timeout leaves the run running. Log streams are `events`, `stderr`, and `worker`; each response is bounded to at most 65,536 bytes.
 
 A `completed` result requires a valid response stream, matching session and model, exit code zero, and a verified result artifact. It does not prove the answer is correct.
+
+### Observe several executions
+
+```bash
+claude_control observe --run <first-run-uuid> --run <second-run-uuid> --seconds 30
+```
+
+Select 1–128 distinct managed runs. Duplicate IDs count once. The call returns
+when all selected executions are terminal, a failed/cancelled/interrupted/unknown
+execution needs attention, or the bounded wait ends (0–60 seconds). It returns
+`runs`, `counts`, `execution_done`, `needs_attention` (run IDs), and `wait_reason`.
+An `unknown` run needs attention but is not terminal. Observation does not stop,
+retry, queue, or launch work. It refreshes durable status and needs database
+write access. `execution_done` describes process outcomes only; it does not
+parse reports or imply correct answers.
+
+### Inspect a delegated report
+
+```bash
+claude_control report --run <run-uuid>
+```
+
+The response separates `execution_status`, `contract_status`, `format_status`,
+`agent_status`, and `acceptance`. Acceptance is always `unreviewed`: Codex must
+check the substance. A nonterminal execution has pending format status. An
+ordinary `start` or unstructured follow-up has an unsupported contract; use
+`result` for its text. Resume/follow-up still preserves the conversation, but
+does not create a new structured assignment or reuse the earlier report contract.
+
+For a completed delegated execution, the controller verifies the original
+prompt against the stored run intent and verifies the exact result bytes being
+read. It then checks a report containing exactly these fields:
+
+```json
+{
+  "task_id": "review-parser",
+  "role": "critic",
+  "status": "complete",
+  "summary": "Assessment of the supplied text.",
+  "deliverable": "Concrete findings and proposed tests go here.",
+  "evidence": [{"claim": "A concrete finding", "basis": "supplied_context", "reference": "Relevant supplied excerpt"}],
+  "limitations": ["No tests were executed by this reviewer."],
+  "handoff": "Codex should run and assess the proposed tests."
+}
+```
+
+`status` is `complete` or `blocked`; evidence basis is `supplied_context` or
+`reasoning`. Blocked reports and reports with no evidence require nonempty
+limitations. One enclosing bare or `json` Markdown fence is accepted; leading
+or trailing prose, duplicate keys, wrong identities, missing/extra fields, and
+responses over 1 MiB are invalid. A syntactically valid evidence claim can still
+be false. Role instructions prohibit fabricated tool/test claims; the validator
+does not mechanically prove compliance or verify cited material.
+
+Inspect the original output with `result` if formatting fails. There is no
+automatic repair call, retry, acceptance decision, or verification-model launch.
+An unavailable report with a nonempty `errors` list needs attention: its saved
+contract or result could not be verified, rather than merely lacking a result.
 
 ## Continue or resume
 

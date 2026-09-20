@@ -1,6 +1,6 @@
 {
   "name": "claude-control",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Manage persistent local Claude sessions from Codex with explicit models and verified results.",
   "author": {
     "name": "kimstitute",
@@ -10,7 +10,7 @@
   "interface": {
     "displayName": "Codex Control Claude",
     "shortDescription": "Manage local Sonnet and Fable sessions.",
-    "longDescription": "Create, inspect, stop and resume tools-disabled Claude sessions on this Linux host. Includes a local CLI and a Codex workflow skill; no cross-host dispatch.",
+    "longDescription": "Delegate structured tasks to local Claude roles, observe parallel sessions, inspect reports, and stop or resume exact conversations. Linux, supplied-text tasks, no Claude tools or cross-host dispatch.",
     "developerName": "kimstitute",
     "category": "Productivity",
     "capabilities": [

@@ -13,6 +13,8 @@ plugins/claude-control/
     store.py                    Configuration, SQLite state, admission, recovery
     runner.py                   Worker and owned process-group lifecycle
     protocol.py                 Claude invocation and response validation
+    assignments.py              Versioned role prompts and assignment/report contracts
+    orchestration.py            Multi-run observation and report inspection
 ```
 
 The plugin resolves its code relative to its own directory. Runtime configuration, prompts, transcripts, and databases live outside the plugin package.
@@ -29,6 +31,11 @@ The plugin resolves its code relative to its own directory. Runtime configuratio
 There is no always-running coordinator. Each active job has a worker, and later Codex tasks can discover persisted records. This package does not automatically wake Codex when a chat turn ends.
 
 ## Identity and concurrency
+
+`delegate` normalizes a supplied JSON assignment, resolves its role/model, and
+passes one canonical JSON envelope through the same reservation and execution
+path as `start`. It adds no second task state machine, lease, or scheduler.
+See [OMX adoption notes](omx-adoption.md) for the source analysis and later phases.
 
 - A store is bound to its host and user, with a separate installation UUID.
 - A managed session has a fixed model, role, and project, and a current backend conversation ID.
@@ -58,6 +65,19 @@ The environment passed to Claude is limited. Normal HOME-based authentication is
 Success requires a coherent bounded JSON stream, a matching session ID, actual assistant model evidence matching the requested family, a successful final result, no tool calls, and process exit zero. Initialization metadata and auxiliary model usage alone do not prove which model answered.
 
 Results are written through atomic replacement with file/directory synchronization and a stored SHA-256 digest. Status reads and follow-up admission check artifact integrity. These checks detect missing or changed result files; they do not defend against a malicious user who can rewrite the entire store.
+
+Structured reports use `claude-control.assignment.v1`. The role snapshot is
+canonical ASCII JSON (also UTF-8), written with no added newline and delivered
+through stdin. Report inspection reconstructs the original fresh-session intent
+fingerprint from that prompt and the immutable session/run fields. Validation
+uses the saved role, never today's role catalog. Unknown protocol versions are
+unsupported; changed snapshots fail closed. A future change to the intent-hash
+algorithm needs explicit compatibility handling or old reports will fail closed.
+
+Result bytes are checked again during report reading to avoid trusting a stale
+status check. Format validity and an agent's self-reported completion never
+change execution state or grant semantic acceptance. This release does not store
+acceptance decisions. The schema-3 runtime database is unchanged.
 
 ## Installation
 

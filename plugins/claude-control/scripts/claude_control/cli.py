@@ -12,6 +12,8 @@ import time
 from pathlib import Path
 
 from . import __version__
+from .assignments import CONTRACT, ROLE_PRESETS, load_assignment, render_assignment
+from .orchestration import observe, report
 from .runner import child_environment, exec_claude, launch_worker, run_worker
 from .store import ACTIVE, ControlError, Store
 
@@ -35,6 +37,13 @@ def parser():
         "--auth", action="store_true", help="Check login, excluding account identifiers."
     )
     commands.add_parser("list")
+    commands.add_parser("roles")
+    delegate = commands.add_parser("delegate")
+    delegate.add_argument("--assignment-file", type=Path, required=True)
+    delegate.add_argument("--request-id", required=True)
+    observation = commands.add_parser("observe")
+    observation.add_argument("--run", action="append", required=True)
+    observation.add_argument("--seconds", type=float, default=30)
     for name in ("start", "followup", "resume", "restart"):
         cmd = commands.add_parser(name)
         if name == "start":
@@ -48,7 +57,17 @@ def parser():
         cmd.add_argument("--prompt-file", type=Path, required=True)
         cmd.add_argument("--request-id", required=True)
         cmd.add_argument("--timeout", type=float, default=300)
-    for name in ("status", "result", "logs", "stop", "reconcile", "wait", "_worker", "_exec"):
+    for name in (
+        "status",
+        "result",
+        "report",
+        "logs",
+        "stop",
+        "reconcile",
+        "wait",
+        "_worker",
+        "_exec",
+    ):
         cmd = commands.add_parser(name)
         cmd.add_argument("--run", required=True)
         if name == "logs":
@@ -116,6 +135,8 @@ def doctor(store, check_auth):
 
 
 def execute(args):
+    if args.command == "roles":
+        return {"protocol": CONTRACT, "roles": [{"name": k, **v} for k, v in ROLE_PRESETS.items()]}
     if args.command == "init":
         return Store.initialize(args.state_dir, args.claude_bin, args.allow_root, args.max_parallel)
     if args.command == "_worker":
@@ -129,6 +150,26 @@ def execute(args):
         return doctor(store, args.auth)
     if args.command == "list":
         return store.list_all()
+    if args.command == "delegate":
+        assignment = load_assignment(args.assignment_file)
+        assignment["project"] = store.project(assignment["project"])
+        prompt = render_assignment(assignment)
+        run_id, created = store.reserve(
+            prompt=prompt,
+            request_id=args.request_id,
+            timeout=assignment["timeout"],
+            name=assignment["name"],
+            model=assignment["model"],
+            role=assignment["role"],
+            project=assignment["project"],
+        )
+        if created:
+            launch_worker(store, run_id)
+        return {**store.get_run(run_id), "deduplicated": not created}
+    if args.command == "observe":
+        return observe(store, args.run, args.seconds)
+    if args.command == "report":
+        return report(store, args.run)
     if args.command in ("start", "followup", "resume", "restart"):
         if args.prompt_file.stat().st_size > 1024 * 1024:
             raise ControlError("invalid_prompt", "Prompt file exceeds 1 MiB.")
