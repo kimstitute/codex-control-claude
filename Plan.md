@@ -583,3 +583,19 @@ P4의 제한된 검토·수정 반복과 재접속 요약은 아래 기록대로
 - 설치본·캐시의 32개 파일을 원본과 대조했다. 기본 저장소를 백업 후 schema 9로
   이관해 기존 9개 세션·19개 실행과 전체 기존 컬럼·rowid를 보존했다. 이관 전후
   모든 과거 보고서가 v0.7.1 릴리스와 동일하며 데이터베이스 무결성을 확인했다.
+
+## 18. P4/P5 자동 조합 — v0.9.0
+
+- 기존 P4와 P5 엔진을 변경해 하나의 과제로 겹치지 않고, 상위 `composition`
+  상태가 `계획·독립 검토 → 계획 승인 → 편집·격리 검사 → frozen 검토 → 최종 승인`
+  순서를 연결한다.
+- 계획의 `approve_recommended`는 편집 허가가 아니다. 현재 계획 task/revision/run/digest에
+  대한 Codex accept가 있어야 editor workspace가 만들어진다.
+- editor가 최종 export를 고정하면 같은 read path와 쓰기·검사 권한이 없는 별도 Fable
+  reviewer workspace를 자동 생성한다. reviewer 결과는 승인 근거이며 editor를 승인하거나
+  수정하지 않는다.
+- reviewer export까지 고정되면 자동화는 멈춘다. Codex가 정확한 editor 결과를 승인해야
+  조합 상태가 accepted로 파생된다. 자동 승인·재시도·세션 대체·merge·push는 없다.
+- schema 9→10은 composition/member/result 테이블만 추가한다. 기존 session/run/task/workflow/
+  workspace/decision row와 effort 기록은 다시 쓰지 않는다.
+- 구조화 출력 호환성, 명시적 실패 복구, 실제 프로젝트 gate 재검증은 이번 범위에 포함하지 않는다.

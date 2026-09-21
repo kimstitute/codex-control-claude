@@ -205,15 +205,21 @@ def _write_blob(root: Path, relative: str, data: bytes, mode: str) -> None:
         _error("workspace_integrity", "Cannot materialize selected file.", exc)
 
 
-def create_snapshot(repo, ref, destination, policy):
-    policy = _normalized(policy)
+def resolve_commit(repo, ref):
     source = _safe_repo(repo)
-    _reject_overlap(destination, source)
     if not isinstance(ref, str) or not ref or ref.startswith("-") or "\x00" in ref:
         _error("workspace_source", "Ref must be a non-option Git reference.")
     commit = _git(source, "rev-parse", "--verify", ref + "^{commit}").strip()
     if len(commit) != 40 or any(char not in "0123456789abcdef" for char in commit):
         _error("workspace_source", "Git did not resolve a canonical commit.")
+    return commit
+
+
+def create_snapshot(repo, ref, destination, policy):
+    policy = _normalized(policy)
+    source = _safe_repo(repo)
+    _reject_overlap(destination, source)
+    commit = resolve_commit(source, ref)
     raw = _git(source, "ls-tree", "-r", "-z", "--full-tree", commit, binary=True)
     selected: list[tuple[str, str, str]] = []
     for record in raw.split(b"\0"):

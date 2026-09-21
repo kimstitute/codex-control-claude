@@ -238,5 +238,7 @@ or unknown work, stop old clients/workers, inspect `migrate --status`, then run
 `migrate --offline` on the original state directory. Do not initialize a new
 store or replay a preparing/unknown operation to bypass uncertainty.
 
-P4's native proposal/review workflow does not create, run, export, or accept P5
-workspaces. Workspace work is always an explicit `workspace` API lifecycle.
+Standalone P4 workflows and P5 workspaces remain separate. Schema-10
+`composition` commands can explicitly connect a reviewed plan to an editor and
+then to a read-only frozen-snapshot reviewer. The composition still never accepts
+a result or integrates the frozen tree.

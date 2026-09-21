@@ -57,11 +57,11 @@ class WorkspaceMigrationTests(unittest.TestCase):
                     workflow.status(old, flow["id"])
                 self.assertFalse(migration.migrate(state, offline=True, target=8)["migrated"])
 
-    def test_full_chain_has_six_verified_backups(self):
+    def test_full_chain_has_seven_verified_backups(self):
         with tempfile.TemporaryDirectory() as root:
             state, _ = legacy_store(root)
             result = migration.migrate(state, offline=True)
-            self.assertEqual((result["schema"], len(result["backups"])), (9, 6))
+            self.assertEqual((result["schema"], len(result["backups"])), (10, 7))
             with self.assertRaises(ControlError):
                 migration.migrate(state, offline=True, target=7)
 

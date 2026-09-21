@@ -18,6 +18,7 @@ from pathlib import Path
 from .execution_settings import binary_identity, probe_effort, validate_effort
 from .schema import (
     VERSION,
+    add_composition_schema,
     add_execution_schema,
     add_message_schema,
     add_queue_schema,
@@ -173,6 +174,7 @@ class Store:
                 add_workflow_schema(db)
                 add_workspace_schema(db)
                 add_execution_schema(db)
+                add_composition_schema(db)
                 db.execute("PRAGMA journal_mode=WAL")
             os.chmod(directory / "state.sqlite3", 0o600)
             (directory / "runs").mkdir(mode=0o700, exist_ok=True)
@@ -188,7 +190,7 @@ class Store:
             raise ControlError(
                 "not_initialized", "Run init with this state directory first."
             ) from None
-        if self.config.get("schema") not in (3, 4, 5, 6, 7, 8, VERSION):
+        if self.config.get("schema") not in (3, 4, 5, 6, 7, 8, 9, VERSION):
             raise ControlError("schema_mismatch", "Unsupported state schema.")
         if self.config.get("host_id") != host_identity() or self.config.get("uid") != os.getuid():
             raise ControlError(
@@ -208,7 +210,7 @@ class Store:
         with (self.path / "lifecycle.lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_SH)
             config = json.loads((self.path / "config.json").read_text())
-            if config != self.config or config.get("schema") not in (3, 4, 5, 6, 7, 8, VERSION):
+            if config != self.config or config.get("schema") not in (3, 4, 5, 6, 7, 8, 9, VERSION):
                 raise ControlError("schema_mismatch", "State changed; reopen or finish migrate.")
             db = sqlite3.connect(self.path / "state.sqlite3", timeout=10, isolation_level=None)
             db.row_factory = sqlite3.Row

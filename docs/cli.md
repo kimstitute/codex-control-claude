@@ -259,7 +259,7 @@ claude_control reconcile --run <run-uuid>
 
 On the same boot, reconcile must run in the worker's PID namespace. It releases uncertainty only when the recorded worker and process group are no longer live, or when a host reboot proves the earlier processes cannot still be running. It does not blindly signal a saved PID. A conversation with a mismatched backend session remains blocked.
 
-New stores use schema 9. Existing schema 3/4/5/6/7/8 requires [explicit offline migration](tasks.md#schema-and-migration) for task features; legacy diagnosis and stop/reconcile remain available before migration. Schemas 1 and 2 are unsupported. Never delete or replace state to bypass an active or unknown execution.
+New stores use schema 10. Existing schema 3/4/5/6/7/8/9 requires [explicit offline migration](tasks.md#schema-and-migration) for task features; legacy diagnosis and stop/reconcile remain available before migration. Schemas 1 and 2 are unsupported. Never delete or replace state to bypass an active or unknown execution.
 
 ## Troubleshooting
 
@@ -314,3 +314,10 @@ explicit value is rejected. Structured assignments use the optional `effort` key
 support for every effort value. Explicit effort requires schema 9.
 
 See [execution settings and compatibility](execution-settings.md).
+
+## Compositions
+
+`composition create/run/status/stop` connects the existing bounded planning
+workflow to controlled editor and frozen reviewer workspaces. It requires schema
+10 and keeps plan and final-result acceptance explicit. See the
+[composition guide](compositions.md) for files, ordering and recovery behavior.

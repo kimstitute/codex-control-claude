@@ -1,6 +1,6 @@
 {
   "name": "claude-control",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Manage persistent local Claude sessions from Codex with explicit models and verified results.",
   "author": {
     "name": "kimstitute",
@@ -10,7 +10,7 @@
   "interface": {
     "displayName": "Codex Control Claude",
     "shortDescription": "Manage local Sonnet and Fable sessions.",
-    "longDescription": "Manage local Claude sessions, task revisions, queues, messages and bounded review workflows. Explicit workspace policies add controller-mediated edits, isolated named checks and frozen results for Codex approval. Linux only; native Claude tools and cross-host dispatch remain disabled.",
+    "longDescription": "Manage local Claude sessions, task revisions, queues, bounded review workflows and explicit plan-edit-review compositions. Workspace policies add controller-mediated edits, isolated named checks and frozen results for Codex approval. Linux only; native Claude tools and cross-host dispatch remain disabled.",
     "developerName": "kimstitute",
     "category": "Productivity",
     "capabilities": [

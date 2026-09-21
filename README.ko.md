@@ -188,4 +188,10 @@ Linux, 텍스트 위임, 컨트롤러를 통한 제한된 사본 작업, 이 컨
 
 `workspace create/task/run/status/export/stop`으로 파일 수정과 시험을 진행합니다. Git의 특정 커밋을 사본으로 만들며, 원본의 미커밋·추적되지 않은 파일은 포함하지 않습니다. 결과를 고정한 뒤 `workspace create --from-snapshot`으로 별도 Fable 읽기 전용 검토를 만들 수 있습니다. 최종 승인과 원본 반영은 Codex가 담당합니다.
 
+`composition create/run/status/stop`은 검토된 계획, 정확한 계획 승인, 제한된
+편집·검사, frozen 결과의 별도 Fable 검토, 정확한 최종 승인을 한 흐름으로
+연결합니다. 생성 시 Git ref를 한 커밋으로 고정하며, 자동 승인·재시도·병합·push는
+하지 않습니다. 자세한 순서와 복구 경계는 [조합 가이드](docs/compositions.md)를
+참고하세요.
+
 Git과 Bubblewrap, 사용 가능한 Linux 사용자·PID·네트워크 네임스페이스가 필요합니다. `workspace doctor`로 확인하며 격리를 사용할 수 없으면 실행을 거절합니다. 정책·실행·복구 예시는 [워크스페이스 가이드](docs/workspaces.md)를 참고하세요.

@@ -586,6 +586,10 @@ def _decision_in(
         from .workspace import accept_guard
 
         accept_guard(store, db, task_id, run_id)
+    if kind == "accept" and store.config["schema"] >= 10:
+        from .composition import accept_guard as composition_accept_guard
+
+        composition_accept_guard(store, db, task_id, run_id)
     decision = dict(
         id=str(uuid.uuid4()),
         task_id=task_id,

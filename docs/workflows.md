@@ -131,10 +131,11 @@ commands cannot alter the fixed template.
 
 ## Compatibility
 
-New stores use schema 8. Existing schema 3–6 stores require explicit offline
-migration; the 6→7 step makes a verified backup and preserves all P3 message,
-receipt, task and approval rows. All clients and workers must be stopped and
-unknown executions resolved before migration. See [migration](tasks.md#schema-and-migration).
+New stores use schema 10. Existing stores require explicit offline migration;
+each schema step makes a verified backup and preserves prior task, queue, message,
+workflow, workspace, effort and decision rows. All clients and workers must be
+stopped and unknown executions resolved before migration. See
+[migration](tasks.md#schema-and-migration).
 
 Legacy sessions and task contracts v1–v4 keep their existing behavior. This phase
 adds neither Claude file/shell tools nor cross-host job delivery.

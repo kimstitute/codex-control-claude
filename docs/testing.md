@@ -233,3 +233,21 @@ the existing tables were identical: nine sessions and nineteen runs were retaine
 Every historical report matched the previous v0.7.1 release both before and after
 the migration. Database integrity and foreign keys passed; installed code also
 read all three live test runs without making additional model calls.
+
+## Version 0.9 composition verification
+
+The final source tree passed 302 unit tests. One Bubblewrap namespace test class
+was skipped because this host denies the required unprivileged namespace; the
+controller reports that environment limitation rather than weakening isolation.
+The 16 focused composition and schema-migration tests passed on the final tree,
+including immutable source-ref replay, crash recovery, both explicit acceptance
+gates, frozen reviewer creation, stop races, orphan cleanup and schema 9→10
+history preservation. Ruff, formatting, Python compilation and `git diff --check`
+also passed.
+
+An independent Fable review used `claude-fable-5-1` with explicit high effort and
+returned `APPROVE` for the bounded one-shot composition. Its three confirmation
+items are covered by the composition-owned acceptance query, the derived read-only
+reviewer policy test, and P5's export verification before snapshot copying. No
+real-project execution was performed for this release because that is a separate
+pilot scope.

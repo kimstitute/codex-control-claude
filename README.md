@@ -23,6 +23,12 @@ Codex Control Claude gives Codex a practical way to delegate work to Claude, kee
 stored value. Review workflows accept an independent `--reviewer-effort`. Existing
 unspecified settings stay unspecified. See [execution settings](docs/execution-settings.md).
 
+**Version 0.9 connects the bounded plan, controlled edit and frozen-review stages.**
+An explicit composition waits for exact plan acceptance, gives that immutable plan
+to a private editor workspace, creates an independent read-only Fable reviewer
+from the frozen result, and then waits for exact final acceptance. See
+[compositions](docs/compositions.md).
+
 See the [real-project pilot](docs/real-project-pilot.md) for observed timeout and
 report-format failures, the verified input-validation fix, and the next reliability gates.
 
@@ -43,6 +49,7 @@ report-format failures, the verified input-validation fix, and the next reliabil
 | Run bounded review workflows | Independent Fable reviews, limited worker revisions and explicit Codex acceptance. |
 | Edit a private snapshot | Explicit file policy, full-file writes and named checks in a disposable Linux sandbox. |
 | Review frozen changes | Read-only Fable snapshot, verified patch and manifest, then explicit Codex acceptance. |
+| Compose plan, edit and review | Persist exact stage provenance while keeping both Codex acceptance gates explicit. |
 | Resume coordination | Discover budgets, blocked tasks and unknown runs with `overview --attention`. |
 | Read task events | Persist revision, queue, execution and decision changes with a replay cursor. |
 | Upgrade existing state | Explicit offline schema-3/4/5/6/7 migration with verified backups and crash recovery. |
@@ -163,7 +170,7 @@ git pull --ff-only
 python3 install.py --update
 ```
 
-Open a new Codex task after reinstalling. Updates preserve the separate runtime store. New stores use schema 9. Existing schema-3/4/5/6/7/8 stores require explicit `migrate --offline` for all new features; see [migration and recovery](docs/tasks.md#schema-and-migration). Updates do not migrate a live store automatically.
+Open a new Codex task after reinstalling. Updates preserve the separate runtime store. New stores use schema 10. Existing schema-3/4/5/6/7/8/9 stores require explicit `migrate --offline` for all new features; see [migration and recovery](docs/tasks.md#schema-and-migration). Updates do not migrate a live store automatically.
 
 ## Tests
 
@@ -177,7 +184,7 @@ To deliberately run the live suite using your own Claude account, see [testing](
 
 ## Current scope
 
-Version 0.8 supports Linux, supplied-text tasks, bounded controller-mediated workspace operations, and sessions created by this controller. Native file/shell tools in Claude, adopting arbitrary existing sessions, conversation forking, Windows/macOS support, an MCP adapter, cross-host dispatch, and automatic Codex wake-up are future work.
+Version 0.9 supports Linux, supplied-text tasks, bounded controller-mediated workspace operations, explicit plan/edit/review compositions, and sessions created by this controller. Native file/shell tools in Claude, adopting arbitrary existing sessions, conversation forking, Windows/macOS support, an MCP adapter, cross-host dispatch, and automatic Codex wake-up are future work.
 
 Maintained by [kimstitute](https://github.com/kimstitute). This is an independent project, not an official OpenAI or Anthropic integration.
 
@@ -202,3 +209,10 @@ Use `workflow create/run/status/stop` to coordinate a proposal and independent F
 ## Controlled workspace work
 
 Use `workspace create/task/run/status/export/stop` for a bounded edit-and-check loop. A committed Git snapshot is copied into private storage; dirty and untracked source files are excluded. Named checks run against disposable copies, and a completed result is frozen for review. `workspace create --from-snapshot` creates an independent read-only Fable review workspace. Source integration remains an explicit Codex action. See the [workspace guide](docs/workspaces.md) for policy and recovery examples.
+
+## Composed plan, edit and review
+
+Use `composition create/run/status/stop` to connect a bounded P4 plan, exact plan
+acceptance, a controlled P5 editor, an automatic read-only Fable review of its
+frozen export, and exact final acceptance. The coordinator remains finite and
+never retries or accepts work itself. See the [composition guide](docs/compositions.md).

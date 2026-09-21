@@ -11,7 +11,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import __version__, message_cli, task_cli, workflow_cli, workspace_cli
+from . import __version__, composition_cli, message_cli, task_cli, workflow_cli, workspace_cli
 from .assignments import CONTRACT, ROLE_PRESETS, load_assignment, render_assignment
 from .execution_settings import EFFORTS
 from .orchestration import observe, report
@@ -82,6 +82,7 @@ def parser():
     message_cli.register(commands)
     workflow_cli.register(commands)
     workspace_cli.register(commands)
+    composition_cli.register(commands)
     command = commands.add_parser("_workspace_exec")
     command.add_argument("--run", required=True)
     command.add_argument("--seq", type=int, required=True)
@@ -150,6 +151,8 @@ def doctor(store, check_auth):
 def execute(args):
     if args.command == "workspace":
         return workspace_cli.execute(args)
+    if args.command == "composition":
+        return composition_cli.execute(args)
     if args.command in ("workflow", "overview"):
         return workflow_cli.execute(args)
     if args.command == "message":

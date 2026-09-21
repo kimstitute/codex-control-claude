@@ -9,8 +9,8 @@ the [CLI reference](cli.md). Assignment files use the existing
 ## Schema and migration
 
 Task lifecycle requires schema 4 or newer; queues require schema 5, messages schema 6, workflows schema 7, and workspaces schema 8.
-Explicit effort settings require schema 9.
-New installations (`claude_control init`) start on schema 9. Existing schema-3 stores must migrate before
+Explicit effort settings require schema 9; plan/edit/review compositions require schema 10.
+New installations (`claude_control init`) start on schema 10. Existing schema-3 stores must migrate before
 using any `task` subcommand; a schema-3 store rejects task commands until migrated.
 
 Migration is a maintenance operation, not a background service:

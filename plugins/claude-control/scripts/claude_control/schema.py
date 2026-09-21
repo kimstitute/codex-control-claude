@@ -1,6 +1,6 @@
 """Additive schemas; existing sessions and runs retain their identity and rowids."""
 
-VERSION = 9
+VERSION = 10
 TASK_SCHEMA = """
 CREATE TABLE tasks (
  id TEXT PRIMARY KEY, name TEXT NOT NULL, session_id TEXT REFERENCES sessions(id),
@@ -355,3 +355,65 @@ CREATE TRIGGER run_effort_matches_session BEFORE INSERT ON runs
 """,
         9,
     )
+
+
+COMPOSITION_SCHEMA = """
+CREATE TABLE compositions (
+ id TEXT PRIMARY KEY, name TEXT NOT NULL,
+ workflow_id TEXT NOT NULL UNIQUE REFERENCES workflows(id),
+ policy TEXT NOT NULL,
+ state TEXT NOT NULL CHECK(state IN ('active','awaiting_codex','stopping','stopped')),
+ reason TEXT, phase TEXT NOT NULL CHECK(phase IN ('plan','editor','reviewer')),
+ created REAL NOT NULL
+);
+CREATE TABLE composition_members (
+ composition_id TEXT NOT NULL REFERENCES compositions(id),
+ phase TEXT NOT NULL CHECK(phase IN ('editor','reviewer')),
+ workspace_id TEXT NOT NULL UNIQUE REFERENCES workspace_tasks(workspace_id),
+ task_id TEXT NOT NULL UNIQUE REFERENCES workspace_tasks(task_id), created REAL NOT NULL,
+ PRIMARY KEY(composition_id,phase)
+);
+CREATE TABLE composition_results (
+ composition_id TEXT NOT NULL REFERENCES compositions(id),
+ phase TEXT NOT NULL CHECK(phase IN ('plan','editor','reviewer')),
+ task_id TEXT NOT NULL, revision INTEGER NOT NULL,
+ run_id TEXT NOT NULL UNIQUE, result_sha256 TEXT NOT NULL,
+ workspace_id TEXT, manifest_sha256 TEXT, tree_sha256 TEXT, created REAL NOT NULL,
+ PRIMARY KEY(composition_id,phase),
+ FOREIGN KEY(composition_id) REFERENCES compositions(id),
+ FOREIGN KEY(run_id,task_id,revision) REFERENCES task_runs(run_id,task_id,revision),
+ FOREIGN KEY(workspace_id) REFERENCES workspaces(id),
+ CHECK((phase='plan' AND workspace_id IS NULL AND manifest_sha256 IS NULL AND tree_sha256 IS NULL)
+    OR (phase IN ('editor','reviewer') AND workspace_id IS NOT NULL
+        AND manifest_sha256 IS NOT NULL AND tree_sha256 IS NOT NULL))
+);
+CREATE TRIGGER composition_policy_immutable BEFORE UPDATE ON compositions
+ WHEN NEW.id IS NOT OLD.id OR NEW.name IS NOT OLD.name OR NEW.workflow_id IS NOT OLD.workflow_id
+ OR NEW.policy IS NOT OLD.policy OR NEW.created IS NOT OLD.created
+ BEGIN SELECT RAISE(ABORT,'composition policy is immutable'); END;
+CREATE TRIGGER composition_no_delete BEFORE DELETE ON compositions
+ BEGIN SELECT RAISE(ABORT,'composition history is retained'); END;
+CREATE TRIGGER composition_member_binding BEFORE INSERT ON composition_members
+ WHEN NOT EXISTS(SELECT 1 FROM workspace_tasks
+                 WHERE workspace_id=NEW.workspace_id AND task_id=NEW.task_id)
+ BEGIN SELECT RAISE(ABORT,'composition member binding mismatch'); END;
+CREATE TRIGGER composition_workspace_result BEFORE INSERT ON composition_results
+ WHEN NEW.phase IN ('editor','reviewer') AND NOT EXISTS(
+  SELECT 1 FROM composition_members m JOIN workspace_exports e
+   ON e.workspace_id=m.workspace_id
+  WHERE m.composition_id=NEW.composition_id AND m.phase=NEW.phase
+   AND m.workspace_id=NEW.workspace_id AND m.task_id=NEW.task_id
+   AND e.run_id=NEW.run_id AND e.result_sha256=NEW.result_sha256
+   AND e.manifest_sha256=NEW.manifest_sha256)
+ BEGIN SELECT RAISE(ABORT,'composition result does not match frozen workspace'); END;
+"""
+
+
+def add_composition_schema(db):
+    _apply(db, COMPOSITION_SCHEMA, 10)
+    for table in ("composition_members", "composition_results"):
+        for action in ("UPDATE", "DELETE"):
+            db.execute(
+                f"CREATE TRIGGER immutable_{table}_{action.lower()} BEFORE {action} ON {table} "
+                "BEGIN SELECT RAISE(ABORT,'composition records are append-only'); END"
+            )

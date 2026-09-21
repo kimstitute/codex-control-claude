@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.9.0 — 2026-09-21
+
+- Add a finite `composition` coordinator over existing P4 workflows and P5
+  workspaces: reviewed plan, exact plan acceptance, controlled edit and checks,
+  frozen read-only Fable review, then exact final acceptance.
+- Pin exact task, revision, run, result, manifest and tree provenance between
+  stages. Reviewer work starts from the frozen editor export, never the live tree.
+- Preserve explicit acceptance boundaries and existing failure behavior: no
+  automatic acceptance, retry, repair call, session replacement, merge or push.
+- Add offline schema 9→10 migration with additive composition tables; existing
+  task, workflow, workspace, decision, session and run records are unchanged.
+
 ## 0.8.0 — 2026-09-21
 
 - Add explicit, session-pinned Claude effort to raw sessions, immutable task

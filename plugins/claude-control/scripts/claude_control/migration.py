@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .schema import (
     VERSION,
+    add_composition_schema,
     add_execution_schema,
     add_message_schema,
     add_queue_schema,
@@ -79,7 +80,7 @@ def migrate(path, *, offline=False, target=VERSION):
             "Stop all old/new CLI clients and workers, then run migrate --offline. "
             "Use migrate --status to inspect; unresolved executions must not be forced terminal.",
         )
-    if target not in (4, 5, 6, 7, 8, VERSION):
+    if target not in (4, 5, 6, 7, 8, 9, VERSION):
         raise ControlError("schema_mismatch", "Unsupported migration target.")
     os.umask(0o077)
     path, _ = _open(path)
@@ -99,7 +100,7 @@ def migrate(path, *, offline=False, target=VERSION):
                 version = db.execute("PRAGMA user_version").fetchone()[0]
                 schema = config.get("schema")
                 # Complete a journal even when the previous process died after config commit.
-                if schema in (4, 5, 6, 7, 8, 9) and version == schema:
+                if schema in (4, 5, 6, 7, 8, 9, 10) and version == schema:
                     previous = path / f"migration-{schema - 1}-{schema}.json"
                     if previous.exists():
                         journal = json.loads(previous.read_text())
@@ -128,7 +129,7 @@ def migrate(path, *, offline=False, target=VERSION):
                             "migration_journal", "Journal does not match this store."
                         )
                     source = candidates[0]
-                elif schema in (3, 4, 5, 6, 7, 8):
+                elif schema in (3, 4, 5, 6, 7, 8, 9):
                     source = schema
                 else:
                     raise ControlError("schema_mismatch", "Unsupported migration source.")
@@ -179,6 +180,7 @@ def _step(path, config, db, version, source):
                 6: add_workflow_schema,
                 7: add_workspace_schema,
                 8: add_execution_schema,
+                9: add_composition_schema,
             }[source](db)
             if db.execute("PRAGMA foreign_key_check").fetchone():
                 raise ControlError("migration_integrity", "Foreign key validation failed.")

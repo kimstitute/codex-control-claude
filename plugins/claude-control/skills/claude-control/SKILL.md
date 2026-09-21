@@ -5,7 +5,7 @@ description: Manage multiple persistent Claude Code sessions on the current Linu
 
 # Claude Control
 
-Use the bundled `../../scripts/claude_control_cli.py`, resolving that path from this skill's directory. Public commands return JSON. Python 3.10+ and locally authenticated Claude Code are prerequisites; run `--help` for flags. Version 0.8 supports Linux supplied-text delegation and explicit controller-mediated workspace operations. Claude native tools and MCP are disabled, with CLI safe mode and empty setting sources. The project-hook nonexecution test passed; administrator-managed policy still applies. For proposals, supply source text and inspect returned edits. For authorized file work, read [the workspace reference](references/workspaces.md) before creating a policy. The controller executes structured read/write/named-check requests on private copies; source integration remains a Codex action.
+Use the bundled `../../scripts/claude_control_cli.py`, resolving that path from this skill's directory. Public commands return JSON. Python 3.10+ and locally authenticated Claude Code are prerequisites; run `--help` for flags. Version 0.9 supports Linux supplied-text delegation, explicit controller-mediated workspace operations and finite plan/edit/review compositions. Claude native tools and MCP are disabled, with CLI safe mode and empty setting sources. The project-hook nonexecution test passed; administrator-managed policy still applies. For proposals, supply source text and inspect returned edits. For authorized file work, read [the workspace reference](references/workspaces.md) before creating a policy. The controller executes structured read/write/named-check requests on private copies; source integration remains a Codex action.
 
 ## Execution settings
 
@@ -236,17 +236,41 @@ If no backend conversation was saved before the first turn stopped, a normal res
 
 Code updates should happen with managed runs stopped. Runtime data is separate from the plugin, and no uninstall or update should remove it. Process-group cleanup covers the managed tools-disabled execution; it is not a cgroup/filesystem sandbox or a promise about processes that escape their group. Do not enable shell/edit tools by modifying this CLI's fixed profile.
 
-New stores use schema 9. For an existing schema-3/4/5/6/7/8 store, finish/stop and reconcile all
+New stores use schema 10. For an existing schema-3/4/5/6/7/8/9 store, finish/stop and reconcile all
 managed work, stop all old CLI clients/workers, install the new code, then run
 `migrate --status` and `migrate --offline` on that same state directory. Migration
 makes a verified SQLite backup and a durable journal. If interrupted, repeat
 `migrate --offline` on the original directory; never run jobs against the backup.
 Active/unknown executions block migration. New code retains legacy diagnostic and
-stop/reconcile commands on schema 3; task lifecycle needs schema 4, queue commands schema 5, messages schema 6, workflows schema 7, and workspaces schema 8, and explicit effort schema 9. Do not use
+stop/reconcile commands on schema 3; task lifecycle needs schema 4, queue commands schema 5, messages schema 6, workflows schema 7, workspaces schema 8, explicit effort schema 9, and compositions schema 10. Do not use
 re-initialization, automatic downgrade or a fresh store to bypass uncertainty.
 
 The package launches workers for jobs, not an always-running coordinator. Codex is not automatically awakened after the conversation ends. A later Codex task can discover the same host-local records via `list`.
 
 ## Work in an explicit workspace
 
-Read [workspaces](references/workspaces.md) for policy, lifecycle, frozen review and recovery. Use an immutable Git commit snapshot, bounded readable paths, exact writable files and named check argv authorized for the task. Run `workspace doctor` first. Bind one executor or read-only Fable critic/verifier; drive `workspace run` with an explicit finite budget. Never enable native Claude tools to satisfy a workspace request. A completed report and frozen export still require Codex verification and explicit acceptance. P4 workflows do not orchestrate P5 workspaces automatically.
+Read [workspaces](references/workspaces.md) for policy, lifecycle, frozen review and recovery. Use an immutable Git commit snapshot, bounded readable paths, exact writable files and named check argv authorized for the task. Run `workspace doctor` first. Bind one executor or read-only Fable critic/verifier; drive `workspace run` with an explicit finite budget. Never enable native Claude tools to satisfy a workspace request. A completed report and frozen export still require Codex verification and explicit acceptance.
+
+## Compose a plan, controlled edit and frozen review
+
+Use `composition create` only when Codex has authorized the full fixed chain:
+bounded P4 plan/review, exact plan acceptance, P5 editor, frozen snapshot reviewer,
+and exact final editor acceptance. Supply separate planning, editor and Fable
+reviewer assignments plus one editor workspace policy. The controller derives a
+read-only verifier policy with the same readable paths. Creation makes no model
+call.
+
+Drive the named composition with `composition run --composition <UUID> --once`
+or `--until-idle --max-seconds <0..3600>`. It uses the existing child engines and
+persists exact task/revision/run/result and frozen-export provenance. The P4
+approve recommendation does not start editing until Codex accepts that exact plan.
+The reviewer is created automatically only after the editor export is frozen; it
+does not need or create editor acceptance. After its own frozen report, the
+composition stops at `awaiting_codex/final_review_ready`. Codex then independently
+accepts the exact editor result. Status derives `accepted` from that ledger record.
+
+The composition never retries malformed, failed or unknown execution, changes a
+model or session, repairs a report, accepts a result, merges, pushes or wakes Codex.
+Use `composition stop` for the owned active child. Diagnose and reconcile the exact
+child when attention is required; do not create a replacement composition to hide
+uncertain execution. Read the repository's `docs/compositions.md` for CLI examples.
