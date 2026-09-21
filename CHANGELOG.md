@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.7.1 — 2026-09-21
+
+- Reject non-UTF-8 surrogate text in workspace paths and named-check arguments
+  at policy validation, before filesystem or process operations.
+- Preserve valid Unicode, existing NUL rejection and existing policy limits;
+  add five focused regression tests.
+- Document the [real-project pilot](docs/real-project-pilot.md), including the
+  timeout, rejected duplicate-key report and Codex-supervised correction. The
+  automatic editor sequence did not pass; strict validation remains enabled.
+- State schema remains 8. No database migration is needed from 0.7.0; finish
+  or stop managed work before updating with `python3 install.py --update`.
+
 ## 0.7.0 — 2026-09-21
 
 This release brings the task, queue, message, review-workflow and controlled-workspace

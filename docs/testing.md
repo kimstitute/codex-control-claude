@@ -179,3 +179,18 @@ in complete discovery runs. Both runs included the six actual Bubblewrap isolati
 tests with no skips. Ruff, plugin/skill validation and repository whitespace checks
 also passed. The automated runs used fake Claude processes; live integration
 evidence is documented separately above.
+
+## 0.7.1 real-project verification
+
+The final runtime and test files passed **263 tests on Python 3.14.6**, including
+all six real Bubblewrap isolation tests with no skips. The 14 workspace-policy
+tests also passed on Python 3.10.18. The source files match the independently
+tested copy and the two corrected files match Fable's frozen review snapshot.
+Ruff, compilation, plugin/skill validation and whitespace checks passed.
+
+The real editor pilot itself did **not** pass: a Sonnet timeout and a separate
+duplicate-key report stopped before writes or checks. Codex corrected and tested
+the code proposal independently; a separate read-only Fable review recommended
+APPROVE. See the [pilot record](real-project-pilot.md) for provenance, the 6,177
+independent boundary checks, and the required follow-up work. The editor tasks
+remain unaccepted; acceptance of the review artifact does not change that.

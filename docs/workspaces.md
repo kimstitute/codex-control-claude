@@ -12,3 +12,6 @@ schema-8 migration contract in the installed-skill reference:
 P4 workflows do not automate this API. Creating a workspace, binding its one
 task, admitting calls, exporting a frozen result, and accepting it remain
 explicit controller/Codex actions.
+
+The [real-project pilot](real-project-pilot.md) records actual timeout and
+report-format failures, independent verification, and the next reliability gates.

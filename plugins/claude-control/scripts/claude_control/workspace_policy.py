@@ -11,9 +11,17 @@ def _invalid(message):
     raise ControlError("invalid_workspace_policy", message)
 
 
+def _require_utf8(value, message):
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        _invalid(message)
+
+
 def path(value, allow_directory=False):
     if not isinstance(value, str) or not value or len(value) > 240:
         _invalid("Expected a relative path of 1–240 characters.")
+    _require_utf8(value, "Path must be valid UTF-8 text.")
     if any(ord(c) < 32 for c in value) or any(c in value for c in "\\*?[]"):
         _invalid("Path contains forbidden characters.")
     name = value[:-1] if allow_directory and value.endswith("/") else value
@@ -91,6 +99,8 @@ def normalize_policy(value):
             or any(not isinstance(a, str) or not a or len(a) > 1024 or "\0" in a for a in argv)
         ):
             _invalid("A check needs 1–32 bounded argv strings.")
+        for argument in argv:
+            _require_utf8(argument, "Check arguments must be valid UTF-8 text.")
         executable = argv[0].removeprefix("/usr/bin/")
         if (
             not argv[0].startswith("/usr/bin/")

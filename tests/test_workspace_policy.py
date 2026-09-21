@@ -187,6 +187,81 @@ class WorkspacePolicyTests(unittest.TestCase):
             "workspace_path_denied", workspace_policy.check_access, policy, "../escape"
         )
 
+    def test_path_rejects_lone_surrogate_code_points(self) -> None:
+        high = chr(0xD800)
+        low = chr(0xDFFF)
+        surrogateescape = chr(0xDC80)
+        surrogates = (
+            f"src/{high}.py",
+            f"src/{low}.py",
+            f"src/{surrogateescape}.py",
+            f"a{high}b{low}c",
+        )
+        for value in surrogates:
+            with self.subTest(value=repr(value)):
+                self.assert_error("invalid_workspace_policy", workspace_policy.path, value)
+
+    def test_normalize_and_access_reject_surrogate_paths(self) -> None:
+        for codepoint in (0xD800, 0xDFFF, 0xDC80):
+            bad = f"src/{chr(codepoint)}.py"
+            with self.subTest(codepoint=codepoint):
+                for changes in (
+                    {"read_paths": [bad], "write_paths": []},
+                    {"read_paths": [f"src/{chr(codepoint)}/"], "write_paths": []},
+                    {"write_paths": [bad]},
+                ):
+                    self.assert_error(
+                        "invalid_workspace_policy",
+                        workspace_policy.normalize_policy,
+                        self.policy(**changes),
+                    )
+                self.assertFalse(workspace_policy.permits(["."], bad))
+                self.assert_error(
+                    "workspace_path_denied",
+                    workspace_policy.check_access,
+                    self.policy(read_paths=["."], write_paths=[]),
+                    bad,
+                )
+
+    def test_check_argv_rejects_surrogate_arguments(self) -> None:
+        for codepoint in (0xD800, 0xDC00, 0xDC80, 0xDFFF):
+            for argv in (["/usr/bin/echo", chr(codepoint)], ["/usr/bin/" + chr(codepoint)]):
+                with self.subTest(argv=repr(argv)):
+                    self.assert_error(
+                        "invalid_workspace_policy",
+                        workspace_policy.normalize_policy,
+                        self.policy(checks={"x": {"argv": argv, "timeout": 1}}),
+                    )
+
+    def test_valid_unicode_check_arguments_are_preserved(self) -> None:
+        for value in ("한글", "café", "e\u0301", "\U0001f600"):
+            with self.subTest(value=value):
+                argv = ["/usr/bin/echo", value]
+                policy = workspace_policy.normalize_policy(
+                    self.policy(checks={"unit": {"argv": argv, "timeout": 1}})
+                )
+                self.assertEqual(policy["checks"]["unit"]["argv"], argv)
+
+    def test_valid_unicode_paths_are_preserved(self) -> None:
+        korean = chr(0xD55C) + chr(0xAE00) + chr(0xD30C) + chr(0xC77C)
+        accented = "caf" + chr(0xE9)
+        combining = "e" + chr(0x301)
+        emoji = chr(0x1F600)
+        unicode_paths = (
+            f"src/{korean}.txt",
+            f"src/{accented}.txt",
+            f"src/{combining}.txt",
+            f"src/{emoji}.txt",
+        )
+        for value in unicode_paths:
+            with self.subTest(value=repr(value)):
+                self.assertEqual(workspace_policy.path(value), value)
+        write_path = f"src/{korean}.txt"
+        normalized = workspace_policy.normalize_policy(
+            self.policy(read_paths=["src/", "README.md"], write_paths=[write_path])
+        )
+        self.assertIn(write_path, normalized["write_paths"])
+
 
 if __name__ == "__main__":
     unittest.main()

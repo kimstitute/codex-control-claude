@@ -18,6 +18,9 @@ Codex Control Claude gives Codex a practical way to delegate work to Claude, kee
 
 **Version 0.7 adds controlled workspace editing and checks.** Codex can authorize a private Git snapshot, exact writable files and named test commands. Claude requests operations in structured reports; the controller performs them and returns receipts. Claude's native tools and MCP remain disabled. Ordinary supplied-text delegation continues to work.
 
+See the [real-project pilot](docs/real-project-pilot.md) for observed timeout and
+report-format failures, the verified input-validation fix, and the next reliability gates.
+
 ## What you can do
 
 | Capability | Behavior |

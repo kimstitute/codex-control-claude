@@ -58,7 +58,10 @@ replacement workspace.
 
 Policy schema version 1 requires `role`, `read_paths`, `write_paths`, and
 `checks`. It permits 1–64 readable paths, 0–64 writable paths, and at most
-eight named checks. Every writable path must also be readable. Check commands
+eight named checks. Every writable path must also be readable. Paths and check
+arguments must be UTF-8-encodable; surrogate code points are rejected before
+file or process operations. Valid Unicode is preserved without normalization.
+Check commands
 are fixed `argv` arrays whose executable is an absolute `/usr/bin/<basename>`;
 the model can request a check by name but cannot supply an argv. A check timeout
 is an integer from 1 to 60 seconds. `max_actions` is 1–100 (default 32) and
