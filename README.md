@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="README.en.md">English</a> · 한국어 · <a href="docs/cli.md">CLI 레퍼런스</a> · <a href="docs/architecture.md">아키텍처</a> · <a href="CHANGELOG.md">변경 기록</a>
+  <a href="README.en.md">English</a> · 한국어 · <a href="docs/cli.ko.md">CLI 레퍼런스</a> · <a href="docs/architecture.ko.md">아키텍처</a> · <a href="CHANGELOG.md">변경 기록</a>
 </p>
 
 Codex Control Claude는 Codex가 Claude Code에 작업을 위임하고 그 실행을
@@ -542,7 +542,7 @@ task create → task submit → report/result → task review → task accept
 
 `task review`의 `approve`, `revise`, `blocked`는 검토 권고입니다. 실제 승인은
 `task accept`만 만들 수 있으며, 정확한 task 개정, run ID, 결과 SHA-256,
-모든 기준의 근거가 필요합니다. 자세한 내용은 [작업 가이드](docs/tasks.md)를
+모든 기준의 근거가 필요합니다. 자세한 내용은 [작업 가이드](docs/tasks.ko.md)를
 참고하세요.
 
 ## 병렬 실행, 대기열, 다음 턴 메시지
@@ -568,8 +568,8 @@ claude_control dispatch --until-idle --max-seconds 60
 
 부모 task는 정확한 Codex 승인을 받아야 의존 조건을 만족합니다.
 `message enqueue`로 이후 지시를 저장하고 `task revise`에서 message ID를
-선택한 다음 새 개정을 별도로 제출합니다. [대기열](docs/queue.md)과
-[메시지·인수인계](docs/messages.md)를 참고하세요.
+선택한 다음 새 개정을 별도로 제출합니다. [대기열](docs/queue.ko.md)과
+[메시지·인수인계](docs/messages.ko.md)를 참고하세요.
 
 ## 중단과 복구
 
@@ -652,18 +652,18 @@ SQLite 백업과 영속 migration journal을 만들면서 순서대로 이관됩
 
 ## 문서 안내
 
-- [CLI와 보고서 계약](docs/cli.md)
-- [Task 개정, 승인 근거와 migration](docs/tasks.md)
-- [대기열, 의존성, dispatch](docs/queue.md)
-- [다음 턴 메시지와 결과 인수인계](docs/messages.md)
-- [제한된 worker/reviewer workflow](docs/workflows.md)
-- [Workspace 정책과 격리](docs/workspaces.md)
-- [계획·편집·동결 검토 composition](docs/compositions.md)
-- [Effort와 실행 설정](docs/execution-settings.md)
-- [아키텍처와 신뢰 경계](docs/architecture.md)
-- [테스트와 선택적 live test](docs/testing.md)
-- [실제 프로젝트 파일럿 기록](docs/real-project-pilot.md)
-- [OMX에서 도입한 설계](docs/omx-adoption.md)
+- [CLI와 보고서 계약](docs/cli.ko.md)
+- [Task 개정, 승인 근거와 migration](docs/tasks.ko.md)
+- [대기열, 의존성, dispatch](docs/queue.ko.md)
+- [다음 턴 메시지와 결과 인수인계](docs/messages.ko.md)
+- [제한된 worker/reviewer workflow](docs/workflows.ko.md)
+- [Workspace 정책과 격리](docs/workspaces.ko.md)
+- [계획·편집·동결 검토 composition](docs/compositions.ko.md)
+- [Effort와 실행 설정](docs/execution-settings.ko.md)
+- [아키텍처와 신뢰 경계](docs/architecture.ko.md)
+- [테스트와 선택적 live test](docs/testing.ko.md)
+- [실제 프로젝트 파일럿 기록](docs/real-project-pilot.ko.md)
+- [OMX에서 도입한 설계](docs/omx-adoption.ko.md)
 
 ## 테스트
 
@@ -675,7 +675,7 @@ ruff format --check .
 
 일반 테스트는 가짜 Claude 프로세스를 사용하므로 모델을 호출하지 않습니다.
 실제 Claude 계정을 쓰는 live test는 명시적으로 선택해야 하며,
-[테스트 문서](docs/testing.md)에 절차가 있습니다.
+[테스트 문서](docs/testing.ko.md)에 절차가 있습니다.
 
 ## 현재 범위
 
