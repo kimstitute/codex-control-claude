@@ -9,7 +9,8 @@ the [CLI reference](cli.md). Assignment files use the existing
 ## Schema and migration
 
 Task lifecycle requires schema 4 or newer; queues require schema 5, messages schema 6, workflows schema 7, and workspaces schema 8.
-New installations (`claude_control init`) start on schema 8. Existing schema-3 stores must migrate before
+Explicit effort settings require schema 9.
+New installations (`claude_control init`) start on schema 9. Existing schema-3 stores must migrate before
 using any `task` subcommand; a schema-3 store rejects task commands until migrated.
 
 Migration is a maintenance operation, not a background service:
@@ -206,3 +207,13 @@ Existing v1 commands (`start`, `followup`, `resume`, `restart`, `status`,
 `--redeliver-messages` flag. See [messages](messages.md) for selection, cancellation,
 source handoff and delivery receipt semantics. Without selected messages, existing
 v2/v3 contracts remain unchanged.
+
+### Schema 8 to 9
+
+The offline upgrade adds nullable `effort` fields to sessions and runs, plus
+constraints enforcing their immutable values. Existing rows retain their rowids,
+prior fields, prompt bytes, hashes and decisions. NULL means the controller did
+not select an effort; it is not a known model default. The migration creates a
+verified `schema-8-backup.sqlite3` and resumable `migration-8-9.json` journal.
+Queued revisions remain unchanged and omit the CLI flag when dispatched.
+See [execution settings](execution-settings.md) before opting into new settings.

@@ -29,6 +29,8 @@ def report(store, run_id):
         report=None,
         result_sha256=row["result_sha256"],
     )
+    if store.config["schema"] >= 9 and row["effort"] is not None:
+        output["requested_effort"] = row["effort"]
     if row["status"] not in TERMINAL:
         return output
     output["format_status"] = "unavailable"
@@ -99,12 +101,20 @@ def report(store, run_id):
             acknowledge_context=False,
             restart=False,
         )
+        if store.config["schema"] >= 9 and row["effort"] is not None:
+            intent["effort"] = row["effort"]
         digest = hashlib.sha256(json.dumps(intent, sort_keys=True).encode()).hexdigest()
         assignment = snapshot["assignment"]
         if (
             digest != row["fingerprint"]
             or any(assignment[key] != session[key] for key in ("name", "model", "role", "project"))
             or assignment["timeout"] != row["timeout"]
+            or (
+                store.config["schema"] >= 9
+                and (
+                    assignment.get("effort") != row["effort"] or row["effort"] != session["effort"]
+                )
+            )
         ):
             raise ControlError(
                 "invalid_snapshot", "Saved assignment does not match the run intent."

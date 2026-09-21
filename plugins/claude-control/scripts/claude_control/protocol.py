@@ -10,11 +10,15 @@ import json
 import uuid
 from pathlib import Path
 
+from .execution_settings import validate_effort
+
 MAX_STREAM_BYTES = 16 * 1024 * 1024
 _ALIAS_TO_PREFIX = {"sonnet": "claude-sonnet-", "fable": "claude-fable-"}
 
 
-def build_argv(binary: str, model: str, session_id: str, resume: bool = False) -> list[str]:
+def build_argv(
+    binary: str, model: str, session_id: str, resume: bool = False, *, effort: str | None = None
+) -> list[str]:
     """Build argv for a locked-down, non-interactive Claude CLI session invocation."""
     if model not in ("sonnet", "fable"):
         raise ValueError(f"unsupported model alias: {model!r}")
@@ -23,12 +27,14 @@ def build_argv(binary: str, model: str, session_id: str, resume: bool = False) -
     except ValueError as exc:
         raise ValueError(f"invalid session_id: {session_id!r}") from exc
 
+    effort = validate_effort(effort)
     session_flag = ["--resume", session_id] if resume else ["--session-id", session_id]
 
     return [
         binary,
         "--model",
         model,
+        *(["--effort", effort] if effort is not None else []),
         "--safe-mode",
         "--strict-mcp-config",
         "--mcp-config",

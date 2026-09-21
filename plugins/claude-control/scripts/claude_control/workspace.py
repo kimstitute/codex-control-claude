@@ -177,6 +177,11 @@ def _created(db, workspace_id, *, deduplicated):
 def bind(store, workspace_id, assignment, operation_id):
     _require(store)
     sandbox.require()
+    if "effort" in assignment:
+        # Normalize before preflight so an explicit JSON null is never absence.
+        from .assignments import normalize_assignment
+
+        store.preflight_effort(normalize_assignment(assignment)["effort"])
     with store.db(write=True) as db:
         row = _get(db, workspace_id)
         policy = json.loads(row["policy"])
@@ -433,6 +438,20 @@ def _perform(store, row, run_id, operations):
 
 
 def _advance(store, workspace_id):
+    with store.db() as db:
+        candidate = db.execute(
+            "SELECT t.id,t.current_revision FROM workspace_tasks w JOIN tasks t ON t.id=w.task_id "
+            "JOIN workspaces s ON s.id=w.workspace_id "
+            "WHERE w.workspace_id=? AND s.state='active' AND t.active_run_id IS NULL",
+            (workspace_id,),
+        ).fetchone()
+    if candidate:
+        tasks.preflight(
+            store,
+            candidate["id"],
+            candidate["current_revision"],
+            f"workspace:{workspace_id}:submit:{candidate['current_revision']}",
+        )
     with store.db(write=True) as db:
         row = _get(db, workspace_id)
         if row["state"] != "active":

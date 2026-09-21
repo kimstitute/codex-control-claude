@@ -40,6 +40,18 @@ def _record(db, operation_id, fingerprint, response):
     )
 
 
+def _operation_recorded(store, operation_id):
+    """Let an existing operation reach its transactional deduplication path."""
+    if store.config["schema"] < 4:
+        return False
+    with store.db() as db:
+        return bool(
+            db.execute(
+                "SELECT 1 FROM task_operations WHERE operation_id=?", (operation_id,)
+            ).fetchone()
+        )
+
+
 def _task(db, task_id, revision=None):
     row = db.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
     if not row:
@@ -68,7 +80,7 @@ def _assignment(store, assignment):
     return assignment
 
 
-def _context(db, session_id, parent, assignment):
+def _context(store, db, session_id, parent, assignment, *, inherit_effort):
     if not session_id:
         if parent:
             raise ControlError("context_changed", "A parent run requires an explicit session.")
@@ -76,6 +88,18 @@ def _context(db, session_id, parent, assignment):
     session = db.execute("SELECT * FROM sessions WHERE id=?", (session_id,)).fetchone()
     if not session:
         raise ControlError("session_not_found", "Unknown managed session UUID.")
+    session_effort = session["effort"] if store.config["schema"] >= 9 else None
+    if "effort" in assignment:
+        if assignment["effort"] != session_effort:
+            raise ControlError(
+                "session_incompatible", "Task effort must match the session's pinned effort."
+            )
+    elif inherit_effort and session_effort is not None:
+        assignment["effort"] = session_effort
+    elif not inherit_effort and assignment.get("effort") != session_effort:
+        raise ControlError(
+            "session_incompatible", "Frozen task effort must match the session's pinned effort."
+        )
     if any(session[k] != assignment[k] for k in ("model", "role", "project")):
         raise ControlError(
             "session_incompatible", "Task model, role and project must match session."
@@ -117,6 +141,9 @@ def create(
     parent_run_id=None,
     acknowledge_context=False,
 ):
+    assignment = _assignment(store, assignment)
+    if "effort" in assignment and not _operation_recorded(store, operation_id):
+        store.preflight_effort(assignment["effort"])
     store.refresh()
     with store.db(write=True) as db:
         return create_in(
@@ -152,7 +179,7 @@ def create_in(
     fingerprint, prior = _operation(db, operation_id, intent)
     if prior:
         return {**prior, "deduplicated": True}
-    backend = _context(db, session_ref, parent_run_id, assignment)
+    backend = _context(store, db, session_ref, parent_run_id, assignment, inherit_effort=True)
     task_id = str(uuid.uuid4())
     prompt = contract.render(assignment, task_id, 1, parent_run_id, backend)
     db.execute(
@@ -182,6 +209,9 @@ def revise(
     message_ids=None,
     redeliver_messages=False,
 ):
+    assignment = _assignment(store, assignment)
+    if "effort" in assignment and not _operation_recorded(store, operation_id):
+        store.preflight_effort(assignment["effort"])
     store.refresh()
     with store.db(write=True) as db:
         return revise_in(
@@ -238,8 +268,16 @@ def revise_in(
 
     mutation_guard(store, db, task_id, workflow_id, workspace_id)
     task = _task(db, task_id, base_revision)
-    backend = _context(db, task["session_id"], parent_run_id, assignment)
     previous = contract.read(_revision(db, task_id, base_revision)["prompt"])
+    previous_effort = previous["assignment"].get("effort")
+    if "effort" in assignment:
+        if assignment["effort"] != previous_effort:
+            raise ControlError("revision_conflict", "Effort is fixed across task revisions.")
+    elif previous_effort is not None:
+        assignment["effort"] = previous_effort
+    backend = _context(
+        store, db, task["session_id"], parent_run_id, assignment, inherit_effort=False
+    )
     if any(previous["assignment"][k] != assignment[k] for k in ("model", "role", "project", "id")):
         raise ControlError("revision_conflict", "Model, role, project and assignment ID are fixed.")
     number = base_revision + 1
@@ -271,8 +309,23 @@ def _never_started(row):
     return True
 
 
+def preflight(store, task_id, revision, operation_id=None):
+    """Probe an explicitly pinned effort outside any write transaction."""
+    _require_schema(store)
+    if operation_id is not None and _operation_recorded(store, operation_id):
+        return None
+    with store.db() as db:
+        task = _task(db, task_id, revision)
+        snapshot = contract.read(_revision(db, task["id"], revision)["prompt"])
+    effort = snapshot["assignment"].get("effort")
+    if effort is not None:
+        store.preflight_effort(effort)
+    return effort
+
+
 def submit(store, task_id, revision, operation_id, *, retry=False):
     _require_schema(store)
+    preflight(store, task_id, revision, operation_id)
     store.refresh()  # Materializes claim expiry before reservation; workers use status CAS.
     with store.db(write=True) as db:
         from .workflow import mutation_guard
@@ -374,6 +427,7 @@ def submit_in(store, db, task_id, revision, operation_id, *, retry=False, worksp
         timeout=assignment["timeout"],
         name=None if session_ref else "task-" + task_id,
         model=assignment["model"],
+        effort=assignment.get("effort"),
         role=assignment["role"],
         project=assignment["project"],
         session_ref=session_ref,

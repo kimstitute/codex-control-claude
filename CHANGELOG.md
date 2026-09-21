@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.8.0 — 2026-09-21
+
+- Add explicit, session-pinned Claude effort to raw sessions, immutable task
+  assignments, queues, workflow revisions and workspace turns.
+- Add independent `workflow create --reviewer-effort` and requested-effort evidence.
+- Probe CLI support before admission and again before launch; preserve model
+  selection, safe mode, tools/MCP restrictions and environment isolation.
+- Add resumable offline schema 8→9 migration. Legacy effort omission, prompt
+  bytes, fingerprints and review decisions remain unchanged.
+- Adopt normalized launch-setting patterns from OMX without a runtime dependency.
+  Structured-output recovery remains separate follow-up work.
+
 ## 0.7.1 — 2026-09-21
 
 - Reject non-UTF-8 surrogate text in workspace paths and named-check arguments

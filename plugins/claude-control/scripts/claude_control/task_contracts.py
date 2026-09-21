@@ -265,6 +265,13 @@ def inspect_run(store, db, row):
         or task["session_id"] != row["session_id"]
         or any(snapshot["assignment"][k] != session[k] for k in ("model", "role", "project"))
         or snapshot["assignment"]["timeout"] != row["timeout"]
+        or (
+            store.config["schema"] >= 9
+            and (
+                snapshot["assignment"].get("effort") != row["effort"]
+                or row["effort"] != session["effort"]
+            )
+        )
         or snapshot["task"]["parent_run_id"] != link["expected_parent_run_id"]
         or snapshot["task"]["backend_id"] != link["expected_backend_id"]
         or (link["expected_backend_id"] and row["backend_id"] != link["expected_backend_id"])

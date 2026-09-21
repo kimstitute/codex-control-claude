@@ -212,7 +212,7 @@ def _run(arguments: list[str]) -> int:
         return 0
     if "--help" in arguments:
         print(
-            "fake Claude CLI: --model --safe-mode --setting-sources "
+            "fake Claude CLI: --model --effort --safe-mode --setting-sources "
             "--strict-mcp-config --session-id --resume --tools "
             "--permission-prompts --output-format --disable-slash-commands "
             "--mcp-config --permission-mode --verbose -p"

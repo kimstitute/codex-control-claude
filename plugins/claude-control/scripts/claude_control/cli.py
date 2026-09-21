@@ -13,6 +13,7 @@ from pathlib import Path
 
 from . import __version__, message_cli, task_cli, workflow_cli, workspace_cli
 from .assignments import CONTRACT, ROLE_PRESETS, load_assignment, render_assignment
+from .execution_settings import EFFORTS
 from .orchestration import observe, report
 from .runner import child_environment, exec_claude, launch_worker, run_worker
 from .store import ACTIVE, ControlError, Store
@@ -58,6 +59,7 @@ def parser():
         cmd.add_argument("--prompt-file", type=Path, required=True)
         cmd.add_argument("--request-id", required=True)
         cmd.add_argument("--timeout", type=float, default=300)
+        cmd.add_argument("--effort", choices=EFFORTS)
     for name in (
         "status",
         "result",
@@ -124,6 +126,7 @@ def doctor(store, check_auth):
         state_dir=str(store.path),
         claude_version=version.stdout.strip(),
         missing_options=missing,
+        effort_supported=help_result.returncode == 0 and "--effort" in help_result.stdout.split(),
         ready=version.returncode == 0 and help_result.returncode == 0 and not missing,
         max_parallel=store.config["max_parallel"],
         max_queued=store.config.get("max_queued"),
@@ -187,6 +190,7 @@ def execute(args):
             model=assignment["model"],
             role=assignment["role"],
             project=assignment["project"],
+            effort=assignment.get("effort"),
         )
         if created:
             launch_worker(store, run_id)
@@ -199,7 +203,10 @@ def execute(args):
         if args.prompt_file.stat().st_size > 1024 * 1024:
             raise ControlError("invalid_prompt", "Prompt file exceeds 1 MiB.")
         options = dict(
-            prompt=args.prompt_file.read_text(), request_id=args.request_id, timeout=args.timeout
+            prompt=args.prompt_file.read_text(),
+            request_id=args.request_id,
+            timeout=args.timeout,
+            effort=args.effort,
         )
         if args.command == "start":
             options.update(name=args.name, model=args.model, role=args.role, project=args.project)

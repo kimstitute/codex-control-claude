@@ -146,3 +146,30 @@ Version 0.6 combines task revisions, queue admission and messages into a fixed p
 ## P5: explicit workspace authority
 
 Version 0.7 adds a separate finite workspace loop for controller-mediated file reads, full-file writes and named isolated checks. It preserves existing Claude safe mode and task history, freezes results for independent review, and leaves integration to Codex. This adopts explicit ownership and verification boundaries without introducing tmux control, native tool access, recursive agents or automatic merges. See [workspaces](workspaces.md).
+
+
+## Version 0.8: normalized execution settings
+
+The OMX 0.20.5 installation was inspected again for this slice, specifically
+`dist/team/model-contract.js` (argv normalization and explicit/default precedence)
+and `dist/team/runtime.js` (frozen worker launch plans and durable startup state).
+The reference project is MIT licensed. This controller independently implements
+the pattern; no OMX runtime code, dependency or tmux machinery is copied.
+
+We adopt one validated argv representation, persistence of the resolved setting
+before launch, and reapplication of the session's stored value on resume. Claude
+uses `--effort`, rather than OMX/Codex's `model_reasoning_effort` configuration.
+Malformed inputs fail instead of being silently discarded. Worker startup wait
+limits in OMX are distinct from this controller's model execution deadlines.
+
+Claude documents effort as session-only and the effort environment variable as
+an override. The controller therefore re-emits pinned effort on every run and
+excludes that variable. Its five-value enum remains explicit; `doctor` checks
+installed flag support, not every model/value combination. See the official
+[CLI reference](https://code.claude.com/docs/en/cli-reference),
+[environment-variable reference](https://code.claude.com/docs/en/env-vars), and
+[headless session guide](https://code.claude.com/docs/en/headless).
+
+Strict output compatibility and explicit malformed-response recovery remain the
+next separate steps. Effort control does not make the previous real editor pilot
+successful or automatically connect P4 review workflows with P5 workspaces.

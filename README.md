@@ -18,6 +18,11 @@ Codex Control Claude gives Codex a practical way to delegate work to Claude, kee
 
 **Version 0.7 adds controlled workspace editing and checks.** Codex can authorize a private Git snapshot, exact writable files and named test commands. Claude requests operations in structured reports; the controller performs them and returns receipts. Claude's native tools and MCP remain disabled. Ordinary supplied-text delegation continues to work.
 
+**Version 0.8 adds explicit Claude effort settings.** Pin `low`, `medium`, `high`,
+`xhigh` or `max` when creating a session or assignment; continuations reuse the
+stored value. Review workflows accept an independent `--reviewer-effort`. Existing
+unspecified settings stay unspecified. See [execution settings](docs/execution-settings.md).
+
 See the [real-project pilot](docs/real-project-pilot.md) for observed timeout and
 report-format failures, the verified input-validation fix, and the next reliability gates.
 
@@ -108,6 +113,7 @@ Public operation commands return JSON. Prepare a prompt file and submit a task:
 python3 ~/plugins/claude-control/scripts/claude_control_cli.py start \
   --name implementation \
   --model sonnet \
+  --effort medium \
   --role implementer \
   --project /absolute/path/to/your/project \
   --prompt-file /absolute/path/to/task.txt \
@@ -157,7 +163,7 @@ git pull --ff-only
 python3 install.py --update
 ```
 
-Open a new Codex task after reinstalling. Updates preserve the separate runtime store. New stores use schema 8. Existing schema-3/4/5/6/7 stores require explicit `migrate --offline` for all new features; see [migration and recovery](docs/tasks.md#schema-and-migration). Updates do not migrate a live store automatically.
+Open a new Codex task after reinstalling. Updates preserve the separate runtime store. New stores use schema 9. Existing schema-3/4/5/6/7/8 stores require explicit `migrate --offline` for all new features; see [migration and recovery](docs/tasks.md#schema-and-migration). Updates do not migrate a live store automatically.
 
 ## Tests
 
@@ -171,7 +177,7 @@ To deliberately run the live suite using your own Claude account, see [testing](
 
 ## Current scope
 
-Version 0.7 supports Linux, supplied-text tasks, bounded controller-mediated workspace operations, and sessions created by this controller. Native file/shell tools in Claude, adopting arbitrary existing sessions, conversation forking, Windows/macOS support, an MCP adapter, cross-host dispatch, and automatic Codex wake-up are future work.
+Version 0.8 supports Linux, supplied-text tasks, bounded controller-mediated workspace operations, and sessions created by this controller. Native file/shell tools in Claude, adopting arbitrary existing sessions, conversation forking, Windows/macOS support, an MCP adapter, cross-host dispatch, and automatic Codex wake-up are future work.
 
 Maintained by [kimstitute](https://github.com/kimstitute). This is an independent project, not an official OpenAI or Anthropic integration.
 

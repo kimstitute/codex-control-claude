@@ -11,6 +11,7 @@ import sys
 import time
 from pathlib import Path
 
+from .execution_settings import binary_identity, validate_effort
 from .protocol import build_argv, parse_stream
 from .store import (
     CLAIM_SECONDS,
@@ -25,6 +26,7 @@ from .store import (
 )
 
 OUTPUT_LIMIT = 16 * 1024 * 1024
+EFFORT_IDENTITY_ENV = "CLAUDE_CONTROL_EFFORT_BINARY"
 
 
 def child_environment():
@@ -94,14 +96,55 @@ def child_exited(proc):
     return os.waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None
 
 
+def checked_effort(store, row, session, *, probe=True):
+    effort = row.get("effort")
+    validate_effort(effort)
+    if effort != session.get("effort"):
+        raise ControlError("session_incompatible", "Run effort does not match its session.")
+    if store.config["schema"] >= 4:
+        from . import task_contracts
+
+        with store.db() as db:
+            version = db.execute(
+                "SELECT v.prompt FROM task_runs t JOIN task_revisions v "
+                "ON v.task_id=t.task_id AND v.revision=t.revision WHERE t.run_id=?",
+                (row["id"],),
+            ).fetchone()
+        if version and task_contracts.read(version["prompt"])["assignment"].get("effort") != effort:
+            raise ControlError("session_incompatible", "Run effort differs from frozen assignment.")
+    if probe:
+        store.preflight_effort(effort, fresh=True)
+    elif effort is not None:
+        try:
+            expected = json.loads(os.environ.get(EFFORT_IDENTITY_ENV, "null"))
+            if expected != list(binary_identity(store.config["claude_bin"])):
+                raise ValueError("Verified Claude binary identity changed before exec.")
+        except (OSError, ValueError) as exc:
+            raise ControlError("effort_unsupported", str(exc)) from None
+    return effort
+
+
 def exec_claude(state_dir, run_id):
     """Persist exec identity before model launch; a late wrapper cannot escape quarantine."""
     store = Store(state_dir)
     row = store.get_run(run_id)
     session = store.session(row["session_id"])
     project = store.project(session["project"])
+    try:
+        effort = checked_effort(store, row, session, probe=False)
+    except ControlError as exc:
+        with store.db(write=True) as db:
+            db.execute(
+                "UPDATE runs SET reason=? WHERE id=? AND status='launching' AND child_pid IS NULL",
+                (exc.code, run_id),
+            )
+        raise
     argv = build_argv(
-        store.config["claude_bin"], session["model"], row["backend_id"], bool(row["resume"])
+        store.config["claude_bin"],
+        session["model"],
+        row["backend_id"],
+        bool(row["resume"]),
+        effort=effort,
     )
     argv[1:1] = ["--setting-sources", ""]
     identity = proc_identity(os.getpid())
@@ -183,11 +226,13 @@ def run_worker(state_dir, run_id):
             row = store.get_run(run_id)
             session = store.session(row["session_id"])
             project = store.project(session["project"])
+            effort = checked_effort(store, row, session)
             argv = build_argv(
                 store.config["claude_bin"],
                 session["model"],
                 row["backend_id"],
                 bool(row["resume"]),
+                effort=effort,
             )
             # Safe mode disables hooks/plugins; empty sources further excludes project settings.
             argv[1:1] = ["--setting-sources", ""]
@@ -212,9 +257,13 @@ def run_worker(state_dir, run_id):
                     cwd=project,
                     requested_model=session["model"],
                     backend_session_id=row["backend_id"],
+                    **({"requested_effort": effort} if effort is not None else {}),
                 ),
             )
             parent = os.getpid()
+            exec_environment = child_environment()
+            if effort is not None:
+                exec_environment[EFFORT_IDENTITY_ENV] = json.dumps(store._effort_identity)
             script = Path(__file__).resolve().parents[1] / "claude_control_cli.py"
             with (
                 (directory / "prompt.txt").open("rb") as source,
@@ -237,7 +286,7 @@ def run_worker(state_dir, run_id):
                     stderr=err,
                     start_new_session=True,
                     close_fds=True,
-                    env=child_environment(),
+                    env=exec_environment,
                     preexec_fn=lambda: bind_parent(parent),
                 )
                 start = time.monotonic()
@@ -268,6 +317,8 @@ def run_worker(state_dir, run_id):
                 exit_code = kill_group(proc, graceful=bool(reason))
                 proc = None
             final_state = store.get_run(run_id)
+            if reason is None and final_state["child_pid"] is None and final_state["reason"]:
+                reason = final_state["reason"]
             if (
                 reason is None
                 and final_state["cancel_requested"]
@@ -326,7 +377,12 @@ def run_worker(state_dir, run_id):
                     (
                         status,
                         time.time(),
-                        f"worker_error:{type(exc).__name__}:{exc}"[:2000],
+                        exc.code
+                        if isinstance(exc, ControlError)
+                        and exc.code
+                        in ("effort_unsupported", "effort_probe_failed", "session_incompatible")
+                        and proc is None
+                        else f"worker_error:{type(exc).__name__}:{exc}"[:2000],
                         run_id,
                     ),
                 )

@@ -194,3 +194,42 @@ the code proposal independently; a separate read-only Fable review recommended
 APPROVE. See the [pilot record](real-project-pilot.md) for provenance, the 6,177
 independent boundary checks, and the required follow-up work. The editor tasks
 remain unaccepted; acceptance of the review artifact does not change that.
+
+
+## 0.8.0 execution-setting verification
+
+The effort regression group covers strict setting validation, one explicit flag
+per launch, raw and structured session continuation, independent reviewers,
+workspace persistence, prior report/fingerprint compatibility, and offline
+8→9 migration with crash injection at all five journal checkpoints.
+
+Capability tests exercise unsupported admission without a reservation, support
+loss before worker launch, executable replacement between supervisor and exec,
+a one-second run with no wrapper probe, and idempotent replay without probing.
+Queue tests exercise a new entry arriving during preflight, transient probe
+failure without a reservation, and recorded dispatch operation replay.
+
+Python 3.10 passes all 29 new tests. Sonnet supplied the bounded argument/validator
+proposal; Codex integrated persistence and lifecycle behavior. Fable reviewed the
+design and implementation in one preserved session and approved the repairs,
+with the final whole-suite rerun now completed. The initial whole-suite run exposed
+loss of the original cleanup error text; the implementation was corrected and
+the existing regression passed. The final Python 3.14 run passed all 292 tests,
+including six real Bubblewrap isolation tests, with no skips. Python source and
+test hashes were held fixed throughout that final run. Ruff, plugin/skill validation
+and local documentation links passed.
+
+A separate deliberate live test verified Sonnet `medium` start and exact-session
+resume with successful nonce recall, plus Fable `high` invocation. Actual CLI-reported
+models were `claude-sonnet-5` and `claude-fable-5-1`. All three runs completed with
+zero tool calls and no model substitution. The default store was idle before this
+synthetic test store was created; it was not used to bypass an occupied slot.
+Evidence records requested flags, not independently measured effective effort.
+
+
+Installed verification matched all 32 plugin files and upgraded an idle schema-8
+store to schema 9 using a verified backup. All prior columns and rowids across
+the existing tables were identical: nine sessions and nineteen runs were retained.
+Every historical report matched the previous v0.7.1 release both before and after
+the migration. Database integrity and foreign keys passed; installed code also
+read all three live test runs without making additional model calls.

@@ -273,10 +273,29 @@ def _add_step(db, row, phase, number, task_id, revision, source=None, report=Non
 
 
 def create(
-    store, assignment, operation_id, *, max_revisions=2, max_calls=6, dispatch_window_seconds=900
+    store,
+    assignment,
+    operation_id,
+    *,
+    max_revisions=2,
+    max_calls=6,
+    dispatch_window_seconds=900,
+    reviewer_effort=None,
 ):
     _require(store)
     assignment = tasks._assignment(store, assignment)
+    recorded = tasks._operation_recorded(store, operation_id)
+    if "effort" in assignment and not recorded:
+        store.preflight_effort(assignment["effort"])
+    if reviewer_effort is not None:
+        from .execution_settings import validate_effort
+
+        try:
+            validate_effort(reviewer_effort)
+        except ValueError as exc:
+            raise ControlError("invalid_workflow", str(exc)) from None
+        if not recorded:
+            store.preflight_effort(reviewer_effort)
     if assignment["role"] not in ("executor", "planner", "architect"):
         raise ControlError(
             "invalid_workflow", "Worker role must be executor, planner or architect."
@@ -303,6 +322,8 @@ def create(
         reviewer_model="fable",
         reviewer_role="critic",
     )
+    if reviewer_effort is not None:
+        policy["reviewer_effort"] = reviewer_effort
     with store.db(write=True) as db:
         fingerprint, prior = tasks._operation(
             db, operation_id, dict(kind="workflow_create", policy=policy)
@@ -313,7 +334,7 @@ def create(
         prefix = "workflow:" + workflow_id
         worker = tasks.create_in(store, db, assignment, prefix + ":worker")
         review_assignment = dict(
-            assignment,
+            {key: value for key, value in assignment.items() if key != "effort"},
             id="review-" + workflow_id,
             name="Review: " + assignment["name"][:110],
             model="fable",
@@ -327,6 +348,8 @@ def create(
                 "Review every frozen workflow criterion against the exact source and return a structured recommendation."
             ],
         )
+        if reviewer_effort is not None:
+            review_assignment["effort"] = reviewer_effort
         reviewer = tasks.create_in(store, db, review_assignment, prefix + ":reviewer")
         db.execute(
             "INSERT INTO workflows VALUES(?,?,?,?,?,'active',NULL,'worker',0,NULL,?)",

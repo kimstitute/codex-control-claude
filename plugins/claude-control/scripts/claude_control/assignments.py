@@ -11,6 +11,7 @@ import math
 import os
 import re
 
+from .execution_settings import validate_effort
 from .store import ControlError
 
 CONTRACT = "claude-control.assignment.v1"
@@ -30,7 +31,7 @@ REQUIRED_FIELDS = {
     "acceptance_criteria",
     "deliverable",
 }
-OPTIONAL_FIELDS = {"model", "timeout"}
+OPTIONAL_FIELDS = {"model", "timeout", "effort"}
 
 ROLE_PRESETS = {
     "executor": {
@@ -291,7 +292,15 @@ def normalize_assignment(data):
     )
     timeout = _normalize_timeout(data.get("timeout", 300.0), "invalid_assignment", required=True)
 
-    return {
+    if "effort" in data:
+        if data["effort"] is None:
+            raise ControlError("invalid_assignment", "effort cannot be null")
+        try:
+            effort = validate_effort(data["effort"])
+        except ValueError as exc:
+            raise ControlError("invalid_assignment", str(exc)) from None
+
+    normalized = {
         "id": assignment_id,
         "name": name,
         "role": role,
@@ -304,6 +313,9 @@ def normalize_assignment(data):
         "model": model,
         "timeout": timeout,
     }
+    if "effort" in data:
+        normalized["effort"] = effort
+    return normalized
 
 
 def render_assignment(assignment):
@@ -374,7 +386,8 @@ def read_snapshot(prompt):
     assignment = data["assignment"]
     if not isinstance(assignment, dict):
         raise ControlError("invalid_snapshot", "snapshot assignment must be an object")
-    if set(assignment.keys()) != (REQUIRED_FIELDS | OPTIONAL_FIELDS):
+    old_fields = REQUIRED_FIELDS | {"model", "timeout"}
+    if set(assignment.keys()) not in (old_fields, old_fields | {"effort"}):
         raise ControlError("invalid_snapshot", "snapshot assignment has unexpected fields")
 
     assignment_id = assignment["id"]
@@ -405,6 +418,13 @@ def read_snapshot(prompt):
 
     model = _normalize_model(assignment.get("model"), "invalid_snapshot", default=None)
     timeout = _normalize_timeout(assignment.get("timeout"), "invalid_snapshot", required=True)
+    if "effort" in assignment:
+        if assignment["effort"] is None:
+            raise ControlError("invalid_snapshot", "snapshot assignment.effort cannot be null")
+        try:
+            validate_effort(assignment["effort"])
+        except ValueError as exc:
+            raise ControlError("invalid_snapshot", str(exc)) from None
 
     report_contract = data["report_contract"]
     if not isinstance(report_contract, dict):

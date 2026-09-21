@@ -292,6 +292,32 @@ def tick(store, *, deadline=None, workflow_id=None):
     _require(store)
     store.refresh()
     started = []
+    # Probe executable capabilities before admission, never while holding a writer lock.
+    with store.db() as db:
+        candidates = db.execute(
+            "SELECT id,task_id,revision FROM queue_entries "
+            "WHERE state='waiting' AND terminal_block=0 ORDER BY id"
+        ).fetchall()
+    preflight_errors = {}
+    preflighted = set()
+    for candidate in candidates:
+        if deadline is not None and time.monotonic() >= deadline:
+            break
+        if workflow_id is not None:
+            from .workflow import owner
+
+            with store.db() as db:
+                owning = owner(db, candidate["task_id"])
+            if owning is None or owning["id"] != workflow_id:
+                continue
+        key = (candidate["id"], candidate["task_id"], candidate["revision"])
+        operation = f"dispatch:{store.config['installation_id']}:{candidate['id']}"
+        try:
+            tasks.preflight(store, candidate["task_id"], candidate["revision"], operation)
+        except (ControlError, OSError, ValueError) as exc:
+            preflight_errors[key] = exc
+        else:
+            preflighted.add(key)
     with store.db(write=True) as db:
         entries = db.execute(
             "SELECT * FROM queue_entries WHERE state='waiting' ORDER BY id"
@@ -307,8 +333,14 @@ def tick(store, *, deadline=None, workflow_id=None):
                 break
             if entry["terminal_block"]:
                 continue
+            key = (entry["id"], entry["task_id"], entry["revision"])
+            if key not in preflighted and key not in preflight_errors:
+                continue
             db.execute("SAVEPOINT admission")
             try:
+                preflight_error = preflight_errors.get(key)
+                if preflight_error:
+                    raise preflight_error
                 operation = f"dispatch:{store.config['installation_id']}:{entry['id']}"
                 run_id, created = tasks.submit_in(
                     store, db, entry["task_id"], entry["revision"], operation

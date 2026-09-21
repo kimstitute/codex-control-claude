@@ -71,6 +71,7 @@ Write an assignment JSON file, using an existing project in your configured root
   "scope": ["Only the supplied parser"],
   "acceptance_criteria": ["Identify concrete failure cases and distinguish assumptions"],
   "deliverable": "A concise review with proposed regression cases.",
+  "effort": "high",
   "timeout": 300
 }
 ```
@@ -81,6 +82,8 @@ claude_control delegate --assignment-file /absolute/path/to/assignment.json \
 ```
 
 `model` and `timeout` are optional; defaults are the role's model and 300 seconds.
+Optional `effort` accepts `low`, `medium`, `high`, `xhigh` or `max`; omission preserves
+CLI behavior, while JSON null is invalid. See [execution settings](execution-settings.md).
 An explicit `"model": "sonnet"` or `"model": "fable"` overrides the preset. The
 resolved model is always passed explicitly to Claude. There is no automatic
 classifier or model fallback. All other fields are required. `context` may be
@@ -256,7 +259,7 @@ claude_control reconcile --run <run-uuid>
 
 On the same boot, reconcile must run in the worker's PID namespace. It releases uncertainty only when the recorded worker and process group are no longer live, or when a host reboot proves the earlier processes cannot still be running. It does not blindly signal a saved PID. A conversation with a mismatched backend session remains blocked.
 
-New stores use schema 8. Existing schema 3/4/5/6/7 requires [explicit offline migration](tasks.md#schema-and-migration) for task features; legacy diagnosis and stop/reconcile remain available before migration. Schemas 1 and 2 are unsupported. Never delete or replace state to bypass an active or unknown execution.
+New stores use schema 9. Existing schema 3/4/5/6/7/8 requires [explicit offline migration](tasks.md#schema-and-migration) for task features; legacy diagnosis and stop/reconcile remain available before migration. Schemas 1 and 2 are unsupported. Never delete or replace state to bypass an active or unknown execution.
 
 ## Troubleshooting
 
@@ -300,3 +303,14 @@ make no model calls. Delivery receipts bind only at explicit submit or dispatch.
 ## Controlled workspaces
 
 `workspace doctor/create/task/run/status/list/export/stop/reconcile` are documented in the [workspace guide](workspaces.md). Creation reserves one immutable workspace identity before copying. Use explicit file/check policies, a finite run admission window, and a frozen export for review. Workspaces require schema 8 and a working Linux Bubblewrap backend; legacy supplied-text tasks do not.
+
+## Explicit execution settings
+
+`start`, `followup`, `resume` and `restart` accept `--effort <level>`.
+An existing session pins its original setting, including omission; a different
+explicit value is rejected. Structured assignments use the optional `effort` key.
+`workflow create --reviewer-effort high` pins the independent reviewer setting.
+`doctor` reports `effort_supported`; this checks CLI flag availability, not model
+support for every effort value. Explicit effort requires schema 9.
+
+See [execution settings and compatibility](execution-settings.md).

@@ -8,14 +8,17 @@ import os
 import socket
 import sqlite3
 import stat
+import subprocess
 import sys
 import time
 import uuid
 from contextlib import closing, contextmanager
 from pathlib import Path
 
+from .execution_settings import binary_identity, probe_effort, validate_effort
 from .schema import (
     VERSION,
+    add_execution_schema,
     add_message_schema,
     add_queue_schema,
     add_task_schema,
@@ -169,6 +172,7 @@ class Store:
                 add_message_schema(db)
                 add_workflow_schema(db)
                 add_workspace_schema(db)
+                add_execution_schema(db)
                 db.execute("PRAGMA journal_mode=WAL")
             os.chmod(directory / "state.sqlite3", 0o600)
             (directory / "runs").mkdir(mode=0o700, exist_ok=True)
@@ -184,7 +188,7 @@ class Store:
             raise ControlError(
                 "not_initialized", "Run init with this state directory first."
             ) from None
-        if self.config.get("schema") not in (3, 4, 5, 6, 7, VERSION):
+        if self.config.get("schema") not in (3, 4, 5, 6, 7, 8, VERSION):
             raise ControlError("schema_mismatch", "Unsupported state schema.")
         if self.config.get("host_id") != host_identity() or self.config.get("uid") != os.getuid():
             raise ControlError(
@@ -204,7 +208,7 @@ class Store:
         with (self.path / "lifecycle.lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_SH)
             config = json.loads((self.path / "config.json").read_text())
-            if config != self.config or config.get("schema") not in (3, 4, 5, 6, 7, VERSION):
+            if config != self.config or config.get("schema") not in (3, 4, 5, 6, 7, 8, VERSION):
                 raise ControlError("schema_mismatch", "State changed; reopen or finish migrate.")
             db = sqlite3.connect(self.path / "state.sqlite3", timeout=10, isolation_level=None)
             db.row_factory = sqlite3.Row
@@ -347,11 +351,38 @@ class Store:
                         (status, row["id"]),
                     )
 
+    def preflight_effort(self, effort, *, fresh=False):
+        try:
+            validate_effort(effort)
+        except ValueError as exc:
+            raise ControlError("invalid_argument", str(exc)) from None
+        if effort is None:
+            return
+        if self.config["schema"] < 9:
+            raise ControlError("migration_required", "Explicit effort requires migrate --offline.")
+        try:
+            if not fresh and getattr(self, "_effort_identity", None) == binary_identity(
+                self.config["claude_bin"]
+            ):
+                return
+            identity, supported = probe_effort(self.config["claude_bin"], self.path, fresh=fresh)
+        except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+            raise ControlError(
+                "effort_probe_failed", f"Cannot verify CLI effort support: {exc}"
+            ) from None
+        if not supported:
+            raise ControlError(
+                "effort_unsupported", "Configured Claude CLI does not advertise --effort."
+            )
+        self._effort_identity = identity
+
     def reserve(self, **options):
         self.refresh()
         # Keep legacy corruption observation outside a reservation transaction.
         if options.get("session_ref"):
-            self.session(options["session_ref"])
+            session = self.session(options["session_ref"])
+            if options.get("effort") is None:
+                options["effort"] = session.get("effort")
             with self.db() as db:
                 previous = db.execute(
                     "SELECT id FROM runs WHERE session_id=? ORDER BY rowid DESC LIMIT 1",
@@ -359,6 +390,12 @@ class Store:
                 ).fetchone()
             if previous:
                 self.get_run(previous["id"])
+        with self.db() as db:
+            recorded = db.execute(
+                "SELECT 1 FROM runs WHERE request_id=?", (options.get("request_id"),)
+            ).fetchone()
+        if not recorded:
+            self.preflight_effort(options.get("effort"))
         with self.db(write=True) as db:
             return self.reserve_in(db, **options)
 
@@ -377,7 +414,12 @@ class Store:
         acknowledge_context=False,
         restart=False,
         resume_unstarted=False,
+        effort=None,
     ):
+        try:
+            validate_effort(effort)
+        except ValueError as exc:
+            raise ControlError("invalid_argument", str(exc)) from None
         if not prompt.strip() or len(prompt.encode()) > 1024 * 1024:
             raise ControlError("invalid_prompt", "Prompt must be nonempty and at most 1 MiB.")
         if not request_id or len(request_id) > 200:
@@ -402,6 +444,11 @@ class Store:
                 "Restart creates a fresh backend conversation; --acknowledge-context is required.",
             )
         if session:
+            if effort is not None and effort != session.get("effort"):
+                raise ControlError(
+                    "session_incompatible", "Effort is pinned to the managed session."
+                )
+            effort = session.get("effort")
             project = self.project(session["project"])
             model, role = session["model"], session["role"]
         else:
@@ -409,6 +456,11 @@ class Store:
             if model not in ("sonnet", "fable") or not name or len(name) > 120 or not role:
                 raise ControlError(
                     "invalid_session", "A name, role and explicit sonnet/fable model are required."
+                )
+        if effort is not None:
+            if self.config["schema"] < 9:
+                raise ControlError(
+                    "migration_required", "Explicit effort requires migrate --offline."
                 )
         intent = dict(
             prompt=prompt,
@@ -423,6 +475,8 @@ class Store:
         )
         if resume_unstarted:
             intent["resume_unstarted"] = True
+        if effort is not None:
+            intent["effort"] = effort
         fingerprint = hashlib.sha256(json.dumps(intent, sort_keys=True).encode()).hexdigest()
         now = time.time()
         prior = db.execute("SELECT * FROM runs WHERE request_id=?", (request_id,)).fetchone()
@@ -432,6 +486,17 @@ class Store:
                     "request_conflict", "Request ID already belongs to different input."
                 )
             return prior["id"], False
+        if effort is not None:
+            try:
+                checked = getattr(self, "_effort_identity", None) == binary_identity(
+                    self.config["claude_bin"]
+                )
+            except OSError as exc:
+                raise ControlError("effort_probe_failed", str(exc)) from None
+            if not checked:
+                raise ControlError(
+                    "effort_unchecked", "Check CLI effort support before reservation."
+                )
         if session:
             session = dict(
                 db.execute("SELECT * FROM sessions WHERE id=?", (session["id"],)).fetchone()
@@ -492,8 +557,12 @@ class Store:
                 created=now,
             )
             try:
+                columns = "id,name,backend_id,model,role,project,created"
+                if self.config["schema"] >= 9:
+                    columns += ",effort"
+                    session["effort"] = effort
                 db.execute(
-                    "INSERT INTO sessions(id,name,backend_id,model,role,project,created) VALUES(:id,:name,:backend_id,:model,:role,:project,:created)",
+                    f"INSERT INTO sessions({columns}) VALUES({','.join(':' + col for col in columns.split(','))})",
                     session,
                 )
             except sqlite3.IntegrityError:
@@ -511,18 +580,24 @@ class Store:
         directory = self.run_dir(run_id)
         directory.mkdir(mode=0o700)
         (directory / "prompt.txt").write_text(prompt)
+        columns = "id,session_id,request_id,fingerprint,status,created,resume,timeout,backend_id"
+        values = (
+            run_id,
+            session["id"],
+            request_id,
+            fingerprint,
+            "pending",
+            now,
+            int(bool(session_ref) and not restart and not resume_unstarted),
+            timeout,
+            session["backend_id"],
+        )
+        if self.config["schema"] >= 9:
+            columns += ",effort"
+            values += (effort,)
         db.execute(
-            "INSERT INTO runs(id,session_id,request_id,fingerprint,status,created,resume,timeout,backend_id) VALUES(?,?,?,?,'pending',?,?,?,?)",
-            (
-                run_id,
-                session["id"],
-                request_id,
-                fingerprint,
-                now,
-                int(bool(session_ref) and not restart and not resume_unstarted),
-                timeout,
-                session["backend_id"],
-            ),
+            f"INSERT INTO runs({columns}) VALUES({','.join('?' for _ in values)})",
+            values,
         )
         return run_id, True
 

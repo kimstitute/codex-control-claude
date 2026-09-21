@@ -5,7 +5,25 @@ description: Manage multiple persistent Claude Code sessions on the current Linu
 
 # Claude Control
 
-Use the bundled `../../scripts/claude_control_cli.py`, resolving that path from this skill's directory. Public commands return JSON. Python 3.10+ and locally authenticated Claude Code are prerequisites; run `--help` for flags. Version 0.7 supports Linux supplied-text delegation and explicit controller-mediated workspace operations. Claude native tools and MCP are disabled, with CLI safe mode and empty setting sources. The project-hook nonexecution test passed; administrator-managed policy still applies. For proposals, supply source text and inspect returned edits. For authorized file work, read [the workspace reference](references/workspaces.md) before creating a policy. The controller executes structured read/write/named-check requests on private copies; source integration remains a Codex action.
+Use the bundled `../../scripts/claude_control_cli.py`, resolving that path from this skill's directory. Public commands return JSON. Python 3.10+ and locally authenticated Claude Code are prerequisites; run `--help` for flags. Version 0.8 supports Linux supplied-text delegation and explicit controller-mediated workspace operations. Claude native tools and MCP are disabled, with CLI safe mode and empty setting sources. The project-hook nonexecution test passed; administrator-managed policy still applies. For proposals, supply source text and inspect returned edits. For authorized file work, read [the workspace reference](references/workspaces.md) before creating a policy. The controller executes structured read/write/named-check requests on private copies; source integration remains a Codex action.
+
+## Execution settings
+
+For new routine Sonnet work, explicitly choose `effort: "medium"`; for new Fable
+design or consequential review choose `effort: "high"`, unless the user specifies
+another supported setting. Choose a bounded `timeout` (1–3600 seconds) for each
+run; a timeout is an unsuccessful execution, not permission to retry. Effort is
+pinned to the session and task. Raw `start` accepts `--effort`; continuation flags
+only assert the existing value. Omission inherits on continuation. Never reinterpret
+a legacy omitted setting as medium/high or silently replace its session.
+
+Supported values: low, medium, high, xhigh, max. JSON null is invalid. `doctor`
+reports `effort_supported`; unsupported settings fail without fallback. `requested_effort`
+in invocation/report evidence records what was sent, not independently measured
+model reasoning. Parent `CLAUDE_CODE_EFFORT_LEVEL` is excluded from the child environment.
+For a new Fable review workflow, explicitly pass `--reviewer-effort high`; worker
+effort never supplies the reviewer default. P5 workspace turns reuse the frozen
+assignment setting. Read [execution settings](references/execution-settings.md).
 
 ## First use
 
@@ -218,13 +236,13 @@ If no backend conversation was saved before the first turn stopped, a normal res
 
 Code updates should happen with managed runs stopped. Runtime data is separate from the plugin, and no uninstall or update should remove it. Process-group cleanup covers the managed tools-disabled execution; it is not a cgroup/filesystem sandbox or a promise about processes that escape their group. Do not enable shell/edit tools by modifying this CLI's fixed profile.
 
-New stores use schema 8. For an existing schema-3/4/5/6/7 store, finish/stop and reconcile all
+New stores use schema 9. For an existing schema-3/4/5/6/7/8 store, finish/stop and reconcile all
 managed work, stop all old CLI clients/workers, install the new code, then run
 `migrate --status` and `migrate --offline` on that same state directory. Migration
 makes a verified SQLite backup and a durable journal. If interrupted, repeat
 `migrate --offline` on the original directory; never run jobs against the backup.
 Active/unknown executions block migration. New code retains legacy diagnostic and
-stop/reconcile commands on schema 3; task lifecycle needs schema 4, queue commands schema 5, messages schema 6, workflows schema 7, and workspaces schema 8. Do not use
+stop/reconcile commands on schema 3; task lifecycle needs schema 4, queue commands schema 5, messages schema 6, workflows schema 7, and workspaces schema 8, and explicit effort schema 9. Do not use
 re-initialization, automatic downgrade or a fresh store to bypass uncertainty.
 
 The package launches workers for jobs, not an always-running coordinator. Codex is not automatically awakened after the conversation ends. A later Codex task can discover the same host-local records via `list`.

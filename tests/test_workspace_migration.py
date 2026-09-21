@@ -45,8 +45,8 @@ class WorkspaceMigrationTests(unittest.TestCase):
                     mock.patch.object(migration, "_checkpoint", side_effect=crash),
                     self.assertRaises(RuntimeError),
                 ):
-                    migration.migrate(state, offline=True)
-                migration.migrate(state, offline=True)
+                    migration.migrate(state, offline=True, target=8)
+                migration.migrate(state, offline=True, target=8)
                 new = Store(state)
                 self.assertEqual(new.config["schema"], 8)
                 self.assertEqual(capture(new), before)
@@ -55,13 +55,13 @@ class WorkspaceMigrationTests(unittest.TestCase):
                     self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 7)
                 with self.assertRaises(ControlError):
                     workflow.status(old, flow["id"])
-                self.assertFalse(migration.migrate(state, offline=True)["migrated"])
+                self.assertFalse(migration.migrate(state, offline=True, target=8)["migrated"])
 
-    def test_full_chain_has_five_verified_backups(self):
+    def test_full_chain_has_six_verified_backups(self):
         with tempfile.TemporaryDirectory() as root:
             state, _ = legacy_store(root)
             result = migration.migrate(state, offline=True)
-            self.assertEqual((result["schema"], len(result["backups"])), (8, 5))
+            self.assertEqual((result["schema"], len(result["backups"])), (9, 6))
             with self.assertRaises(ControlError):
                 migration.migrate(state, offline=True, target=7)
 
@@ -75,7 +75,7 @@ class WorkspaceMigrationTests(unittest.TestCase):
             with old.db(write=True) as db:
                 db.execute("UPDATE runs SET status='unknown' WHERE id=?", (run,))
             with self.assertRaises(ControlError) as raised:
-                migration.migrate(state, offline=True)
+                migration.migrate(state, offline=True, target=8)
             self.assertEqual(raised.exception.code, "migration_busy")
             self.assertEqual(Store(state).config["schema"], 7)
 
@@ -92,10 +92,10 @@ class WorkspaceMigrationTests(unittest.TestCase):
                 mock.patch.object(migration, "_checkpoint", side_effect=crash),
                 self.assertRaises(RuntimeError),
             ):
-                migration.migrate(state, offline=True)
+                migration.migrate(state, offline=True, target=8)
             (state / "schema-7-backup.sqlite3").unlink()
             with self.assertRaises(ControlError) as raised:
-                migration.migrate(state, offline=True)
+                migration.migrate(state, offline=True, target=8)
             self.assertEqual(raised.exception.code, "migration_backup")
             self.assertEqual(migration.migration_status(state)["schema"], "migrating")
 

@@ -1,6 +1,6 @@
 """Additive schemas; existing sessions and runs retain their identity and rowids."""
 
-VERSION = 8
+VERSION = 9
 TASK_SCHEMA = """
 CREATE TABLE tasks (
  id TEXT PRIMARY KEY, name TEXT NOT NULL, session_id TEXT REFERENCES sessions(id),
@@ -335,3 +335,23 @@ def add_workspace_schema(db):
                 f"CREATE TRIGGER immutable_{table}_{action.lower()} BEFORE {action} ON {table} "
                 "BEGIN SELECT RAISE(ABORT,'workspace records are append-only'); END"
             )
+
+
+def add_execution_schema(db):
+    _apply(
+        db,
+        """
+ALTER TABLE sessions ADD COLUMN effort TEXT CHECK(effort IN ('low','medium','high','xhigh','max'));
+ALTER TABLE runs ADD COLUMN effort TEXT CHECK(effort IN ('low','medium','high','xhigh','max'));
+CREATE TRIGGER session_effort_immutable BEFORE UPDATE OF effort ON sessions
+ WHEN NEW.effort IS NOT OLD.effort
+ BEGIN SELECT RAISE(ABORT,'session effort is immutable'); END;
+CREATE TRIGGER run_effort_immutable BEFORE UPDATE OF effort ON runs
+ WHEN NEW.effort IS NOT OLD.effort
+ BEGIN SELECT RAISE(ABORT,'run effort is immutable'); END;
+CREATE TRIGGER run_effort_matches_session BEFORE INSERT ON runs
+ WHEN NEW.effort IS NOT (SELECT effort FROM sessions WHERE id=NEW.session_id)
+ BEGIN SELECT RAISE(ABORT,'run effort must match session'); END;
+""",
+        9,
+    )

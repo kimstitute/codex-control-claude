@@ -24,6 +24,7 @@ def register(commands):
     create.add_argument("--max-revisions", type=int, default=2)
     create.add_argument("--max-calls", type=int, default=6)
     create.add_argument("--dispatch-window-seconds", type=float, default=900)
+    create.add_argument("--reviewer-effort", choices=("low", "medium", "high", "xhigh", "max"))
 
     run = sub.add_parser(
         "run",
@@ -76,6 +77,7 @@ def execute(args):
             max_revisions=args.max_revisions,
             max_calls=args.max_calls,
             dispatch_window_seconds=args.dispatch_window_seconds,
+            reviewer_effort=args.reviewer_effort,
         )
 
     if args.workflow_command == "run":
