@@ -149,7 +149,7 @@ class RelocatedDistributionTests(unittest.TestCase):
         continuation_done = self.wait_terminal(continuation["id"])
         continuation_result = self.cli("result", "--run", continuation["id"])
 
-        self.assertEqual(initialized["schema"], 3)
+        self.assertEqual(initialized["schema"], 8)
         self.assertIs(doctor["ready"], True)
         self.assertEqual(doctor["missing_options"], [])
         self.assertEqual(first_done["status"], "completed")
@@ -163,6 +163,46 @@ class RelocatedDistributionTests(unittest.TestCase):
         self.assertEqual(continuation["session_id"], first["session_id"])
         self.assertTrue(str(self.cli_path).startswith(str(self.plugin)))
         self.assertEqual(list(self.cwd.iterdir()), [])
+
+        assignment = self.root / "Task Assignment.json"
+        assignment.write_text(
+            json.dumps(
+                dict(
+                    id="relocated-task",
+                    name="Relocated task",
+                    role="executor",
+                    project=str(self.project),
+                    objective="Return a bounded answer.",
+                    context="Supplied facts",
+                    scope=["Text only"],
+                    acceptance_criteria=["State limitations"],
+                    deliverable="A short answer",
+                    timeout=10,
+                )
+            )
+        )
+        task = self.cli(
+            "task",
+            "create",
+            "--assignment-file",
+            str(assignment),
+            "--operation-id",
+            "relocated-create",
+        )
+        turn = self.cli(
+            "task",
+            "submit",
+            "--task",
+            task["id"],
+            "--revision",
+            "1",
+            "--operation-id",
+            "relocated-submit",
+        )
+        self.known_runs.append(turn["id"])
+        self.assertEqual(self.wait_terminal(turn["id"])["status"], "completed")
+        self.assertEqual(self.cli("report", "--run", turn["id"])["format_status"], "valid")
+        self.assertEqual(self.cli("task", "show", "--task", task["id"])["state"], "awaiting_review")
 
 
 if __name__ == "__main__":

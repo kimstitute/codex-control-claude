@@ -11,6 +11,8 @@ import uuid
 from pathlib import Path
 
 ASSIGNMENT_PROTOCOL = "claude-control.assignment.v1"
+WORKFLOW_PROTOCOL = "claude-control.task.v5"
+WORKSPACE_PROTOCOL = "claude-control.task.v6"
 
 
 def _print_json(value: object) -> None:
@@ -82,7 +84,14 @@ def _assignment_fixture(context: object) -> dict[str, object]:
 
 
 def _assignment_text(prompt: dict[str, object]) -> tuple[str, dict[str, object]] | None:
-    if prompt.get("protocol") != ASSIGNMENT_PROTOCOL:
+    if prompt.get("protocol") not in (
+        ASSIGNMENT_PROTOCOL,
+        "claude-control.task.v2",
+        "claude-control.task.v3",
+        "claude-control.task.v4",
+        WORKFLOW_PROTOCOL,
+        WORKSPACE_PROTOCOL,
+    ):
         return None
     assignment = prompt.get("assignment")
     role = prompt.get("role")
@@ -103,6 +112,77 @@ def _assignment_text(prompt: dict[str, object]) -> tuple[str, dict[str, object]]
         "limitations": ["Fixture supplies no external evidence."],
         "handoff": "",
     }
+    if prompt.get("protocol") in (
+        "claude-control.task.v2",
+        "claude-control.task.v3",
+        "claude-control.task.v4",
+        WORKFLOW_PROTOCOL,
+        WORKSPACE_PROTOCOL,
+    ):
+        report["task_id"] = prompt["task"]["id"]
+        report["revision"] = prompt["task"]["revision"]
+    if prompt.get("protocol") == WORKSPACE_PROTOCOL:
+        rounds = fixture.get("workspace_operations", [])
+        revision = prompt["task"]["revision"]
+        operations: object = []
+        if isinstance(rounds, list) and rounds:
+            index = min(max(int(revision) - 1, 0), len(rounds) - 1)
+            operations = rounds[index]
+        report["operations"] = operations
+        if isinstance(operations, list) and operations:
+            report["status"] = "blocked"
+    workflow = prompt.get("workflow")
+    if (
+        prompt.get("protocol") == WORKFLOW_PROTOCOL
+        and isinstance(workflow, dict)
+        and workflow.get("phase") == "review"
+    ):
+        round_number = workflow.get("round", 1)
+        recommendations = fixture.get("workflow_recommendations", ["approve"])
+        recommendation = (
+            recommendations[min(max(int(round_number), 0), len(recommendations) - 1)]
+            if isinstance(recommendations, list) and recommendations
+            else "approve"
+        )
+        criteria = workflow.get("criteria", {})
+        review_criteria = {
+            key: {"verdict": "pass", "evidence": f"Fixture checked criterion {key}."}
+            for key in criteria
+        }
+        unverified: list[str] = []
+        instructions = ""
+        if recommendation == "revise":
+            if review_criteria:
+                first = next(iter(review_criteria))
+                review_criteria[first] = {
+                    "verdict": "fail",
+                    "evidence": "Fixture requests a bounded revision.",
+                }
+            instructions = "Address the failed criterion using only supplied context."
+        elif recommendation == "blocked":
+            review_criteria = {
+                key: {"verdict": "unknown", "evidence": "Fixture lacks verification evidence."}
+                for key in criteria
+            }
+            unverified = ["Fixture cannot verify the supplied result."]
+        source = workflow.get("source")
+        target = {
+            key: source.get(key) if isinstance(source, dict) else None
+            for key in ("task_id", "revision", "run_id", "result_sha256")
+        }
+        review = {
+            "target": target,
+            "recommendation": recommendation,
+            "criteria": review_criteria,
+            "unverified": unverified,
+            "revision_instructions": instructions,
+        }
+        reviews = fixture.get("workflow_reviews")
+        if isinstance(reviews, list) and reviews:
+            override = reviews[min(max(int(round_number), 0), len(reviews) - 1)]
+            if isinstance(override, dict):
+                review.update(override)
+        report["review"] = review
     override = fixture.get("report")
     if isinstance(override, dict):
         report.update(override)

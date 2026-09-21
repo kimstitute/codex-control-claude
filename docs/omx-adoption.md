@@ -42,9 +42,13 @@ The current slice is deliberately smaller than OMX orchestration:
    well-defined assignment to the existing local Claude process boundary.
 4. **Reporting and acceptance are separate.** Claude returns a structured report
    with summary, deliverable, evidence, limitations, and handoff. The controller
-   checks its format and leaves acceptance `unreviewed`. The calling Codex must
-   assess the substance; this release has no command that persists acceptance.
-5. **Observation is read-only with respect to execution.** The controller can
+   checks its format. Legacy v1 reports remain `unreviewed`; v0.3 task revisions
+   add explicit Codex approval bound to the exact run and digest. A reviewer
+   recommendation alone is not approval.
+5. **Task revisions and an approval ledger** preserve immutable input, exact parent
+   context, operation deduplication and append-only criterion evidence. Submission
+   links the revision and run in the same reservation transaction.
+6. **Observation is read-only with respect to execution.** The controller can
    inspect several existing local run IDs and their terminal records without
    adopting, steering, or replacing an unknown session.
 
@@ -59,7 +63,7 @@ OMX describes native subagents as bounded in-session fan-out whose leader waits
 for direct results. Its tmux team mode is a different operational surface: it
 adds durable shared task state, worker mailboxes, dispatch files, lifecycle
 commands, and panes that can outlive one reasoning burst. The current controller
-adopts the former's bounded-assignment semantics only. It does not pretend that
+adopts bounded-assignment semantics and explicit local task/review records. It does not pretend that
 a Claude subprocess is an OMX worker and does not require tmux, pane text, or
 synthetic key presses for correctness.
 
@@ -116,3 +120,29 @@ The main open concern is semantic acceptance: structured output makes evidence
 machine-readable, but it does not prove that a research or code result is true.
 The caller or a separate verifier must supply the relevant tests, review, or
 artifact checks before using the result. Execution status never means acceptance.
+
+## Implemented P2: durable local dispatch
+
+Version 0.4 implements the next slice: bounded FIFO waiting, exact task/revision
+dependencies gated by Codex acceptance, immutable copied execution input, finite
+explicit dispatch and persisted events. SQLite transactions and existing worker
+claims prevent duplicate reservations; no tmux, daemon or lease service is added.
+Coordinator restart observes prior runs without relaunching them. See
+[queue operations](queue.md). P3 messages and P4 review workflows build on this
+dispatch layer, as described below.
+
+## Implemented P3: explicit next-turn instructions
+
+Version 0.5 adds Codex-selected instruction messages and frozen result handoff,
+with exact base-revision checks and append-only delivery receipts. It adopts the
+useful durable-message idea without injecting text into terminal panes or granting
+agents recursive delegation. An execution receipt is distinct from comprehension
+and semantic acceptance. Bounded review/fix workflows are added by P4 below.
+
+## Implemented P4: fixed review workflow
+
+Version 0.6 combines task revisions, queue admission and messages into a fixed proposal/review/revision template. It adds persistent budgets, exact criterion-level review decisions and attention summaries. It does not adopt OMX tmux supervision, recursive spawning or a resident coordinator. See [workflow behavior](workflows.md).
+
+## P5: explicit workspace authority
+
+Version 0.7 adds a separate finite workspace loop for controller-mediated file reads, full-file writes and named isolated checks. It preserves existing Claude safe mode and task history, freezes results for independent review, and leaves integration to Codex. This adopts explicit ownership and verification boundaries without introducing tmux control, native tool access, recursive agents or automatic merges. See [workspaces](workspaces.md).

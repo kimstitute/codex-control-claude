@@ -11,12 +11,12 @@
 </p>
 
 <p align="center">
-  English · <a href="README.ko.md">한국어</a> · <a href="docs/cli.md">CLI reference</a> · <a href="docs/architecture.md">Architecture</a>
+  English · <a href="README.ko.md">한국어</a> · <a href="docs/cli.md">CLI reference</a> · <a href="docs/architecture.md">Architecture</a> · <a href="CHANGELOG.md">Changelog</a>
 </p>
 
 Codex Control Claude gives Codex a practical way to delegate work to Claude, keep conversations separate, and collect their results. It bundles a local session controller with a Codex skill, so you can ask for a review or a small implementation task without managing terminal panes yourself.
 
-**Version 0.2 works with supplied text.** Claude returns analysis, proposed code, or review notes; Codex checks the result and applies any edits. Claude's file and shell tools and MCP are disabled in this profile.
+**Version 0.7 adds controlled workspace editing and checks.** Codex can authorize a private Git snapshot, exact writable files and named test commands. Claude requests operations in structured reports; the controller performs them and returns receipts. Claude's native tools and MCP remain disabled. Ordinary supplied-text delegation continues to work.
 
 ## What you can do
 
@@ -27,6 +27,17 @@ Codex Control Claude gives Codex a practical way to delegate work to Claude, kee
 | Continue a conversation | Send a follow-up to its exact managed session ID. |
 | Inspect progress | Observe several runs together, or read individual status, bounded logs, and results. |
 | Inspect structured reports | Check task identity and report format while leaving content acceptance to Codex. |
+| Track task revisions | Keep immutable inputs and structured reports across follow-up turns. |
+| Record review and approval | Bind criterion evidence to the exact revision, run and result digest. |
+| Queue next-turn instructions | Select stored messages explicitly when revising; keep every delivery attempt. |
+| Hand off a result | Copy a verified task report with its exact source run and digest. |
+| Queue dependent tasks | FIFO admission, exact parent acceptance gates and a bounded dispatcher. |
+| Run bounded review workflows | Independent Fable reviews, limited worker revisions and explicit Codex acceptance. |
+| Edit a private snapshot | Explicit file policy, full-file writes and named checks in a disposable Linux sandbox. |
+| Review frozen changes | Read-only Fable snapshot, verified patch and manifest, then explicit Codex acceptance. |
+| Resume coordination | Discover budgets, blocked tasks and unknown runs with `overview --attention`. |
+| Read task events | Persist revision, queue, execution and decision changes with a replay cursor. |
+| Upgrade existing state | Explicit offline schema-3/4/5/6/7 migration with verified backups and crash recovery. |
 | Cancel one task | Stop an owned run while other sessions continue. |
 | Recover deliberately | Reconcile uncertain runs or explicitly start a new backend conversation. |
 | Check execution evidence | Validate the reported model, session ID, exit status, and result integrity. |
@@ -36,6 +47,7 @@ Each installation controls Claude **on the same host and under the same user**. 
 ## Before you start
 
 - **Linux and Python 3.10 or newer.** Windows and macOS are not supported by this release.
+- **For workspace operations:** Git and Bubblewrap with usable unprivileged user/PID/network namespaces. `workspace doctor` tests the required isolation. No unconfined fallback or automatic installation is provided.
 - **Claude Code installed and signed in locally.** This version uses the normal HOME-based login. Custom `CLAUDE_CONFIG_DIR` and API-key environment variables are not forwarded.
 - **Codex CLI with plugin support and its bundled `plugin-creator` helpers.** The installer checks for these tools.
 - **An existing Python 3.10+ with PyYAML for Codex's plugin validator.** This is an installer-helper requirement; the controller itself uses only the Python standard library. The installer does not install dependencies.
@@ -117,6 +129,11 @@ executions together. The [structured delegation guide](docs/cli.md#delegate-with
 includes a complete assignment example. Existing `start --role` remains a
 metadata label; it does not inject preset instructions.
 
+For work that needs revisions and approval, use the [task lifecycle](docs/tasks.md):
+`task create → task submit → report → task review / task accept`. Use
+`task revise` followed by `task submit` to continue the same conversation under
+a new structured contract. Creation alone makes no model call.
+
 The role and reporting design draws on an analysis of OMX, with a smaller
 host-local implementation. See [what we adopted and deferred](docs/omx-adoption.md).
 
@@ -126,7 +143,7 @@ Controller configuration and records live in `$XDG_STATE_HOME/claude-control`, o
 
 **Local control does not mean local model inference.** Claude Code sends model requests to the Claude service using your existing authentication. The controller does not provide cross-host dispatch or add a separate telemetry service.
 
-The project-path allowlist controls the requested working directory; it is not an operating-system filesystem sandbox. Process cleanup covers the owned process group, not processes that escape it. Administrator-managed Claude policy still applies. See [architecture and boundaries](docs/architecture.md).
+The project-path allowlist controls the Claude working directory. Workspace checks separately use a disposable Bubblewrap namespace with no host home, controller state, network or GPU devices. Process resource limits are per-process, not an aggregate cgroup quota. Administrator-managed Claude policy still applies. See [workspace boundaries](docs/workspaces.md) and [architecture](docs/architecture.md).
 
 ## Update
 
@@ -137,7 +154,7 @@ git pull --ff-only
 python3 install.py --update
 ```
 
-Open a new Codex task after reinstalling. Updates preserve the separate runtime store. State schema 3 does not automatically migrate the earlier development schemas; see [recovery notes](docs/cli.md#state-and-recovery).
+Open a new Codex task after reinstalling. Updates preserve the separate runtime store. New stores use schema 8. Existing schema-3/4/5/6/7 stores require explicit `migrate --offline` for all new features; see [migration and recovery](docs/tasks.md#schema-and-migration). Updates do not migrate a live store automatically.
 
 ## Tests
 
@@ -145,12 +162,34 @@ Open a new Codex task after reinstalling. Updates preserve the separate runtime 
 python3 -m unittest discover -s tests -v
 ```
 
-The automated suite uses fake Claude processes and makes **no model calls**. It covers concurrency, request deduplication, cancellation, failure recovery, stream validation, relocation, and installation rollback. Separate live integration checks have exercised parallel models, isolated conversation recall, targeted cancellation, and resume. Raw live logs are not included in this repository.
+The automated suite uses fake Claude processes and makes **no model calls**. It covers concurrency, request deduplication, cancellation, failure recovery, stream validation, relocation, installation rollback, task concurrency, stale-approval rejection, and migration interruption/recovery. Separate live integration checks have exercised parallel models, isolated conversation recall, targeted cancellation, and resume. Raw live logs are not included in this repository.
 
 To deliberately run the live suite using your own Claude account, see [testing](docs/testing.md).
 
 ## Current scope
 
-Version 0.2 supports Linux, supplied-text tasks, and sessions created by this controller. File/shell execution by Claude, adopting arbitrary existing sessions, conversation forking, Windows/macOS support, an MCP adapter, cross-host dispatch, and automatic Codex wake-up are future work.
+Version 0.7 supports Linux, supplied-text tasks, bounded controller-mediated workspace operations, and sessions created by this controller. Native file/shell tools in Claude, adopting arbitrary existing sessions, conversation forking, Windows/macOS support, an MCP adapter, cross-host dispatch, and automatic Codex wake-up are future work.
 
 Maintained by [kimstitute](https://github.com/kimstitute). This is an independent project, not an official OpenAI or Anthropic integration.
+
+## Queue work for dispatch
+
+Use `task enqueue` to register ready or dependent tasks, then `dispatch --once` or
+`dispatch --until-idle --max-seconds 60` to admit them within available slots.
+Parents require exact-result Codex acceptance before children can start.
+See the [queue guide](docs/queue.md) for dependencies, events and restart recovery.
+
+## Deliver instructions on the next turn
+
+`message enqueue` stores instructions while a task runs. Select message IDs with
+`task revise --message-id`, then submit or queue the new revision. The active
+Claude process is never interrupted or fed hidden input. You can also attach a
+verified result as a frozen handoff. See [messages and handoff](docs/messages.md).
+
+## Bounded review workflows
+
+Use `workflow create/run/status/stop` to coordinate a proposal and independent Fable review with persistent call, revision and time limits. Approval recommendations wait for Codex acceptance. See the [workflow guide](docs/workflows.md).
+
+## Controlled workspace work
+
+Use `workspace create/task/run/status/export/stop` for a bounded edit-and-check loop. A committed Git snapshot is copied into private storage; dirty and untracked source files are excluded. Named checks run against disposable copies, and a completed result is frozen for review. `workspace create --from-snapshot` creates an independent read-only Fable review workspace. Source integration remains an explicit Codex action. See the [workspace guide](docs/workspaces.md) for policy and recovery examples.

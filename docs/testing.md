@@ -9,7 +9,10 @@ python3 -m unittest discover -s tests -v
 ```
 
 The original publication baseline had 47 tests. The assignment suite adds coverage
-for the version-0.2 role and report contracts. Tests use temporary directories and
+for the v1 role/report contracts and v0.3 task lifecycle. `test_tasks.py` covers
+structured follow-ups, atomic concurrent submission, immutable revisions, exact-result
+approvals, blocked/mismatched output and conservative retry. `test_migration.py`
+checks v1 compatibility, WAL backup and interruption at each migration boundary. Tests use temporary directories and
 fake Claude processes to exercise:
 
 - Parallel capacity, per-session exclusion, and request deduplication.
@@ -65,3 +68,114 @@ identities, `observe`, saved-prompt verification, valid structured reports,
 `acceptance: unreviewed`, exact supplied-marker output, and zero Claude tool
 calls. This small probe does not establish research quality, throughput at larger
 parallelism, or correctness of arbitrary model-generated evidence.
+
+## Live task revisions and approval
+
+To deliberately make two real model calls and verify structured same-session recall:
+
+```bash
+python3 tests/live_tasks.py \
+  --claude-bin /absolute/path/to/claude \
+  --output /absolute/path/outside-repository/new-task-check \
+  --model sonnet
+```
+
+This creates an isolated test store, checks exact token recall without including the
+token in the second input, and records explicit criterion-based acceptance for both
+revisions. It verifies the same backend, v2 reports, model evidence and an unchanged
+project directory. `--cli /absolute/path/to/installed/claude_control_cli.py` can test
+a relocated installation. The output includes private prompts and IDs; do not commit it.
+
+A successful run establishes this bounded text-only flow, not arbitrary implementation
+correctness or safe execution of Claude shell/edit tools.
+
+## Queue and recovery tests
+
+`test_scheduler.py` and `test_scheduler_recovery.py` exercise dependency cycles,
+acceptance gates, manual-submit enforcement, waiting capacity, FIFO dispatch,
+concurrent coordinators, exact input copying, oversized-input rollback, unknown
+capacity, explicit retry and actual coordinator death before/after worker launch.
+They include a deterministic 20-job admission check and actual fake-process overlap.
+`test_queue_migration.py` covers schema 4→5 recovery at every checkpoint and
+preservation of accepted v2 history. The older migration suite separately retains
+schema 3→4 coverage; a new chain test reaches schema 5 from 3.
+
+To explicitly call Sonnet twice and check an approval-gated parent/child workflow:
+
+```bash
+python3 tests/live_queue.py \
+  --claude-bin /absolute/path/to/claude \
+  --output /absolute/path/outside-repository/new-queue-check
+```
+
+The child starts only after exact-result acceptance, receives the parent's token
+through its frozen dependency report in a separate session, and returns it exactly.
+The check verifies persisted events, no duplicate dispatch and an unchanged project.
+The optional `--cli` argument can validate installed code. This bounded check makes
+no claim about the quality of arbitrary model-generated content.
+
+## Messages and handoff
+
+`test_messages.py`, `test_message_recovery.py` and `test_message_migration.py`
+cover next-turn selection, operation deduplication, no implicit model turns, ordered
+inputs, cancel races, stale targets, frozen source reports, explicit redelivery,
+combined input limits, crash recovery, immutable receipts and schema 5→6 migration.
+
+A deliberate two-call Sonnet integration check is available:
+
+```bash
+python3 tests/live_messages.py \
+  --claude-bin /absolute/path/to/claude \
+  --output /absolute/path/outside-repository/new-message-check
+```
+
+It queues two instructions during the first turn, attaches that result as a frozen
+handoff, selects IDs in reverse order, and verifies delivery in registration order
+on the resumed second turn. Exact returned strings, one receipt per message, no
+implicit or duplicate execution, and an unchanged project are checked. Raw prompts
+and IDs stay in the private output directory. `--cli` can check installed code.
+
+## Bounded workflows
+
+`test_workflows.py`, `test_workflow_recovery.py`, `test_workflow_cli.py` and
+`test_workflow_migration.py` cover fixed policy, independent sessions, exact
+structured reviews, revision handoff, reservation budgets, window persistence,
+concurrent coordinators, stop races, false-acceptance prevention, finite CLI
+bounds and schema 6→7 recovery. The full 3→7 chain also exercises creating,
+running and stopping a workflow after migration.
+
+To deliberately call Sonnet once and Fable once:
+
+```bash
+python3 tests/live_workflow.py \
+  --claude-bin /absolute/path/to/claude \
+  --output /absolute/path/outside-repository/new-workflow-check
+```
+
+This checks exact target/digest, criterion verdict, independent sessions, absence
+of automatic acceptance, explicit Codex acceptance and no repeated execution.
+It remains outside automated unittest discovery.
+
+## Workspaces and isolated checks
+
+`test_workspace_policy.py`, `test_workspace_files.py`, `test_workspaces.py`, `test_workspace_launch.py` and `test_workspace_migration.py` cover path/command authority, Git snapshots, bounded text operations, frozen integrity, shared capacity, cancellation, ambiguous recovery, launch identity races and schema 7→8 migration.
+
+`test_workspace_sandbox.py` exercises actual Bubblewrap isolation without model calls: private host files and credential environment, network/GPU access, disposable writes, output/time limits and descendant cleanup after cancellation or coordinator death. It skips if namespace isolation is unavailable; a skip is not evidence that a host can run workspaces. Run it in the host's approved namespace-capable environment.
+
+To deliberately exercise a Sonnet edit/check followed by an independent Fable frozen-file review:
+
+```bash
+python3 tests/live_workspace.py \
+  --claude-bin /absolute/path/to/claude \
+  --output /absolute/path/outside-repository/new-workspace-check
+```
+
+This synthetic Git fixture checks four model turns, exact edited content, a named unittest command in a disposable namespace, unchanged original files, independent review sessions, explicit acceptance and no duplicate calls. Claude native tools/MCP remain disabled; file operations are controller requests. Private output includes prompts and session IDs and must not be published.
+
+## 0.7.0 release verification
+
+The final release code passed all **258 tests on both Python 3.10 and Python 3.14**
+in complete discovery runs. Both runs included the six actual Bubblewrap isolation
+tests with no skips. Ruff, plugin/skill validation and repository whitespace checks
+also passed. The automated runs used fake Claude processes; live integration
+evidence is documented separately above.

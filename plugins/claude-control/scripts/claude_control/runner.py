@@ -13,6 +13,7 @@ from pathlib import Path
 
 from .protocol import build_argv, parse_stream
 from .store import (
+    CLAIM_SECONDS,
     ControlError,
     Store,
     alive,
@@ -165,8 +166,16 @@ def run_worker(state_dir, run_id):
         identity = proc_identity(os.getpid())
         with store.db(write=True) as db:
             claimed = db.execute(
-                "UPDATE runs SET status='claimed',worker_pid=?,worker_start=?,worker_namespace=?,boot=?,heartbeat=? WHERE id=? AND status='pending' AND cancel_requested=0",
-                (os.getpid(), identity["start"], pid_namespace(), boot_id(), time.time(), run_id),
+                "UPDATE runs SET status='claimed',worker_pid=?,worker_start=?,worker_namespace=?,boot=?,heartbeat=? WHERE id=? AND status='pending' AND cancel_requested=0 AND created>=?",
+                (
+                    os.getpid(),
+                    identity["start"],
+                    pid_namespace(),
+                    boot_id(),
+                    time.time(),
+                    run_id,
+                    time.time() - CLAIM_SECONDS,
+                ),
             ).rowcount
         if not claimed:
             return

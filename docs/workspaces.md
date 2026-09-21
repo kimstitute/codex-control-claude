@@ -1,0 +1,14 @@
+# Controlled workspaces
+
+The P5 workspace API lets the controller mediate a finite set of file reads,
+full-file writes, and named checks against an immutable Git snapshot. Claude
+itself remains supplied-text only; it has no file, shell, built-in tool, or MCP
+access in this workflow.
+
+Read the complete command, policy, snapshot-review, isolation, recovery, and
+schema-8 migration contract in the installed-skill reference:
+[controlled workspaces](../plugins/claude-control/skills/claude-control/references/workspaces.md).
+
+P4 workflows do not automate this API. Creating a workspace, binding its one
+task, admitting calls, exporting a frozen result, and accepting it remain
+explicit controller/Codex actions.

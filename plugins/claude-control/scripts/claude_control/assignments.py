@@ -241,7 +241,10 @@ def load_assignment(path):
     except UnicodeDecodeError:
         raise ControlError("invalid_assignment", "assignment file must be UTF-8 text") from None
 
-    data = strict_json(text)
+    return normalize_assignment(strict_json(text))
+
+
+def normalize_assignment(data):
     if not isinstance(data, dict):
         raise ControlError("invalid_assignment", "assignment must be a JSON object")
 

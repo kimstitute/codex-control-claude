@@ -32,6 +32,12 @@ claude_control doctor --auth
 
 The executable and project paths are explicit. The store belongs to its originating host and user. Initialization does not grant filesystem isolation or change Claude authentication.
 
+## Tasks with revisions and approval
+
+Use the [task lifecycle reference](tasks.md) for `task create/list/show/submit/revise/retry/review/accept`
+and `migrate --status/--offline`. New task turns use an explicitly recorded v2 contract,
+including structured follow-ups. Existing delegate and unstructured commands keep their semantics.
+
 ## Start a conversation
 
 ### Delegate with a role and an output contract
@@ -250,7 +256,7 @@ claude_control reconcile --run <run-uuid>
 
 On the same boot, reconcile must run in the worker's PID namespace. It releases uncertainty only when the recorded worker and process group are no longer live, or when a host reboot proves the earlier processes cannot still be running. It does not blindly signal a saved PID. A conversation with a mismatched backend session remains blocked.
 
-State schema 3 does not migrate development schemas 1 or 2. Retain earlier stores as private history, stop and account for their managed work, then initialize a fresh supported store. Never delete or replace state to bypass an active or unknown execution.
+New stores use schema 8. Existing schema 3/4/5/6/7 requires [explicit offline migration](tasks.md#schema-and-migration) for task features; legacy diagnosis and stop/reconcile remain available before migration. Schemas 1 and 2 are unsupported. Never delete or replace state to bypass an active or unknown execution.
 
 ## Troubleshooting
 
@@ -265,3 +271,32 @@ State schema 3 does not migrate development schemas 1 or 2. Retain earlier store
 | Installer cannot find its validator | Point `--plugin-creator-root` and `--helper-python` to existing compatible tools. |
 
 Do not modify the fixed profile to enable Claude tools, forward credentials, or bypass the host's approval policy.
+
+## Queue, dispatch and events
+
+- `init` accepts `--max-queued <1..10000>` (default 100), separate from `--max-parallel`.
+- `task enqueue --task <UUID> --revision <N> --operation-id <id> [--dependencies-file <JSON>]`.
+- `task dequeue --queue-id <integer> --operation-id <id>` cancels waiting work.
+- `dispatch --once` or `dispatch --until-idle --max-seconds <0..3600>`.
+- `task events [--task <UUID>] [--after <cursor>] [--limit <1..1000>]`.
+
+Dependency JSON is an array of exact `task_id`/`revision` references. See the
+[queue guide](queue.md) for approval gates, FIFO order, deadline semantics and recovery.
+
+## Next-turn messages
+
+- `message enqueue --task <UUID> --base-revision <N> --content-file <UTF-8 file> --operation-id <id> [--session <UUID>] [--source-run <UUID> --source-result-sha256 <digest>]`.
+- `message list [--task <UUID>] [--after <sequence>] [--limit <1..1000>]`.
+- `message cancel --message <UUID> --operation-id <id>`.
+- `task revise` adds repeatable `--message-id <UUID>` and explicit `--redeliver-messages`.
+
+See [message and handoff semantics](messages.md). Registration and revision selection
+make no model calls. Delivery receipts bind only at explicit submit or dispatch.
+
+## Bounded workflows and attention overview
+
+`workflow create/run/status/stop` and `overview --attention` are documented in the [workflow guide](workflows.md). Creation makes no model call; `run --until-idle` requires an explicit finite `--max-seconds`. Use the workflow commands for owned member tasks; ordinary task mutation cannot change their policy.
+
+## Controlled workspaces
+
+`workspace doctor/create/task/run/status/list/export/stop/reconcile` are documented in the [workspace guide](workspaces.md). Creation reserves one immutable workspace identity before copying. Use explicit file/check policies, a finite run admission window, and a frozen export for review. Workspaces require schema 8 and a working Linux Bubblewrap backend; legacy supplied-text tasks do not.

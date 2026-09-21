@@ -3,6 +3,7 @@
 import fcntl
 import hashlib
 import json
+import math
 import os
 import socket
 import sqlite3
@@ -10,8 +11,17 @@ import stat
 import sys
 import time
 import uuid
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from pathlib import Path
+
+from .schema import (
+    VERSION,
+    add_message_schema,
+    add_queue_schema,
+    add_task_schema,
+    add_workflow_schema,
+    add_workspace_schema,
+)
 
 ACTIVE = ("pending", "claimed", "launching", "running", "stopping", "unknown")
 TERMINAL = ("completed", "failed", "cancelled", "launch_failed", "interrupted")
@@ -119,7 +129,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS one_active_turn ON runs(session_id)
 
 class Store:
     @staticmethod
-    def initialize(path, claude_bin, roots, max_parallel=2):
+    def initialize(path, claude_bin, roots, max_parallel=2, max_queued=100):
         os.umask(0o077)
         identity = host_identity()
         directory = private_dir(path)
@@ -133,6 +143,8 @@ class Store:
             )
         if not 1 <= max_parallel <= 32:
             raise ControlError("invalid_limit", "max-parallel must be between 1 and 32.")
+        if type(max_queued) is not int or not 1 <= max_queued <= 10000:
+            raise ControlError("invalid_limit", "max-queued must be between 1 and 10000.")
         with (directory / "init.lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             if (directory / "config.json").exists():
@@ -140,7 +152,7 @@ class Store:
                     "already_initialized", "Existing configuration is preserved; use doctor."
                 )
             config = dict(
-                schema=3,
+                schema=VERSION,
                 installation_id=str(uuid.uuid4()),
                 host_id=identity,
                 hostname=socket.gethostname(),
@@ -148,9 +160,15 @@ class Store:
                 claude_bin=str(binary),
                 allowed_roots=allowed,
                 max_parallel=max_parallel,
+                max_queued=max_queued,
             )
-            with sqlite3.connect(directory / "state.sqlite3") as db:
+            with closing(sqlite3.connect(directory / "state.sqlite3")) as db, db:
                 db.executescript(SCHEMA)
+                add_task_schema(db)
+                add_queue_schema(db)
+                add_message_schema(db)
+                add_workflow_schema(db)
+                add_workspace_schema(db)
                 db.execute("PRAGMA journal_mode=WAL")
             os.chmod(directory / "state.sqlite3", 0o600)
             (directory / "runs").mkdir(mode=0o700, exist_ok=True)
@@ -166,7 +184,7 @@ class Store:
             raise ControlError(
                 "not_initialized", "Run init with this state directory first."
             ) from None
-        if self.config.get("schema") != 3:
+        if self.config.get("schema") not in (3, 4, 5, 6, 7, VERSION):
             raise ControlError("schema_mismatch", "Unsupported state schema.")
         if self.config.get("host_id") != host_identity() or self.config.get("uid") != os.getuid():
             raise ControlError(
@@ -176,24 +194,38 @@ class Store:
             p = self.path / name
             if p.is_symlink() or p.stat().st_uid != os.getuid() or p.stat().st_mode & 0o077:
                 raise ControlError("unsafe_state", f"State entry must be private and owned: {name}")
+        with self.db():
+            pass
 
     @contextmanager
     def db(self, write=False):
-        db = sqlite3.connect(self.path / "state.sqlite3", timeout=10, isolation_level=None)
-        db.row_factory = sqlite3.Row
-        db.execute("PRAGMA foreign_keys=ON")
-        try:
-            if write:
-                db.execute("BEGIN IMMEDIATE")
-            yield db
-            if write:
-                db.commit()
-        except BaseException:
-            if write:
-                db.rollback()
-            raise
-        finally:
-            db.close()
+        # New clients take a shared lifecycle lock; migration excludes all DB operations.
+        # Schema-3 clients predating this lock must be stopped by the offline operator.
+        with (self.path / "lifecycle.lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_SH)
+            config = json.loads((self.path / "config.json").read_text())
+            if config != self.config or config.get("schema") not in (3, 4, 5, 6, 7, VERSION):
+                raise ControlError("schema_mismatch", "State changed; reopen or finish migrate.")
+            db = sqlite3.connect(self.path / "state.sqlite3", timeout=10, isolation_level=None)
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA foreign_keys=ON")
+            try:
+                version = db.execute("PRAGMA user_version").fetchone()[0]
+                if version != (0 if config["schema"] == 3 else config["schema"]):
+                    raise ControlError(
+                        "schema_mismatch", "DB/config disagree; inspect migrate --status."
+                    )
+                if write:
+                    db.execute("BEGIN IMMEDIATE")
+                yield db
+                if write:
+                    db.commit()
+            except BaseException:
+                if write:
+                    db.rollback()
+                raise
+            finally:
+                db.close()
 
     def run_dir(self, run_id):
         try:
@@ -205,6 +237,16 @@ class Store:
 
     def project(self, path):
         resolved = Path(path).expanduser().resolve(strict=True)
+        if (
+            self.config["schema"] >= 8
+            and resolved.parent.parent == self.path / "workspaces"
+            and resolved.name == "control"
+        ):
+            with self.db() as db:
+                if db.execute(
+                    "SELECT 1 FROM workspaces WHERE id=?", (resolved.parent.name,)
+                ).fetchone():
+                    return str(resolved)
         if not resolved.is_dir() or not any(
             resolved.is_relative_to(Path(root)) for root in self.config["allowed_roots"]
         ):
@@ -233,7 +275,14 @@ class Store:
             raise ControlError("run_not_found", "Unknown managed run ID.")
         row = dict(row)
         if row["status"] == "completed":
-            if not self.result_valid(row):
+            valid = True
+            try:
+                valid = self.result_valid(row)
+            except ControlError as exc:
+                if exc.code != "result_unreadable":
+                    raise
+                row.update(integrity_status="unreadable", integrity_error=str(exc))
+            if not valid:
                 with self.db(write=True) as db:
                     db.execute(
                         "UPDATE runs SET status='failed',reason='result_integrity' WHERE id=? AND status='completed'",
@@ -254,8 +303,27 @@ class Store:
                 and hashlib.sha256(result_bytes).hexdigest() == row["result_sha256"]
                 and json.loads(result_bytes).get("validated_success") is True
             )
-        except (OSError, ValueError, AttributeError):
+        except (FileNotFoundError, ValueError, AttributeError):
             return False
+        except OSError as exc:
+            raise ControlError(
+                "result_unreadable", f"Cannot read the result artifact: {exc}"
+            ) from exc
+
+    @staticmethod
+    def backend_unstarted(db, session_id, backend_id):
+        rows = db.execute(
+            "SELECT status,child_pid,actual_models FROM runs WHERE session_id=? AND backend_id=?",
+            (session_id, backend_id),
+        ).fetchall()
+        # The exec wrapper commits child identity before exec. Only stopped histories
+        # with no exec record or model evidence prove that no conversation was created.
+        return bool(rows) and all(
+            row["status"] in ("failed", "cancelled", "launch_failed", "interrupted")
+            and row["child_pid"] is None
+            and json.loads(row["actual_models"]) == []
+            for row in rows
+        )
 
     def refresh(self):
         """Conservative reconciliation: never signal or relaunch from observed state."""
@@ -279,8 +347,24 @@ class Store:
                         (status, row["id"]),
                     )
 
-    def reserve(
+    def reserve(self, **options):
+        self.refresh()
+        # Keep legacy corruption observation outside a reservation transaction.
+        if options.get("session_ref"):
+            self.session(options["session_ref"])
+            with self.db() as db:
+                previous = db.execute(
+                    "SELECT id FROM runs WHERE session_id=? ORDER BY rowid DESC LIMIT 1",
+                    (options["session_ref"],),
+                ).fetchone()
+            if previous:
+                self.get_run(previous["id"])
+        with self.db(write=True) as db:
+            return self.reserve_in(db, **options)
+
+    def reserve_in(
         self,
+        db,
         *,
         prompt,
         request_id,
@@ -292,17 +376,26 @@ class Store:
         session_ref=None,
         acknowledge_context=False,
         restart=False,
+        resume_unstarted=False,
     ):
-        self.refresh()
         if not prompt.strip() or len(prompt.encode()) > 1024 * 1024:
             raise ControlError("invalid_prompt", "Prompt must be nonempty and at most 1 MiB.")
         if not request_id or len(request_id) > 200:
             raise ControlError(
                 "invalid_request", "Provide a stable request ID of 1–200 characters."
             )
-        if not 1 <= timeout <= 3600:
+        if isinstance(timeout, bool) or not math.isfinite(timeout) or not 1 <= timeout <= 3600:
             raise ControlError("invalid_timeout", "Timeout must be 1–3600 seconds.")
-        session = self.session(session_ref) if session_ref else None
+        session = None
+        if session_ref:
+            found = db.execute("SELECT * FROM sessions WHERE id=?", (session_ref,)).fetchone()
+            if not found:
+                raise ControlError("session_not_found", "Unknown managed session UUID.")
+            session = dict(found)
+        if resume_unstarted and (
+            not session or not self.backend_unstarted(db, session["id"], session["backend_id"])
+        ):
+            raise ControlError("context_uncertain", "Cannot prove this backend has never executed.")
         if restart and (not session or not acknowledge_context):
             raise ControlError(
                 "context_uncertain",
@@ -328,104 +421,109 @@ class Store:
             acknowledge_context=acknowledge_context,
             restart=restart,
         )
+        if resume_unstarted:
+            intent["resume_unstarted"] = True
         fingerprint = hashlib.sha256(json.dumps(intent, sort_keys=True).encode()).hexdigest()
         now = time.time()
-        with self.db(write=True) as db:
-            prior = db.execute("SELECT * FROM runs WHERE request_id=?", (request_id,)).fetchone()
-            if prior:
-                if prior["fingerprint"] != fingerprint:
-                    raise ControlError(
-                        "request_conflict", "Request ID already belongs to different input."
-                    )
-                return prior["id"], False
-            if session:
-                session = dict(
-                    db.execute("SELECT * FROM sessions WHERE id=?", (session["id"],)).fetchone()
+        prior = db.execute("SELECT * FROM runs WHERE request_id=?", (request_id,)).fetchone()
+        if prior:
+            if prior["fingerprint"] != fingerprint:
+                raise ControlError(
+                    "request_conflict", "Request ID already belongs to different input."
                 )
-                latest = dict(
-                    db.execute(
-                        "SELECT * FROM runs WHERE session_id=? ORDER BY created DESC LIMIT 1",
-                        (session["id"],),
-                    ).fetchone()
+            return prior["id"], False
+        if session:
+            session = dict(
+                db.execute("SELECT * FROM sessions WHERE id=?", (session["id"],)).fetchone()
+            )
+            latest = dict(
+                db.execute(
+                    "SELECT * FROM runs WHERE session_id=? ORDER BY rowid DESC LIMIT 1",
+                    (session["id"],),
+                ).fetchone()
+            )
+            if latest["status"] == "completed" and not self.result_valid(latest):
+                db.execute(
+                    "UPDATE runs SET status='failed',reason='result_integrity' WHERE id=?",
+                    (latest["id"],),
                 )
-                if latest["status"] == "completed" and not self.result_valid(latest):
-                    db.execute(
-                        "UPDATE runs SET status='failed',reason='result_integrity' WHERE id=?",
-                        (latest["id"],),
-                    )
-                    latest["status"] = "failed"
-                    if not acknowledge_context:
-                        # Persist the observed corruption, even though admission is rejected.
-                        db.commit()
-                        raise ControlError(
-                            "context_uncertain",
-                            "Previous result failed integrity validation; inspect before acknowledging context.",
-                        )
-                blocked = db.execute(
-                    "SELECT blocked FROM sessions WHERE id=?", (session["id"],)
-                ).fetchone()[0]
-                if blocked or latest["status"] in ACTIVE:
-                    raise ControlError(
-                        "session_busy",
-                        "Session is active, divergent or ambiguous; inspect/reconcile it.",
-                    )
-                if latest["status"] != "completed" and not acknowledge_context:
+                latest["status"] = "failed"
+                if not acknowledge_context:
                     raise ControlError(
                         "context_uncertain",
-                        "Previous turn did not complete; inspect then pass --acknowledge-context.",
+                        "Previous result failed integrity validation; inspect before acknowledging context.",
                     )
-            if (
-                db.execute(
-                    "SELECT count(*) FROM runs WHERE status IN (?,?,?,?,?,?)", ACTIVE
-                ).fetchone()[0]
-                >= self.config["max_parallel"]
-            ):
+            blocked = db.execute(
+                "SELECT blocked FROM sessions WHERE id=?", (session["id"],)
+            ).fetchone()[0]
+            if blocked or latest["status"] in ACTIVE:
                 raise ControlError(
-                    "capacity", "Local concurrency limit reached, including ambiguous runs."
+                    "session_busy",
+                    "Session is active, divergent or ambiguous; inspect/reconcile it.",
                 )
-            if not session:
-                session = dict(
-                    id=str(uuid.uuid4()),
-                    name=name,
-                    backend_id=str(uuid.uuid4()),
-                    model=model,
-                    role=role,
-                    project=project,
-                    created=now,
+            if latest["status"] != "completed" and not acknowledge_context:
+                raise ControlError(
+                    "context_uncertain",
+                    "Previous turn did not complete; inspect then pass --acknowledge-context.",
                 )
-                try:
-                    db.execute(
-                        "INSERT INTO sessions(id,name,backend_id,model,role,project,created) VALUES(:id,:name,:backend_id,:model,:role,:project,:created)",
-                        session,
-                    )
-                except sqlite3.IntegrityError:
-                    raise ControlError(
-                        "name_conflict",
-                        "Session name already exists; use its explicit ID to follow up.",
-                    ) from None
-            if restart:
-                session["backend_id"] = str(uuid.uuid4())
-                db.execute(
-                    "UPDATE sessions SET backend_id=? WHERE id=?",
-                    (session["backend_id"], session["id"]),
-                )
-            run_id = str(uuid.uuid4())
-            directory = self.run_dir(run_id)
-            directory.mkdir(mode=0o700)
-            (directory / "prompt.txt").write_text(prompt)
-            db.execute(
-                "INSERT INTO runs(id,session_id,request_id,fingerprint,status,created,resume,timeout,backend_id) VALUES(?,?,?,?,'pending',?,?,?,?)",
-                (
-                    run_id,
-                    session["id"],
-                    request_id,
-                    fingerprint,
-                    now,
-                    int(bool(session_ref) and not restart),
-                    timeout,
-                    session["backend_id"],
-                ),
+        command_slots = 0
+        if self.config["schema"] >= 8:
+            from .workspace import command_slots as workspace_slots
+
+            command_slots = workspace_slots(db)
+        if (
+            command_slots
+            + db.execute(
+                "SELECT count(*) FROM runs WHERE status IN (?,?,?,?,?,?)", ACTIVE
+            ).fetchone()[0]
+            >= self.config["max_parallel"]
+        ):
+            raise ControlError(
+                "capacity", "Local concurrency limit reached, including ambiguous runs."
             )
+        if not session:
+            session = dict(
+                id=str(uuid.uuid4()),
+                name=name,
+                backend_id=str(uuid.uuid4()),
+                model=model,
+                role=role,
+                project=project,
+                created=now,
+            )
+            try:
+                db.execute(
+                    "INSERT INTO sessions(id,name,backend_id,model,role,project,created) VALUES(:id,:name,:backend_id,:model,:role,:project,:created)",
+                    session,
+                )
+            except sqlite3.IntegrityError:
+                raise ControlError(
+                    "name_conflict",
+                    "Session name already exists; use its explicit ID to follow up.",
+                ) from None
+        if restart:
+            session["backend_id"] = str(uuid.uuid4())
+            db.execute(
+                "UPDATE sessions SET backend_id=? WHERE id=?",
+                (session["backend_id"], session["id"]),
+            )
+        run_id = str(uuid.uuid4())
+        directory = self.run_dir(run_id)
+        directory.mkdir(mode=0o700)
+        (directory / "prompt.txt").write_text(prompt)
+        db.execute(
+            "INSERT INTO runs(id,session_id,request_id,fingerprint,status,created,resume,timeout,backend_id) VALUES(?,?,?,?,'pending',?,?,?,?)",
+            (
+                run_id,
+                session["id"],
+                request_id,
+                fingerprint,
+                now,
+                int(bool(session_ref) and not restart and not resume_unstarted),
+                timeout,
+                session["backend_id"],
+            ),
+        )
         return run_id, True
 
     def stop(self, run_id):

@@ -11,7 +11,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import __version__
+from . import __version__, message_cli, task_cli, workflow_cli, workspace_cli
 from .assignments import CONTRACT, ROLE_PRESETS, load_assignment, render_assignment
 from .orchestration import observe, report
 from .runner import child_environment, exec_claude, launch_worker, run_worker
@@ -32,6 +32,7 @@ def parser():
     init.add_argument("--claude-bin", required=True)
     init.add_argument("--allow-root", action="append", required=True)
     init.add_argument("--max-parallel", type=int, default=2)
+    init.add_argument("--max-queued", type=int, default=100)
     doctor = commands.add_parser("doctor")
     doctor.add_argument(
         "--auth", action="store_true", help="Check login, excluding account identifiers."
@@ -75,6 +76,14 @@ def parser():
             cmd.add_argument("--bytes", type=int, default=8192)
         if name == "wait":
             cmd.add_argument("--seconds", type=float, default=30)
+    task_cli.register(commands)
+    message_cli.register(commands)
+    workflow_cli.register(commands)
+    workspace_cli.register(commands)
+    command = commands.add_parser("_workspace_exec")
+    command.add_argument("--run", required=True)
+    command.add_argument("--seq", type=int, required=True)
+    command.add_argument("--scratch", type=Path, required=True)
     return p
 
 
@@ -117,6 +126,7 @@ def doctor(store, check_auth):
         missing_options=missing,
         ready=version.returncode == 0 and help_result.returncode == 0 and not missing,
         max_parallel=store.config["max_parallel"],
+        max_queued=store.config.get("max_queued"),
         profile="text-only",
         systemd_run_available=bool(shutil.which("systemd-run")),
         hostname_changed=socket.gethostname() != store.config["hostname"],
@@ -135,15 +145,30 @@ def doctor(store, check_auth):
 
 
 def execute(args):
+    if args.command == "workspace":
+        return workspace_cli.execute(args)
+    if args.command in ("workflow", "overview"):
+        return workflow_cli.execute(args)
+    if args.command == "message":
+        return message_cli.execute(args)
+    if args.command in ("task", "migrate", "dispatch"):
+        return task_cli.execute(args)
     if args.command == "roles":
         return {"protocol": CONTRACT, "roles": [{"name": k, **v} for k, v in ROLE_PRESETS.items()]}
     if args.command == "init":
-        return Store.initialize(args.state_dir, args.claude_bin, args.allow_root, args.max_parallel)
+        return Store.initialize(
+            args.state_dir, args.claude_bin, args.allow_root, args.max_parallel, args.max_queued
+        )
     if args.command == "_worker":
         run_worker(args.state_dir, args.run)
         return {"worker_finished": True}
     if args.command == "_exec":
         exec_claude(args.state_dir, args.run)
+        return None
+    if args.command == "_workspace_exec":
+        from .workspace_sandbox import exec_check
+
+        exec_check(args.state_dir, args.run, args.seq, args.scratch)
         return None
     store = Store(args.state_dir)
     if args.command == "doctor":
@@ -244,7 +269,7 @@ def main():
                 {"error": getattr(exc, "code", "operation_failed"), "message": message},
                 ensure_ascii=False,
             ),
-            file=sys.stderr if args.command == "_exec" else sys.stdout,
+            file=sys.stderr if args.command in ("_exec", "_workspace_exec") else sys.stdout,
         )
         return 2
 

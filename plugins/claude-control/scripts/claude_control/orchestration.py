@@ -6,6 +6,7 @@ import math
 import time
 from collections import Counter
 
+from . import task_contracts
 from .assignments import MAX_BYTES, read_snapshot, validate_report
 from .store import TERMINAL, ControlError
 
@@ -26,10 +27,42 @@ def report(store, run_id):
         agent_status=None,
         acceptance="unreviewed",
         report=None,
+        result_sha256=row["result_sha256"],
     )
     if row["status"] not in TERMINAL:
         return output
     output["format_status"] = "unavailable"
+    if store.config["schema"] >= 4:
+        with store.db() as db:
+            link = db.execute("SELECT * FROM task_runs WHERE run_id=?", (run_id,)).fetchone()
+            if link:
+                output.update(task_id=link["task_id"], revision=link["revision"])
+                try:
+                    checked = task_contracts.inspect_run(store, db, row)
+                except (ControlError, OSError, ValueError) as exc:
+                    output.update(contract_status="invalid", errors=[str(exc)])
+                    return output
+                snapshot = checked.pop("snapshot")
+                output.update(
+                    contract_status="supported",
+                    role=snapshot["assignment"]["role"],
+                    role_version=snapshot["role"]["version"],
+                    **checked,
+                )
+                decision = db.execute(
+                    "SELECT d.id FROM review_decisions d JOIN tasks t ON t.id=d.task_id "
+                    "WHERE d.run_id=? AND d.kind='accept' AND d.result_sha256=? "
+                    "AND t.current_revision=d.revision AND t.active_run_id=d.run_id",
+                    (run_id, row["result_sha256"]),
+                ).fetchone()
+                if (
+                    decision
+                    and output["format_status"] == "valid"
+                    and output["agent_status"] == "complete"
+                ):
+                    output["acceptance"] = "accepted"
+                    output["decision_id"] = decision["id"]
+                return output
     # Only a session's original reservation can have a delegate contract.
     # Followups and restarts remain unstructured even if their input resembles one.
     if row["resume"]:
@@ -130,7 +163,8 @@ def observe(store, run_ids, seconds):
         attention = [
             row["id"]
             for row in rows
-            if row["status"] == "unknown"
+            if row.get("integrity_status") == "unreadable"
+            or row["status"] == "unknown"
             or row["status"] in TERMINAL
             and row["status"] != "completed"
         ]
