@@ -4,52 +4,89 @@
 
 <h1 align="center">Codex Control Claude</h1>
 
-<p align="center">Codex에서 여러 로컬 Claude Code 세션을 관리하세요.</p>
-
-<p align="center">Linux · Python 3.10+ · Python 표준 라이브러리 기반 실행</p>
+<p align="center">Codex에서 여러 로컬 Claude Code 세션을 지속적으로 관리합니다.</p>
 
 <p align="center">
-  <a href="README.md">English</a> · 한국어 · <a href="docs/cli.md">CLI 가이드</a> · <a href="docs/architecture.md">구조와 동작 범위</a> · <a href="CHANGELOG.md">변경 기록</a>
+  <strong>Linux</strong> · <strong>Python 3.10+</strong> · <strong>실행 시 외부 Python 의존성 없음</strong>
 </p>
 
-Claude에게 구현안을 부탁하고, 별도 세션에 검토를 맡기고, 필요한 대화만 이어가고 싶을 때 사용하는 Codex 플러그인입니다. 세션 생성과 상태 확인, 결과 회수, 중단·재개를 로컬 컨트롤러와 스킬이 함께 처리합니다.
+<p align="center">
+  <a href="README.md">English</a> · 한국어 · <a href="docs/cli.md">CLI 레퍼런스</a> · <a href="docs/architecture.md">아키텍처</a> · <a href="CHANGELOG.md">변경 기록</a>
+</p>
 
-**0.7 버전은 통제된 작업 사본 수정과 시험을 지원합니다.** Codex가 Git 사본·수정 가능 파일·허용된 시험 명령을 지정하면, Claude가 구조화된 보고서로 작업을 요청하고 컨트롤러가 실행 결과를 돌려줍니다. Claude의 직접 파일·셸 도구와 MCP는 비활성 상태를 유지하며, 기존 텍스트 위임도 지원합니다.
+Codex Control Claude는 Codex가 Claude Code에 작업을 위임하고 그 실행을
+관리하도록 돕는 플러그인과 로컬 컨트롤러입니다. 대화, 실행, 작업 개정,
+검토 근거와 승인 기록을 호스트의 영속 저장소에 보관합니다. 간단한 구현은
+Sonnet, 중요한 계획과 검토는 Fable에 맡기면서 각 대화의 정확한 세션을
+계속 이어갈 수 있습니다.
 
-실제 과제에서 확인한 시간 초과·보고 형식 실패, 검증된 입력 검사 수정과 후속 안정화
-조건은 [실제 프로젝트 운용 기록](docs/real-project-pilot.md)에 정리했습니다.
+0.9 버전은 **계획 → 독립 검토 → 계획 승인 → 통제된 편집 → 동결본 검토 →
+최종 승인** 흐름을 제공합니다. 계획과 편집 단계를 연결하지만 자동 승인,
+자동 재시도, 원본 반영, merge, push, 서버 간 전달은 수행하지 않습니다.
 
-## 주요 기능
+## 어떤 명령을 선택해야 하나요?
 
-| 기능 | 설명 |
-|---|---|
-| 역할별 위임 | 역할 지침과 구조화된 작업 지시를 실제 입력에 넣고 `sonnet` 또는 `fable`을 명시해 실행합니다. |
-| 병렬 실행 | 독립된 대화를 설정된 한도 안에서 실행합니다. 기본 한도는 2개입니다. |
-| 문맥 유지 | 정확한 관리 세션 ID로 후속 지시를 보냅니다. |
-| 진행 상황 확인 | 여러 실행을 함께 관찰하거나 개별 상태·로그·결과를 조회합니다. |
-| 구조화된 보고서 | 작업 ID와 보고 형식을 검증합니다. 내용의 정확성은 Codex가 별도로 확인합니다. |
-| 제한된 검토·수정 흐름 | 작업자 제안 → 독립 Fable 검토 → 필요한 수정 → Codex 최종 승인 대기를 처리합니다. |
-| 작업 사본 수정 | 파일별 정책을 고정하고 사본을 수정하며, 격리된 임시 사본에서 지정 시험을 실행합니다. |
-| 고정 결과 검토 | 변경 사본·패치·해시를 보존하고 별도 Fable 세션에서 읽기 전용 검토를 수행합니다. |
-| 재접속 요약 | `overview --attention`으로 검토 대기·차단·불명 실행과 남은 예산을 확인합니다. |
-| 선택적 중단 | 해당 컨트롤러가 소유한 실행 하나를 중단합니다. |
-| 명시적 복구 | 불확실한 실행을 확인하거나, 새 대화를 의도적으로 시작합니다. |
-| 실행 검증 | 실제 응답 모델·세션 ID·종료 상태·결과 파일의 무결성을 확인합니다. |
+| 원하는 일 | 사용할 기능 | 추가되는 보장 |
+|---|---|---|
+| Claude에게 질문 한 번 보내기 | `start` | 지속 가능한 비정형 대화 세션 |
+| 역할과 출력 형식을 정해 한 번 위임하기 | `delegate` | 역할 지침과 구조화된 보고서 검증 |
+| 수정 요청과 최종 승인을 기록하기 | `task` | 불변 개정, 정확한 결과 해시, 기준별 승인 근거 |
+| 계획을 만들고 별도 Fable에게 비평시키기 | `workflow` | 호출·수정·시간 예산이 고정된 P4 흐름 |
+| Claude가 제한된 파일을 수정하게 하기 | `workspace` | 비공개 Git 사본, 정확한 쓰기 경로, 이름 있는 검사 |
+| 계획부터 구현·검토까지 연결하기 | `composition` | P4 계획과 P5 편집·동결 검토의 명시적 연결 |
+| 의존 작업을 순서대로 실행하기 | `task enqueue` + `dispatch` | FIFO 대기열과 정확한 부모 승인 조건 |
+| 다음 턴에 전달할 지시를 저장하기 | `message` | 선택된 개정에만 전달되는 지시와 결과 인수인계 |
 
-각 설치는 **같은 호스트, 같은 사용자 계정의 Claude**를 관리합니다. 여러 컴퓨터에 설치해도 상태와 세션은 각각 독립적으로 유지됩니다.
+Codex 앱에서 사용할 때는 설치된 `$claude-control` 스킬을 명시하면 됩니다.
+직접 상태를 확인하거나 운영하려면 아래 CLI를 사용하세요.
+
+## 안전 경계
+
+- 한 설치본은 **같은 호스트, 같은 운영체제 사용자**의 Claude Code만
+  관리합니다.
+- 컨트롤러가 실행하는 Claude의 기본 도구와 MCP는 비활성화됩니다. 텍스트
+  작업에서 경로를 언급해도 Claude가 그 파일을 직접 읽을 수 없습니다.
+- 파일 수정은 커밋된 Git 트리의 비공개 사본에서 이뤄집니다. 원본
+  저장소는 자동으로 바뀌지 않습니다.
+- 검사는 정책에 미리 등록한 이름으로만 요청할 수 있습니다. 실제 명령은
+  Bubblewrap 격리 환경에서 컨트롤러가 실행합니다.
+- 모델 실행 완료, 검토 권고, Codex 승인은 서로 다른 상태입니다.
+- 실패·시간 초과·잘못된 보고서·실행 불명 상태는 자동 재시도하지 않습니다.
+- 상주 스케줄러가 없습니다. `workflow run`, `workspace run`,
+  `composition run`, `dispatch`를 명시적으로 호출해야 다음 단계가 진행됩니다.
+- 프롬프트, 응답, 세션 ID와 실행 상태는 플러그인 소스와 별도 위치에
+  저장됩니다.
+
+로컬 제어가 로컬 추론을 뜻하지는 않습니다. Claude Code는 기존 로그인으로
+Claude 서비스에 모델 요청을 보냅니다.
 
 ## 준비 사항
 
-- Linux와 Python 3.10 이상. 현재 Windows와 macOS는 지원하지 않습니다.
-- 로컬 설치 및 로그인이 완료된 Claude Code. 기본 HOME 기반 인증을 사용하며, 별도의 `CLAUDE_CONFIG_DIR`나 API 키 환경 변수는 전달하지 않습니다.
-- 플러그인 명령을 지원하는 Codex CLI와 함께 제공되는 `plugin-creator` 도구.
-- Codex 플러그인 검증기를 실행할 수 있는, PyYAML이 이미 설치된 Python 3.10 이상. **컨트롤러 자체에는 외부 Python 의존성이 없습니다.** 설치기가 패키지를 자동 설치하지는 않습니다.
+### 모든 기능
 
-`sonnet`과 `fable`의 사용 가능 여부는 Claude 설치 및 계정에 따라 달라집니다. 사용할 수 없는 모델을 다른 모델로 자동 대체하지 않습니다. `doctor --auth`는 CLI 옵션과 로그인 상태를 확인하며, 특정 모델의 호출 가능 여부까지 확인하지는 않습니다.
+- Linux
+- Python 3.10 이상
+- 같은 사용자로 설치하고 로그인한 Claude Code
+- 플러그인 기능과 `plugin-creator` 도구가 포함된 Codex CLI
+- 설치 시 플러그인 검증에 사용할 PyYAML 포함 Python 3.10+
 
-## 빠르게 시작하기
+컨트롤러 실행 자체는 Python 표준 라이브러리만 사용합니다. 설치기는 빠진
+패키지를 자동으로 설치하지 않습니다.
 
-### 1. 설치
+### Workspace와 composition
+
+- Git
+- Bubblewrap (`bwrap`)
+- 사용할 수 있는 비특권 user, PID, network namespace
+
+첫 편집 전에 `workspace doctor`를 실행하세요. 격리를 사용할 수 없으면
+workspace 실행을 거절하며, 격리 없는 대체 경로는 없습니다.
+
+지원 모델 별칭은 `sonnet`과 `fable`입니다. 실제 사용 가능 여부는 Claude
+계정에 따라 달라집니다. 선택한 모델을 쓸 수 없을 때 다른 모델로 조용히
+바꾸지 않습니다.
+
+## 설치
 
 ```bash
 git clone https://github.com/kimstitute/codex-control-claude.git
@@ -57,9 +94,15 @@ cd codex-control-claude
 python3 install.py
 ```
 
-소스를 `~/plugins/claude-control`에 복사하고, 개인 Codex marketplace에 등록한 뒤 플러그인을 설치합니다. 실행 기록은 패키지와 별도 경로에 저장합니다.
+설치기는 다음 작업을 수행합니다.
 
-검증 도구의 위치가 다르면 다음 옵션을 사용하세요.
+1. 플러그인 구조와 스킬을 검증합니다.
+2. 소스를 `$HOME/plugins/claude-control`에 복사합니다.
+3. 개인 Codex marketplace에 등록합니다.
+4. 캐시 구분자가 붙은 설치본을 Codex에 설치합니다.
+
+실행 상태는 플러그인 디렉터리에 저장하지 않습니다. 도구 위치가 기본값과
+다르면 명시하세요.
 
 ```bash
 python3 install.py \
@@ -67,131 +110,580 @@ python3 install.py \
   --helper-python /absolute/path/to/python-with-pyyaml
 ```
 
-### 2. 이 컴퓨터의 실행 범위 설정
+설치 후 새 Codex 작업을 열어야 새 스킬을 확실히 불러옵니다.
 
-아래 예시 경로를 실제 Claude 실행 파일과 프로젝트 경로로 바꾸세요. Claude의 경로는 `command -v claude`로 확인할 수 있습니다.
+## 이 호스트 초기화
+
+Claude 실행 파일을 찾고, 컨트롤러가 사용할 수 있는 프로젝트 루트를
+정합니다.
 
 ```bash
-python3 ~/plugins/claude-control/scripts/claude_control_cli.py init \
+command -v claude
+
+python3 "$HOME/plugins/claude-control/scripts/claude_control_cli.py" init \
   --claude-bin /absolute/path/to/claude \
-  --allow-root /absolute/path/to/your/project \
-  --max-parallel 2
-
-python3 ~/plugins/claude-control/scripts/claude_control_cli.py doctor --auth
+  --allow-root /srv/my-project \
+  --max-parallel 2 \
+  --max-queued 100
 ```
 
-여러 프로젝트를 허용하려면 초기화 명령에서 `--allow-root`를 반복해 지정합니다. 진단 결과의 `"ready": true`를 확인하세요.
+여러 프로젝트 루트를 허용하려면 초기화할 때 `--allow-root`를 반복합니다.
+이후 assignment의 `project`는 허용된 루트 안에 있어야 합니다.
 
-### 3. Codex에 위임 요청
-
-설치된 스킬을 발견할 수 있도록 새 Codex 작업을 열고 다음과 같이 요청합니다.
-
-> $claude-control을 사용해서 Sonnet에게 작은 리팩터링안을, Fable에게 독립적인 비평을 맡겨줘. 필요한 코드는 텍스트로 전달하고, 각 세션을 따로 유지하면서 결과를 검증한 뒤 적용해줘.
-
-기술적인 호출 성공과 답변의 정확성은 별개입니다. Codex가 내용을 검토하고 실제 변경을 확인하는 과정은 그대로 필요합니다.
-
-## CLI로 직접 사용하기
-
-프롬프트를 파일에 작성하고 실행합니다.
+설치, 로그인과 격리 환경을 확인합니다.
 
 ```bash
-python3 ~/plugins/claude-control/scripts/claude_control_cli.py start \
-  --name implementation --model sonnet --role implementer \
-  --project /absolute/path/to/your/project \
-  --prompt-file /absolute/path/to/task.txt \
-  --request-id implement-example-001 --timeout 300
+python3 "$HOME/plugins/claude-control/scripts/claude_control_cli.py" doctor --auth
+python3 "$HOME/plugins/claude-control/scripts/claude_control_cli.py" workspace doctor
 ```
 
-반환되는 `id`는 이번 **실행 ID**, `session_id`는 **관리 대화 ID**입니다. 응답을 받지 못해 같은 요청을 다시 제출한다면 기존 요청 ID를 유지하세요.
+`doctor --auth` 결과에는 계정 식별자가 포함되지 않습니다. 정상 상태는
+`"ready": true`로 표시됩니다. 이 검사는 로그인과 CLI 기능을 확인하지만,
+특정 모델의 실제 사용 가능 여부는 해당 모델을 명시해 호출해야 확인됩니다.
+
+아래 shell 함수를 정의하면 이후 예시를 그대로 사용할 수 있습니다.
 
 ```bash
-python3 ~/plugins/claude-control/scripts/claude_control_cli.py list
-python3 ~/plugins/claude-control/scripts/claude_control_cli.py wait --run <run-uuid> --seconds 30
-python3 ~/plugins/claude-control/scripts/claude_control_cli.py result --run <run-uuid>
+claude_control() {
+  python3 "$HOME/plugins/claude-control/scripts/claude_control_cli.py" "$@"
+}
 ```
 
-후속 지시·중단·재개·복구의 자세한 사용법은 [CLI 가이드](docs/cli.md)에 있습니다.
+공개 운영 명령은 JSON을 출력합니다.
 
-`roles`는 역할 지침을 조회하고, `delegate --assignment-file <파일>
---request-id <ID>`는 역할 지침과 완료 조건을 포함한 작업을 전달합니다.
-`observe --run <ID> --run <ID> --seconds 30`으로 여러 실행을 관찰하고,
-`report --run <ID>`로 구조화된 답변을 확인합니다. 기존 `start --role`은
-기록용 이름이며 역할 지침을 자동으로 넣지 않습니다.
+## Codex 앱에서 사용하기
 
-기본 모델은 `executor`·`researcher`가 Sonnet,
-`planner`·`architect`·`critic`·`verifier`가 Fable입니다. 명시적으로 다른
-지원 모델을 지정할 수 있지만 자동 대체는 하지 않습니다. 실행 종료, 보고서
-형식 적합성, 내용 승인은 별개입니다. `delegate`의 v1 보고는 검토 전 상태를 유지하며, 새 `task` 흐름에서는 Codex의 명시적 승인 기록을 남길 수 있습니다.
+새 Codex 작업에서 작업 내용과 스킬을 함께 말하면 됩니다.
 
-OMX의 역할·작업 관리 구조에서 도입한 부분과 이후 확장 계획은
-[OMX 분석 문서](docs/omx-adoption.md)에 정리했습니다. 대기열·의존 작업은
-명시적으로 호출하는 유한 조정 루프에서 실행합니다. 다음 턴 지시함과 명시적 결과 인수인계도 지원합니다.
+> $claude-control을 사용해줘. Sonnet에게 범위가 고정된 구현을 맡기고,
+> 별도 Fable 세션이 결과를 검증하게 해줘. 두 세션 ID를 보존하고 정확한
+> 결과를 확인하기 전에는 승인하거나 적용하지 마.
 
-## 데이터와 실행 범위
+0.9의 전체 흐름을 사용하려면 다음처럼 요청할 수 있습니다.
 
-기본 상태 경로는 `$XDG_STATE_HOME/claude-control` 또는 `~/.local/state/claude-control`입니다. 프롬프트·응답·세션 ID·프로세스 정보·로그를 사용자 전용 권한으로 저장합니다. Claude 자체의 로컬 세션 이력도 별도로 유지됩니다.
+> 이 저장소에서 $claude-control composition을 사용해줘. Fable이 계획을
+> 검토한 뒤 명시적 계획 승인을 기다리고, Sonnet은 허용된 파일만 수정하고
+> 이름 있는 검사를 실행하게 해줘. 편집 결과를 동결한 뒤 별도 읽기 전용
+> Fable 검토를 만들고, merge나 push는 자동으로 하지 마.
 
-**로컬 제어는 로컬 모델 추론을 뜻하지 않습니다.** 모델 요청은 기존 인증을 사용하는 Claude Code를 통해 Claude 서비스로 전송됩니다. 컨트롤러가 별도 텔레메트리 서비스를 추가하거나 서버 간 작업을 전달하지는 않습니다.
+Codex는 세션 ID, 결과 해시, 승인 근거를 관리해야 합니다. Claude 프로세스가
+정상 종료했다는 사실만으로 답의 정확성이 증명되지는 않습니다.
 
-프로젝트 허용 경로는 Claude의 실행 디렉터리를 제한합니다. Workspace 시험 명령은 별도 Bubblewrap 네임스페이스에서 실행하며 호스트 홈·컨트롤러 상태·외부 네트워크·GPU 장치를 제공하지 않습니다. 자원 제한은 프로세스별 제한이며 전체 작업의 cgroup 할당량은 아닙니다. Claude의 관리자 정책도 적용됩니다.
+## 첫 CLI 실습: 대화 하나 시작하기
 
-## 업데이트와 테스트
+Claude에 전달할 내용을 `/tmp/claude-task.txt`에 작성합니다. `start`는 파일
+권한을 주지 않으므로 필요한 코드나 근거는 프롬프트에 포함해야 합니다.
 
-진행 중인 관리 작업을 완료하거나 중단한 뒤 갱신합니다.
+```bash
+claude_control start \
+  --name parser-review \
+  --model sonnet \
+  --effort medium \
+  --role implementer \
+  --project /srv/my-project \
+  --prompt-file /tmp/claude-task.txt \
+  --request-id parser-review-001 \
+  --timeout 300
+```
+
+응답에서 다음 ID를 보관하세요.
+
+| JSON 필드 | 의미 | 사용하는 명령 |
+|---|---|---|
+| `id` | 한 번의 실행 ID | `status`, `wait`, `logs`, `result`, `stop`, `reconcile` |
+| `session_id` | 컨트롤러가 관리하는 대화 ID | `followup`, `resume`, `restart` |
+| `backend_id` | Claude의 영속 대화 ID | 검증과 진단 전용 |
+
+```bash
+claude_control status --run <run-uuid>
+claude_control wait --run <run-uuid> --seconds 30
+claude_control logs --run <run-uuid> --stream stderr --bytes 8192
+claude_control result --run <run-uuid>
+```
+
+세션이 idle이 된 뒤 정확한 대화를 이어갑니다.
+
+```bash
+claude_control followup \
+  --session <managed-session-uuid> \
+  --prompt-file /tmp/followup.txt \
+  --request-id parser-review-002
+```
+
+`resume`은 `followup`의 별칭입니다. 세션의 모델과 effort는 고정됩니다.
+각 논리 작업에는 고유한 request ID를 사용하세요. 같은 ID와 같은 입력을
+다시 보내면 기존 결과를 반환하지만, 같은 ID에 다른 입력을 쓰면 거절합니다.
+
+## 구조화된 단일 위임
+
+역할 지침과 검증 가능한 보고서 형식이 필요하면 `delegate`를 사용합니다.
+다음을 `/tmp/parser-review.json`으로 저장합니다.
+
+```json
+{
+  "id": "parser-review",
+  "name": "Parser review",
+  "role": "critic",
+  "model": "fable",
+  "project": "/srv/my-project",
+  "objective": "Review the supplied parser behavior for ambiguous inputs.",
+  "context": "Paste the relevant requirements, source text and test evidence here.",
+  "scope": ["Only the supplied parser and tests"],
+  "acceptance_criteria": [
+    "Identify concrete failure cases",
+    "Separate verified facts from assumptions"
+  ],
+  "deliverable": "A concise review with regression-test proposals.",
+  "effort": "high",
+  "timeout": 300
+}
+```
+
+```bash
+claude_control roles
+claude_control delegate \
+  --assignment-file /tmp/parser-review.json \
+  --request-id parser-review-delegate-001
+claude_control wait --run <run-uuid> --seconds 30
+claude_control report --run <run-uuid>
+```
+
+기본 역할 배치는 `executor`·`researcher`가 Sonnet,
+`planner`·`architect`·`critic`·`verifier`가 Fable입니다. assignment에
+`model`을 쓰면 해당 선택을 사용합니다. `report`는 ID와 형식을 검증하지만
+내용을 승인하지는 않습니다.
+
+## 전체 실습: 계획, 편집, 동결본 검토
+
+중요한 저장소 변경에는 `composition` 흐름을 권장합니다.
+
+### 1. 커밋된 트리 확인
+
+Composition 생성 시 ref를 정확한 커밋으로 고정합니다. 원본 저장소의
+미커밋 변경과 추적되지 않은 파일은 사본에 포함되지 않습니다.
+
+```bash
+git -C /srv/my-project status --short
+git -C /srv/my-project rev-parse HEAD
+mkdir -p /tmp/claude-composition
+```
+
+### 2. 계획 assignment 작성
+
+`/tmp/claude-composition/plan.json`:
+
+```json
+{
+  "id": "ledger-plan",
+  "name": "Plan the ledger fix",
+  "role": "planner",
+  "model": "fable",
+  "project": "/srv/my-project",
+  "objective": "Produce a bounded implementation and test plan for the supplied ledger defect.",
+  "context": "Paste the defect report, relevant source excerpts and constraints here. The planning stage cannot read repository paths directly.",
+  "scope": ["src/ledger.py", "tests/test_ledger.py"],
+  "acceptance_criteria": [
+    "The plan names the exact files and behavior to change",
+    "The plan defines a regression test and the named verification command"
+  ],
+  "deliverable": "A file-by-file implementation plan with risks and verification steps.",
+  "effort": "high",
+  "timeout": 600
+}
+```
+
+계획 단계는 텍스트 위임입니다. `context`에 결함 설명, 관련 코드, 제약을
+넣어야 하며 경로만 적는다고 파일을 읽지는 않습니다.
+
+### 3. 편집 assignment 작성
+
+`/tmp/claude-composition/editor.json`:
+
+```json
+{
+  "id": "ledger-editor",
+  "name": "Implement the ledger fix",
+  "role": "executor",
+  "model": "sonnet",
+  "project": "/srv/my-project",
+  "objective": "Implement the accepted plan in the controlled workspace.",
+  "context": "Use only controller-mediated reads, full-file writes and named checks. The accepted plan provenance is appended by the composition.",
+  "scope": ["src/ledger.py", "tests/test_ledger.py"],
+  "acceptance_criteria": [
+    "src/ledger.py implements the accepted behavior",
+    "tests/test_ledger.py covers the regression",
+    "The unit named check passes"
+  ],
+  "deliverable": "A complete workspace report with no pending operations.",
+  "effort": "medium",
+  "timeout": 600
+}
+```
+
+### 4. 파일과 검사 권한 작성
+
+`/tmp/claude-composition/editor-policy.json`:
+
+```json
+{
+  "version": 1,
+  "role": "executor",
+  "read_paths": ["src/ledger.py", "tests/test_ledger.py"],
+  "write_paths": ["src/ledger.py", "tests/test_ledger.py"],
+  "checks": {
+    "unit": {
+      "argv": ["/usr/bin/python3", "-m", "unittest", "tests.test_ledger"],
+      "timeout": 60
+    }
+  },
+  "max_actions": 12,
+  "max_calls": 6
+}
+```
+
+쓰기 경로는 반드시 읽기 경로에도 있어야 합니다. 검사 실행 파일은
+`/usr/bin/<이름>` 형태의 절대 경로여야 합니다. Claude는 `unit` 검사를
+요청할 수 있지만 argv를 바꿀 수 없습니다.
+
+### 5. 독립 검토 assignment 작성
+
+`/tmp/claude-composition/reviewer.json`:
+
+```json
+{
+  "id": "ledger-reviewer",
+  "name": "Verify the frozen ledger fix",
+  "role": "verifier",
+  "model": "fable",
+  "project": "/srv/my-project",
+  "objective": "Independently assess the frozen editor result.",
+  "context": "Review the frozen selected files and report evidence and limitations. Do not request writes or checks.",
+  "scope": ["src/ledger.py", "tests/test_ledger.py"],
+  "acceptance_criteria": [
+    "src/ledger.py implements the accepted behavior",
+    "tests/test_ledger.py covers the regression",
+    "The unit named check passes"
+  ],
+  "deliverable": "A read-only verification report for Codex.",
+  "effort": "high",
+  "timeout": 600
+}
+```
+
+검토자의 `acceptance_criteria`는 편집자의 기준과 정확히 같아야 합니다.
+검토 정책은 컨트롤러가 자동으로 파생합니다. 읽기 경로만 같고 쓰기 경로와
+검사는 비어 있습니다.
+
+### 6. Composition 생성
+
+```bash
+claude_control composition create \
+  --planning-assignment-file /tmp/claude-composition/plan.json \
+  --editor-assignment-file /tmp/claude-composition/editor.json \
+  --editor-policy-file /tmp/claude-composition/editor-policy.json \
+  --reviewer-assignment-file /tmp/claude-composition/reviewer.json \
+  --repo /srv/my-project \
+  --ref HEAD \
+  --operation-id ledger-composition-create-001 \
+  --max-revisions 2 \
+  --max-calls 6 \
+  --dispatch-window-seconds 900 \
+  --reviewer-effort high
+```
+
+생성은 Git 커밋과 P4 workflow를 기록할 뿐 모델을 호출하지 않습니다.
+반환된 composition UUID를 보관하세요.
+
+### 7. 계획 승인 지점까지 실행
+
+```bash
+claude_control composition run \
+  --composition <composition-uuid> \
+  --until-idle --max-seconds 60
+
+claude_control composition status --composition <composition-uuid>
+```
+
+호출이 진행 중이었다면 상태를 확인한 뒤 같은 composition의 bounded run을
+다시 실행합니다. 정상적인 첫 승인 지점은 다음과 같습니다.
+
+```text
+state:  awaiting_codex
+reason: plan_acceptance_required
+```
+
+내부 workflow에는 `approve_recommended`가 표시되어야 합니다. 이는 검토
+권고이며 승인 자체가 아닙니다.
+
+### 8. 정확한 계획 결과 검토·승인
+
+Composition status에 나온 계획 task와 run을 조회합니다.
+
+```bash
+claude_control task show --task <plan-task-uuid>
+claude_control report --run <plan-run-uuid>
+claude_control result --run <plan-run-uuid>
+```
+
+계획의 1부터 시작하는 모든 기준에 대해 근거를 기록한
+`/tmp/claude-composition/plan-evidence.json`을 작성합니다.
+
+```json
+{
+  "1": "Codex verified the exact file and behavior boundaries.",
+  "2": "Codex verified the proposed regression test and named check."
+}
+```
+
+컨트롤러가 보여준 정확한 개정, run, 결과 해시를 사용합니다.
+
+```bash
+claude_control task accept \
+  --task <plan-task-uuid> \
+  --revision <plan-revision> \
+  --run <plan-run-uuid> \
+  --result-sha256 <plan-result-sha256> \
+  --evidence-file /tmp/claude-composition/plan-evidence.json \
+  --operation-id ledger-plan-accept-001
+```
+
+독립 계획 검토가 정확히 `approve_recommended` 상태가 아니면 composition이
+이 승인을 거절합니다.
+
+### 9. 편집과 동결본 검토 실행
+
+```bash
+claude_control composition run \
+  --composition <composition-uuid> \
+  --until-idle --max-seconds 60
+
+claude_control composition status --composition <composition-uuid>
+```
+
+계획 승인 후, 생성 시 고정한 커밋으로 편집 workspace를 만듭니다. 편집이
+끝나면 트리를 먼저 동결하고, 그 동결본으로 별도 읽기 전용 Fable 검토
+workspace를 만듭니다. 다음 상태까지 bounded run을 이어갑니다.
+
+```text
+state:  awaiting_codex
+reason: final_review_ready
+```
+
+여기까지 원본 저장소에는 어떤 파일도 자동 반영되지 않습니다.
+
+### 10. 동결 증거 확인과 최종 승인
+
+Composition status에 editor와 reviewer workspace UUID, 정확한 결과 ID와
+해시가 들어 있습니다. 두 결과를 모두 확인합니다.
+
+```bash
+claude_control workspace status --workspace <editor-workspace-uuid>
+claude_control workspace export --workspace <editor-workspace-uuid>
+claude_control workspace status --workspace <reviewer-workspace-uuid>
+claude_control workspace export --workspace <reviewer-workspace-uuid>
+claude_control report --run <reviewer-run-uuid>
+```
+
+편집자의 모든 기준을 다루는
+`/tmp/claude-composition/editor-evidence.json`을 작성합니다.
+
+```json
+{
+  "1": "Codex inspected the frozen implementation against the accepted plan.",
+  "2": "Codex inspected the frozen regression test.",
+  "3": "Codex verified the recorded named-check receipt and reviewer evidence."
+}
+```
+
+```bash
+claude_control task accept \
+  --task <editor-task-uuid> \
+  --revision <editor-revision> \
+  --run <editor-run-uuid> \
+  --result-sha256 <editor-result-sha256> \
+  --evidence-file /tmp/claude-composition/editor-evidence.json \
+  --operation-id ledger-editor-accept-001
+
+claude_control composition status --composition <composition-uuid>
+```
+
+`accepted` 상태는 정확한 편집 결과에 대한 승인 기록과 손상되지 않은
+editor/reviewer export에서 파생됩니다. 동결 patch나 파일을 원본에 적용하는
+일은 이후 Codex 또는 사용자가 별도로 수행합니다.
+
+## Composition 상태 읽기
+
+| 상태/이유 | 의미 | 다음 행동 |
+|---|---|---|
+| `active` | 명시적으로 진행할 단계가 남아 있음 | bounded `composition run` 한 번 실행 |
+| `awaiting_codex/plan_acceptance_required` | 검토된 계획이 준비됨 | 정확한 계획 결과를 확인하고 명시적으로 승인 |
+| `awaiting_codex/final_review_ready` | 편집과 동결본 검토가 완료됨 | 두 export를 확인하고 정확한 편집 결과 승인 |
+| `awaiting_codex/<failure>` | 실패·잘못된 보고서·예산·불확실성으로 자동화가 멈춤 | 해당 child를 조사하고 자동 대체 작업을 만들지 않음 |
+| `accepted` | 정확한 편집 승인과 온전한 증거가 존재함 | 원본 반영 여부를 별도로 결정 |
+| `stopping` | 소유한 실행과 명령을 정리하는 중 | `stop` 또는 `run`으로 정리를 계속한 뒤 확인 |
+| `stopped` | 신규 실행이 막혔고 정리가 끝남 | 기록을 보존하거나 의도적으로 새 composition 생성 |
+
+증거를 지우지 않고 composition을 중단할 수 있습니다.
+
+```bash
+claude_control composition stop \
+  --composition <composition-uuid> \
+  --operation-id ledger-composition-stop-001
+```
+
+## 파일 작업이 없는 Task 승인 흐름
+
+파일 작업이 필요 없다면 다음 명시적 흐름을 사용합니다.
+
+```text
+task create → task submit → report/result → task review → task accept
+                                      ↘ task revise → task submit
+```
+
+`task review`의 `approve`, `revise`, `blocked`는 검토 권고입니다. 실제 승인은
+`task accept`만 만들 수 있으며, 정확한 task 개정, run ID, 결과 SHA-256,
+모든 기준의 근거가 필요합니다. 자세한 내용은 [작업 가이드](docs/tasks.md)를
+참고하세요.
+
+## 병렬 실행, 대기열, 다음 턴 메시지
+
+이미 시작한 여러 실행을 함께 관찰할 수 있습니다.
+
+```bash
+claude_control observe \
+  --run <first-run-uuid> \
+  --run <second-run-uuid> \
+  --seconds 30
+```
+
+Task를 대기열에 넣고 준비된 작업을 명시적으로 배정합니다.
+
+```bash
+claude_control task enqueue \
+  --task <task-uuid> --revision 1 \
+  --operation-id enqueue-task-001
+
+claude_control dispatch --until-idle --max-seconds 60
+```
+
+부모 task는 정확한 Codex 승인을 받아야 의존 조건을 만족합니다.
+`message enqueue`로 이후 지시를 저장하고 `task revise`에서 message ID를
+선택한 다음 새 개정을 별도로 제출합니다. [대기열](docs/queue.md)과
+[메시지·인수인계](docs/messages.md)를 참고하세요.
+
+## 중단과 복구
+
+한 실행의 취소를 요청하고 실제 종료 상태를 확인합니다.
+
+```bash
+claude_control stop --run <run-uuid>
+claude_control wait --run <run-uuid> --seconds 30
+```
+
+`unknown`은 실행이 아직 존재할 가능성을 뜻하므로 동시 실행 슬롯을 계속
+차지합니다. 로그와 기록을 확인한 뒤, 원래 실행의 PID namespace에서 같은
+run을 reconcile합니다.
+
+```bash
+claude_control status --run <run-uuid>
+claude_control logs --run <run-uuid> --stream worker --bytes 8192
+claude_control reconcile --run <run-uuid>
+```
+
+불확실성을 피하려고 DB를 지우거나 다른 state store를 초기화하거나 대체
+세션을 만들면 안 됩니다. 실패·취소된 대화도 입력 일부를 읽었을 수 있으므로
+확인 후 필요한 context acknowledgement를 명시해 후속 턴을 만드세요.
+
+## 상태 저장소와 여러 호스트
+
+기본 상태 경로는 `$XDG_STATE_HOME/claude-control`이며, `XDG_STATE_HOME`이
+없으면 `$HOME/.local/state/claude-control`입니다. 설정, 프롬프트, 응답,
+작업 이력, 프로세스 증거와 비공개 workspace를 사용자 전용 권한으로
+저장합니다.
+
+다른 초기화된 저장소를 선택하려면 `--state-dir`을 subcommand 앞에 둡니다.
+
+```bash
+claude_control --state-dir /srv/controller-state list
+```
+
+각 호스트는 별도 상태 저장소와 Claude 로그인·세션 이력을 가집니다. 이
+버전은 컴퓨터 사이에 작업을 전달하지 않습니다.
+
+## 업데이트와 스키마 이관
+
+관리 중인 실행을 끝내거나 중단하고, `unknown` 실행을 해결한 뒤 갱신합니다.
 
 ```bash
 git pull --ff-only
 python3 install.py --update
 ```
 
-갱신 후 새 Codex 작업을 열어주세요. 상태 저장소는 유지됩니다. 새 저장소는 스키마 8을 사용합니다. 기존 스키마 3·4·5·6·7은 실행 종료 확인 후 `migrate --offline`으로 명시적으로 이관합니다. 검증된 SQLite 백업과 중단 후 재개를 지원하며, 실행 중 자동 이관하지 않습니다.
+재설치 후 새 Codex 작업을 여세요. 이전 CLI와 worker가 모두 종료된 상태에서
+새 CLI로 기존 저장소를 확인하고 이관합니다.
+
+```bash
+claude_control migrate --status
+claude_control migrate --offline
+claude_control migrate --status
+```
+
+새 저장소는 schema 10을 사용합니다. 기존 schema 3–9는 각 단계마다 검증된
+SQLite 백업과 영속 migration journal을 만들면서 순서대로 이관됩니다.
+중단되었다면 원래 상태 디렉터리에서 같은 `migrate --offline`을 다시
+실행합니다. 백업 DB로 작업을 실행하거나 원본 DB를 단일 SQLite 파일
+복사본으로 교체하지 마세요.
+
+## 문제 해결
+
+| 증상 | 의미와 조치 |
+|---|---|
+| `doctor`가 Claude 옵션 부족을 보고함 | 표시된 옵션을 지원하는 Claude Code로 갱신 |
+| `doctor --auth`가 ready가 아님 | 일반 Claude Code 로그인 후 다시 검사 |
+| 지정 모델 호출 실패 | 계정의 모델 사용 가능 여부 확인; 자동 대체 없음 |
+| `project_not_allowed` | 초기화한 `--allow-root` 내부 경로 사용; 새 state store로 우회하지 않음 |
+| `workspace doctor` 실패 | Bubblewrap 또는 비특권 namespace를 복구; 비격리 실행은 하지 않음 |
+| `capacity_full` 또는 session busy | 기존 실행을 확인하고 기다리거나 소유 실행을 의도적으로 중단 |
+| `context_changed` | 최신 정확한 턴을 확인하고 요구된 acknowledgement와 함께 명시적 개정/후속 턴 생성 |
+| `unknown` | 원래 실행을 조사하고 reconcile; 자동 재시도·대체 금지 |
+| `invalid_report` | `result` 원문 확인 후 새 명시적 개정에서 수정; 자동 repair 호출 없음 |
+| `migration_required` | client/run 중단, `migrate --status` 확인, `migrate --offline` 실행 |
+| 설치 시 `yaml` import 실패 | PyYAML이 있는 Python 3.10+를 `--helper-python`으로 지정 |
+
+## 문서 안내
+
+- [CLI와 보고서 계약](docs/cli.md)
+- [Task 개정, 승인 근거와 migration](docs/tasks.md)
+- [대기열, 의존성, dispatch](docs/queue.md)
+- [다음 턴 메시지와 결과 인수인계](docs/messages.md)
+- [제한된 worker/reviewer workflow](docs/workflows.md)
+- [Workspace 정책과 격리](docs/workspaces.md)
+- [계획·편집·동결 검토 composition](docs/compositions.md)
+- [Effort와 실행 설정](docs/execution-settings.md)
+- [아키텍처와 신뢰 경계](docs/architecture.md)
+- [테스트와 선택적 live test](docs/testing.md)
+- [실제 프로젝트 파일럿 기록](docs/real-project-pilot.md)
+- [OMX에서 도입한 설계](docs/omx-adoption.md)
+
+## 테스트
 
 ```bash
 python3 -m unittest discover -s tests -v
+ruff check .
+ruff format --check .
 ```
 
-자동 테스트는 가짜 Claude 프로세스를 사용하며 모델 호출을 하지 않습니다. 실제 Claude 호출을 사용하는 선택적 시험은 [테스트 안내](docs/testing.md)를 확인하세요. 실제 대화 원문이나 로컬 시험 기록은 이 저장소에 포함하지 않습니다.
+일반 테스트는 가짜 Claude 프로세스를 사용하므로 모델을 호출하지 않습니다.
+실제 Claude 계정을 쓰는 live test는 명시적으로 선택해야 하며,
+[테스트 문서](docs/testing.md)에 절차가 있습니다.
 
-## 작업 이력과 승인
+## 현재 범위
 
-0.3에서는 `task create → task submit → report → task review / task accept`로 작업을 관리합니다.
-`task revise`는 입력과 완료 조건을 새 개정으로 보존하고, 이어서 `task submit`하면 같은
-Claude 대화를 재개합니다. 작업·개정·실행 ID는 별개이며 결과 해시와 기준별 근거를 지정해야
-승인할 수 있습니다. 검토 의견만으로 승인되지는 않습니다.
+0.9 버전은 Linux, 텍스트 위임, 영속 세션, 검토·승인 가능한 task 개정,
+유한 대기열과 workflow, 컨트롤러 매개 workspace 편집, 명시적
+계획·편집·검토 composition을 지원합니다. Claude의 직접 파일·shell 도구,
+임의 기존 세션 인수, 대화 fork, Windows/macOS, MCP adapter, 서버 간 전달,
+Codex 자동 깨우기는 현재 범위 밖입니다.
 
-0.4에서는 `task enqueue`로 대기열에 등록하고 `dispatch --once` 또는
-`dispatch --until-idle --max-seconds 60`으로 준비된 작업을 실행합니다.
-부모의 정확한 개정·결과에 대한 Codex 승인이 있어야 자식 작업을 배정합니다.
-`task events`로 상태 변경을 이어서 조회할 수 있습니다. 상주 조정자와 자동 검토 반복은 제공하지 않습니다.
-자세한 사용법은 [대기열 가이드](docs/queue.md)를 참고하세요.
-사용법과 이관 절차는 [작업 관리 가이드](docs/tasks.md)를 참고하세요.
-
-## 현재 지원 범위
-
-Linux, 텍스트 위임, 컨트롤러를 통한 제한된 사본 작업, 이 컨트롤러가 만든 세션을 지원합니다. Claude의 파일·셸 직접 실행, 임의의 기존 세션 인수, fork, Windows/macOS, MCP 어댑터, 서버 간 전달, Codex 자동 깨우기는 후속 확장 항목입니다.
-
-제작: [kimstitute](https://github.com/kimstitute). OpenAI 또는 Anthropic의 공식 연동 제품이 아닌 독립 프로젝트입니다.
-
-## 다음 턴 지시와 인수인계
-
-0.5에서는 `message enqueue`로 실행 중에도 지시를 보관할 수 있습니다.
-`task revise --message-id`로 포함할 지시를 선택한 뒤 제출하면 등록 순서대로
-다음 턴에 전달합니다. 실행 중인 Claude에 입력을 끼워 넣거나 자동으로 새 턴을 만들지 않습니다.
-검증된 결과를 출처 run·digest와 함께 복사하는 인수인계도 지원합니다.
-전달 이력과 취소·명시적 재전달 규칙은 [지시함 가이드](docs/messages.md)에 정리했습니다.
-
-## 제한된 검토·수정 흐름
-
-`workflow create/run/status/stop`은 호출 횟수·수정 횟수·신규 실행 허용 시간을 보존하는 고정 흐름입니다. 기본값은 수정 2회, 호출 6회, 최초 예약 후 900초입니다. 검토 통과 권고는 Codex의 최종 승인을 대신하지 않습니다. [워크플로 가이드](docs/workflows.md)를 참고하세요.
-
-## 통제된 사본에서 구현·시험하기
-
-`workspace create/task/run/status/export/stop`으로 파일 수정과 시험을 진행합니다. Git의 특정 커밋을 사본으로 만들며, 원본의 미커밋·추적되지 않은 파일은 포함하지 않습니다. 결과를 고정한 뒤 `workspace create --from-snapshot`으로 별도 Fable 읽기 전용 검토를 만들 수 있습니다. 최종 승인과 원본 반영은 Codex가 담당합니다.
-
-`composition create/run/status/stop`은 검토된 계획, 정확한 계획 승인, 제한된
-편집·검사, frozen 결과의 별도 Fable 검토, 정확한 최종 승인을 한 흐름으로
-연결합니다. 생성 시 Git ref를 한 커밋으로 고정하며, 자동 승인·재시도·병합·push는
-하지 않습니다. 자세한 순서와 복구 경계는 [조합 가이드](docs/compositions.md)를
-참고하세요.
-
-Git과 Bubblewrap, 사용 가능한 Linux 사용자·PID·네트워크 네임스페이스가 필요합니다. `workspace doctor`로 확인하며 격리를 사용할 수 없으면 실행을 거절합니다. 정책·실행·복구 예시는 [워크스페이스 가이드](docs/workspaces.md)를 참고하세요.
+제작: [kimstitute](https://github.com/kimstitute). OpenAI 또는 Anthropic의
+공식 연동 제품이 아닌 독립 프로젝트입니다.
