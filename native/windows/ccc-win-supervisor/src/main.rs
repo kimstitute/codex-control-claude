@@ -448,7 +448,9 @@ fn de_command_from_raw(mut raw: HashMap<String, Value>) -> Result<Command, Proto
                 return Err(ProtocolError("run_id must be a canonical UUID".into()));
             }
             if !valid_windows_absolute_path(&argv[0]) {
-                return Err(ProtocolError("argv[0] must be an absolute Windows path".into()));
+                return Err(ProtocolError(
+                    "argv[0] must be an absolute Windows path".into(),
+                ));
             }
             if !job_name.starts_with(r"Local\ccc-") {
                 return Err(ProtocolError(
@@ -550,13 +552,14 @@ mod win {
     use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Foundation::{
-        CloseHandle, GetLastError, ERROR_ACCESS_DENIED, ERROR_ALREADY_EXISTS, FILETIME, HANDLE,
-        HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE, WAIT_OBJECT_0,
+        CloseHandle, GetLastError, SetHandleInformation, ERROR_ACCESS_DENIED, ERROR_ALREADY_EXISTS,
+        FILETIME, GENERIC_READ, GENERIC_WRITE, HANDLE, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE,
+        WAIT_OBJECT_0,
     };
     use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
     use windows_sys::Win32::Storage::FileSystem::{
         CreateFileW, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE,
-        GENERIC_READ, GENERIC_WRITE, OPEN_EXISTING,
+        OPEN_EXISTING,
     };
     use windows_sys::Win32::System::Console::{
         GenerateConsoleCtrlEvent, GetStdHandle, CTRL_BREAK_EVENT, STD_ERROR_HANDLE,
@@ -568,10 +571,10 @@ mod win {
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     };
     use windows_sys::Win32::System::Threading::{
-        CreateProcessW, GetExitCodeProcess, GetProcessTimes, ResumeThread, SetHandleInformation,
-        TerminateProcess, WaitForSingleObject, CREATE_BREAKAWAY_FROM_JOB, CREATE_NEW_PROCESS_GROUP,
-        CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, INFINITE, PROCESS_INFORMATION,
-        STARTF_USESTDHANDLES, STARTUPINFOW,
+        CreateProcessW, GetExitCodeProcess, GetProcessTimes, ResumeThread, TerminateProcess,
+        WaitForSingleObject, CREATE_BREAKAWAY_FROM_JOB, CREATE_NEW_PROCESS_GROUP, CREATE_SUSPENDED,
+        CREATE_UNICODE_ENVIRONMENT, INFINITE, PROCESS_INFORMATION, STARTF_USESTDHANDLES,
+        STARTUPINFOW,
     };
 
     pub enum Event {
@@ -600,9 +603,6 @@ mod win {
             }
         }
     }
-
-    struct SendableHandle(HANDLE);
-    unsafe impl Send for SendableHandle {}
 
     pub struct Child {
         job: Handle,
@@ -832,9 +832,11 @@ mod win {
     }
 
     pub fn spawn_waiter(process: &Child, tx: Sender<Event>) {
-        let handle = SendableHandle(process.process.0);
+        // HANDLE is a raw pointer alias in windows-sys and is not Send. The numeric
+        // value is stable while Child owns the handle on the supervisor thread.
+        let handle_bits = process.process.0 as usize;
         thread::spawn(move || {
-            let SendableHandle(h) = handle;
+            let h = handle_bits as HANDLE;
             if unsafe { WaitForSingleObject(h, INFINITE) } != WAIT_OBJECT_0 {
                 eprintln!("ccc-win-supervisor: child wait failed");
                 std::process::exit(1);
