@@ -24,6 +24,7 @@ def register(commands):
     create.add_argument("--max-calls", type=int, default=6)
     create.add_argument("--dispatch-window-seconds", type=float, default=900)
     create.add_argument("--reviewer-effort", choices=("low", "medium", "high", "xhigh", "max"))
+    create.add_argument("--scout-workspace")
 
     run = sub.add_parser("run")
     run.add_argument("--composition", required=True)
@@ -65,6 +66,7 @@ def execute(args):
             max_calls=args.max_calls,
             dispatch_window_seconds=args.dispatch_window_seconds,
             reviewer_effort=args.reviewer_effort,
+            scout_workspace=args.scout_workspace,
         )
     if command == "status":
         return composition.status(store, args.composition)

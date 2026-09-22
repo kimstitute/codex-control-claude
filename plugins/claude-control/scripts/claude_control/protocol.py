@@ -68,8 +68,20 @@ def build_argv(
     ]
 
 
-def _collect_text(content: list, errors: list[str], lineno: int) -> tuple[str, int]:
-    """Extract text and count tool_use blocks from an assistant message content list."""
+def _collect_text(
+    content: list,
+    errors: list[str],
+    lineno: int,
+    *,
+    allow_structured_output: bool = False,
+) -> tuple[str, int]:
+    """Extract text and count executable tool calls in assistant content.
+
+    Claude Code represents ``--json-schema`` delivery as a synthetic
+    ``StructuredOutput`` tool-use block.  It is transport metadata rather than
+    an executable capability, so a structured run may admit that one name while
+    continuing to reject every native or MCP tool call.
+    """
     text_parts: list[str] = []
     tool_uses = 0
     for block in content:
@@ -80,7 +92,8 @@ def _collect_text(content: list, errors: list[str], lineno: int) -> tuple[str, i
         if btype == "text" and isinstance(block.get("text"), str):
             text_parts.append(block["text"])
         elif btype == "tool_use":
-            tool_uses += 1
+            if not (allow_structured_output and block.get("name") == "StructuredOutput"):
+                tool_uses += 1
     return "".join(text_parts), tool_uses
 
 
@@ -114,6 +127,9 @@ def parse_stream(
     result_text = None
     structured_output = None
     usage: dict = {}
+    model_usage: dict = {}
+    provider_cost_usd = None
+    duration_api_ms = None
 
     for lineno, raw in enumerate(data.decode("utf-8", errors="replace").splitlines(), start=1):
         line = raw.strip()
@@ -158,7 +174,12 @@ def parse_stream(
             if not isinstance(content, list):
                 errors.append(f"line {lineno}: assistant message content is not a list")
                 continue
-            text, tool_uses = _collect_text(content, errors, lineno)
+            text, tool_uses = _collect_text(
+                content,
+                errors,
+                lineno,
+                allow_structured_output=expect_structured_output,
+            )
             if text:
                 assistant_texts.append(text)
             tool_use_count += tool_uses
@@ -189,6 +210,19 @@ def parse_stream(
             result_usage = event.get("usage")
             if isinstance(result_usage, dict):
                 usage = result_usage
+            result_model_usage = event.get("modelUsage")
+            if isinstance(result_model_usage, dict):
+                model_usage = result_model_usage
+            cost = event.get("total_cost_usd")
+            if isinstance(cost, (int, float)) and not isinstance(cost, bool) and cost >= 0:
+                provider_cost_usd = float(cost)
+            api_duration = event.get("duration_api_ms")
+            if (
+                isinstance(api_duration, (int, float))
+                and not isinstance(api_duration, bool)
+                and api_duration >= 0
+            ):
+                duration_api_ms = float(api_duration)
         # other event types (system/init/progress/etc.) are ignored
 
     if result_events > 1:
@@ -225,5 +259,8 @@ def parse_stream(
         "structured_output": structured_output,
         "errors": errors,
         "usage": usage,
+        "model_usage": model_usage,
+        "provider_cost_usd": provider_cost_usd,
+        "duration_api_ms": duration_api_ms,
         "validated_success": not errors,
     }

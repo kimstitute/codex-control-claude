@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.11.0 — 2026-09-22
+
+- Pass one bounded live Sonnet edit/check/freeze and independent Fable review
+  pilot without changing the source repository.
+- Persist append-only raw provider usage, model usage, reported cost and latency
+  telemetry for new runs; historical runs remain explicitly unmeasured.
+- Add guarded, idempotent `workspace apply` with exact base HEAD, clean-worktree,
+  frozen-manifest and patch checks. It does not commit, merge or push.
+- Add a read-only Sonnet scout whose repository brief and file-line evidence can
+  be pinned into composition planning context.
+- Upgrade new stores to schema 12 with offline 10→11→12 migrations.
+
+## 0.10.0 — 2026-09-22
+
+- Use Claude Code JSON-schema output for structured assignments and accept its
+  synthetic `StructuredOutput` event without permitting native tools.
+- Add base-hashed hunk patch operations, one bounded side-effect-free format
+  repair, final-review veto enforcement and ledger-typed acceptance evidence.
+
 ## 0.9.0 — 2026-09-21
 
 - Add a finite `composition` coordinator over existing P4 workflows and P5

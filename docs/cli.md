@@ -259,7 +259,7 @@ claude_control reconcile --run <run-uuid>
 
 On the same boot, reconcile must run in the worker's PID namespace. It releases uncertainty only when the recorded worker and process group are no longer live, or when a host reboot proves the earlier processes cannot still be running. It does not blindly signal a saved PID. A conversation with a mismatched backend session remains blocked.
 
-New stores use schema 10. Existing schema 3/4/5/6/7/8/9 requires [explicit offline migration](tasks.md#schema-and-migration) for task features; legacy diagnosis and stop/reconcile remain available before migration. Schemas 1 and 2 are unsupported. Never delete or replace state to bypass an active or unknown execution.
+New stores use schema 12. Existing schema 3–11 stores require [explicit offline migration](tasks.md#schema-and-migration) for newer features; legacy diagnosis and stop/reconcile remain available before migration. Schemas 1 and 2 are unsupported. Never delete or replace state to bypass an active or unknown execution.
 
 ## Troubleshooting
 
@@ -302,7 +302,7 @@ make no model calls. Delivery receipts bind only at explicit submit or dispatch.
 
 ## Controlled workspaces
 
-`workspace doctor/create/task/run/status/list/export/stop/reconcile` are documented in the [workspace guide](workspaces.md). Creation reserves one immutable workspace identity before copying. Use explicit file/check policies, a finite run admission window, and a frozen export for review. Workspaces require schema 8 and a working Linux Bubblewrap backend; legacy supplied-text tasks do not.
+`workspace doctor/create/task/run/status/list/export/apply/stop/reconcile` are documented in the [workspace guide](workspaces.md). Creation reserves one immutable workspace identity before copying. Use explicit file/check policies, a finite run admission window, and a frozen export for review. Schema 12 adds guarded source application; workspaces require a working Linux Bubblewrap backend.
 
 ## Explicit execution settings
 
@@ -314,6 +314,11 @@ explicit value is rejected. Structured assignments use the optional `effort` key
 support for every effort value. Explicit effort requires schema 9.
 
 See [execution settings and compatibility](execution-settings.md).
+
+Schema 11 run objects include `telemetry`: raw provider `usage`, per-model
+`model_usage`, `provider_cost_usd` when Claude reports it, `duration_api_ms`, and
+controller-observed `duration_ms`. Historical pre-migration runs have `null`
+telemetry; the controller does not estimate missing prices.
 
 ## Compositions
 

@@ -102,7 +102,7 @@ revision, reservation, run-state, queue-state and decision events. Reuse
 `next_cursor` to avoid duplicates. Repeated unchanged blocking observations do not
 create events. Pre-migration events are not invented or backfilled.
 
-New stores use schema 10; the queue itself requires schema 5 or newer. Existing stores require explicit `migrate --offline` for
+New stores use schema 12; the queue itself requires schema 5 or newer. Existing stores require explicit `migrate --offline` for
 queue features. Schema 3 upgrades through each intermediate schema to 8; each step creates a verified
 SQLite backup and durable journal. Stop clients/workers and resolve unknown runs
 first. An interrupted upgrade resumes with the same command. See

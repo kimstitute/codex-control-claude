@@ -149,12 +149,16 @@ class RelocatedDistributionTests(unittest.TestCase):
         continuation_done = self.wait_terminal(continuation["id"])
         continuation_result = self.cli("result", "--run", continuation["id"])
 
-        self.assertEqual(initialized["schema"], 10)
+        self.assertEqual(initialized["schema"], 12)
         self.assertIs(doctor["ready"], True)
         self.assertEqual(doctor["missing_options"], [])
         self.assertEqual(first_done["status"], "completed")
         self.assertEqual(first_result["result"]["response"], "supplied-text implementation answer")
         self.assertEqual(first_result["run"]["actual_models"], ["claude-sonnet-test"])
+        self.assertEqual(first_result["run"]["telemetry"]["usage"]["input_tokens"], 4)
+        self.assertEqual(first_result["run"]["telemetry"]["provider_cost_usd"], 0.001)
+        self.assertEqual(first_result["run"]["telemetry"]["duration_api_ms"], 25.0)
+        self.assertGreaterEqual(first_result["run"]["telemetry"]["duration_ms"], 0)
         self.assertEqual(continuation_done["status"], "completed")
         self.assertEqual(
             continuation_result["result"]["response"],

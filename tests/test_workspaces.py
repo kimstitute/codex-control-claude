@@ -336,6 +336,61 @@ class WorkspaceTests(ControllerTestCase):
             "patched\n",
         )
 
+    def test_apply_requires_exact_clean_head_and_is_idempotent(self) -> None:
+        fixture = {
+            "workspace_operations": [
+                [{"op": "write", "path": "README.md", "content": "applied\n"}],
+                [],
+            ]
+        }
+        created = self.create(policy=self.policy(write=["README.md"]))
+        self.bind(created, self.assignment("apply-frozen", fixture=fixture))
+        self.assertEqual(self.run_workspace(created["id"])["state"], "finished")
+
+        applied = workspace.apply(Store(self.state), created["id"], "apply-frozen-result")
+        repeated = workspace.apply(Store(self.state), created["id"], "apply-frozen-result")
+
+        self.assertEqual(applied["state"], "applied")
+        self.assertFalse(applied["deduplicated"])
+        self.assertTrue(repeated["deduplicated"])
+        self.assertEqual((self.repo / "README.md").read_text(encoding="utf-8"), "applied\n")
+        self.assertEqual(
+            workspace.status(Store(self.state), created["id"])["application"]["state"],
+            "applied",
+        )
+
+    def test_apply_rejects_dirty_or_advanced_source_before_reservation(self) -> None:
+        fixture = {
+            "workspace_operations": [
+                [{"op": "write", "path": "README.md", "content": "candidate\n"}],
+                [],
+            ]
+        }
+        dirty = self.create(policy=self.policy(write=["README.md"]))
+        self.bind(dirty, self.assignment("apply-dirty", fixture=fixture))
+        self.run_workspace(dirty["id"])
+        (self.repo / "README.md").write_text("local\n", encoding="utf-8")
+        self.assert_error(
+            "workspace_conflict",
+            workspace.apply,
+            Store(self.state),
+            dirty["id"],
+            "apply-dirty",
+        )
+
+        self.git("checkout", "--", "README.md")
+        advanced = self.create(policy=self.policy(write=["README.md"]))
+        self.bind(advanced, self.assignment("apply-advanced", fixture=fixture))
+        self.run_workspace(advanced["id"])
+        self.git("commit", "--allow-empty", "-qm", "advance")
+        self.assert_error(
+            "workspace_conflict",
+            workspace.apply,
+            Store(self.state),
+            advanced["id"],
+            "apply-advanced",
+        )
+
     def test_accept_requires_intact_frozen_export(self) -> None:
         created = self.create()
         bound = self.bind(created, self.assignment("accept-frozen"))
@@ -405,6 +460,9 @@ class WorkspaceTests(ControllerTestCase):
         self.assertEqual(len(receipts), 1)
         self.assertEqual(receipts[0]["result"]["content"], "base\n")
         self.assertEqual(receipts[0]["result"]["outcome"], "ok")
+        self.assertIn("controller-mediated workspace", invocation["prompt"]["instructions"])
+        self.assertIn("requesting controller operations", invocation["prompt"]["role"]["instructions"])
+        self.assertNotIn("cannot execute code", invocation["prompt"]["instructions"])
 
     def test_invalid_operation_batch_has_no_file_effect(self) -> None:
         fixture = {
@@ -762,7 +820,13 @@ class WorkspaceTests(ControllerTestCase):
 
     def test_readonly_verifier_can_review_a_frozen_workspace(self) -> None:
         source = self.create()
-        self.bind(source, self.assignment("source"))
+        self.bind(
+            source,
+            self.assignment(
+                "source",
+                fixture={"workspace_operations": [[{"op": "read", "path": "README.md"}], []]},
+            ),
+        )
         self.assertEqual(self.run_workspace(source["id"])["state"], "finished")
         verifier = self.create(
             policy=self.policy(role="verifier", read=["."]), from_snapshot=source["id"]
@@ -777,6 +841,40 @@ class WorkspaceTests(ControllerTestCase):
         self.assertEqual(result["state"], "finished")
         self.assertEqual(result["task"]["id"], bound["task_id"])
         self.assertEqual(result["policy"]["write_paths"], [])
+        backend_id = result["task"]["runs"][-1]["backend_id"]
+        invocation = json.loads(
+            (
+                workspace.directory(Store(self.state), verifier["id"])
+                / "control/.fake-claude"
+                / f"{backend_id}.invocation.json"
+            ).read_text(encoding="utf-8")
+        )
+        evidence = invocation["prompt"]["workspace"]["review"]["evidence"]
+        self.assertEqual(evidence["requests"][0]["action"], {"op": "read", "path": "README.md"})
+        self.assertEqual(evidence["receipts"][0]["result"]["outcome"], "ok")
+        self.assertEqual(
+            evidence["manifest"]["manifest_sha256"],
+            invocation["prompt"]["workspace"]["review"]["target"]["manifest_sha256"],
+        )
+
+    def test_readonly_sonnet_scout_can_inspect_source(self) -> None:
+        scout = self.create(policy=self.policy(role="scout", read=["README.md"]))
+        bound = self.bind(
+            scout,
+            self.assignment(
+                "scout-source",
+                role="researcher",
+                model="sonnet",
+                fixture={"workspace_operations": [[{"op": "read", "path": "README.md"}], []]},
+            ),
+        )
+
+        result = self.run_workspace(scout["id"])
+
+        self.assertEqual(result["state"], "finished")
+        self.assertEqual(result["task"]["id"], bound["task_id"])
+        self.assertEqual(result["receipts"][0]["result"]["content"], "base\n")
+        self.assertEqual(result["export"]["manifest"]["changes"], [])
 
     def test_invalid_snapshot_reviewer_policy_has_no_durable_side_effect(self) -> None:
         source = self.create()

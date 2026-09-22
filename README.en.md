@@ -29,6 +29,10 @@ Version 0.10 adds Claude Code `--json-schema` for structured tasks, base-hashed
 hunk patches, one side-effect-free format repair, final-reviewer vetoes, and
 ledger-verified acceptance evidence.
 
+Version 0.11 passes a live Sonnet edit/check/freeze/Fable-review pilot and adds
+raw provider usage, cost and latency telemetry, explicit HEAD-pinned
+`workspace apply`, and a read-only Sonnet scout before planning.
+
 ## Choose the right workflow
 
 | Goal | Use | What it adds |
@@ -635,7 +639,7 @@ claude_control migrate --offline
 claude_control migrate --status
 ```
 
-New stores use schema 10. Existing schema 3–9 stores are upgraded step by step
+New stores use schema 12. Existing schema 3–11 stores are upgraded step by step
 with verified SQLite backups and a durable migration journal. Repeat
 `migrate --offline` on the original state directory after an interrupted
 migration. Never run jobs against a backup or replace the original database with

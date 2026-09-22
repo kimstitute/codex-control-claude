@@ -1,6 +1,6 @@
 {
   "name": "claude-control",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "Manage persistent local Claude sessions from Codex with explicit models and verified results.",
   "author": {
     "name": "kimstitute",

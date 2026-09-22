@@ -19,10 +19,10 @@ def register(commands):
     create.add_argument("--ref", default="HEAD")
     create.add_argument("--policy-file", type=Path, required=True)
     create.add_argument("--operation-id", required=True)
-    for name in ("task", "run", "status", "export", "stop", "reconcile"):
+    for name in ("task", "run", "status", "export", "apply", "stop", "reconcile"):
         command = sub.add_parser(name)
         command.add_argument("--workspace", required=True)
-        if name in ("task", "stop"):
+        if name in ("task", "apply", "stop"):
             command.add_argument("--operation-id", required=True)
         if name == "task":
             command.add_argument("--assignment-file", type=Path, required=True)
@@ -67,6 +67,8 @@ def execute(args):
         )
     if command == "stop":
         return workspace.stop(store, args.workspace, args.operation_id)
+    if command == "apply":
+        return workspace.apply(store, args.workspace, args.operation_id)
     if command == "list":
         workspace._require(store)
         with store.db() as db:

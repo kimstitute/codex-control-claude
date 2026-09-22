@@ -332,6 +332,15 @@ def _run(arguments: list[str]) -> int:
             "is_error": is_error,
             "result": "fixture error" if is_error else text,
             "usage": {"input_tokens": 4, "output_tokens": 2},
+            "modelUsage": {
+                f"claude-{model}-test": {
+                    "inputTokens": 4,
+                    "outputTokens": 2,
+                    "costUSD": 0.001,
+                }
+            },
+            "total_cost_usd": 0.001,
+            "duration_api_ms": 25,
         }
     if not is_error and _option(arguments, "--json-schema") is not None:
         try:

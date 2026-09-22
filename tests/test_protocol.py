@@ -55,6 +55,8 @@ def _success_events(
             "result": "OK",
             "usage": {"input_tokens": 2, "output_tokens": 1},
             "modelUsage": {"claude-auxiliary-test": {"inputTokens": 1}},
+            "total_cost_usd": 0.0125,
+            "duration_api_ms": 321,
         },
     ]
 
@@ -120,10 +122,25 @@ class ParseStreamTests(unittest.TestCase):
         self.assertIs(parsed["result_is_error"], False)
         self.assertEqual(parsed["errors"], [])
         self.assertEqual(parsed["usage"], {"input_tokens": 2, "output_tokens": 1})
+        self.assertEqual(
+            parsed["model_usage"], {"claude-auxiliary-test": {"inputTokens": 1}}
+        )
+        self.assertEqual(parsed["provider_cost_usd"], 0.0125)
+        self.assertEqual(parsed["duration_api_ms"], 321.0)
         self.assertIs(parsed["validated_success"], True)
 
     def test_structured_output_becomes_canonical_response(self) -> None:
         events = _success_events()
+        assistant = events[1]
+        assert isinstance(assistant["message"], dict)
+        assistant["message"]["content"] = [
+            {
+                "type": "tool_use",
+                "id": "structured-output-1",
+                "name": "StructuredOutput",
+                "input": {"status": "complete", "revision": 1},
+            }
+        ]
         events[-1]["result"] = ""
         events[-1]["structured_output"] = {"status": "complete", "revision": 1}
         with tempfile.TemporaryDirectory() as temp:
@@ -134,7 +151,25 @@ class ParseStreamTests(unittest.TestCase):
 
         self.assertEqual(parsed["response"], '{"revision":1,"status":"complete"}')
         self.assertEqual(parsed["structured_output"], {"status": "complete", "revision": 1})
+        self.assertEqual(parsed["tool_use_count"], 0)
         self.assertEqual(parsed["errors"], [])
+
+    def test_structured_run_still_rejects_real_tool_use(self) -> None:
+        events = _success_events()
+        assistant = events[1]
+        assert isinstance(assistant["message"], dict)
+        assistant["message"]["content"] = [
+            {"type": "tool_use", "id": "tool-1", "name": "Bash", "input": {}}
+        ]
+        events[-1]["structured_output"] = {"status": "complete", "revision": 1}
+        with tempfile.TemporaryDirectory() as temp:
+            path = _write_events(Path(temp), events)
+            parsed = parse_stream(
+                path, "sonnet", SESSION_ID, expect_structured_output=True
+            )
+
+        self.assertEqual(parsed["tool_use_count"], 1)
+        self.assertTrue(parsed["errors"])
 
     def test_structured_run_rejects_missing_structured_output(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

@@ -4,7 +4,7 @@
 
 ## Schema와 Migration
 
-Task 생명주기는 schema 4 이상이 필요합니다. queue는 schema 5, message는 schema 6, workflow는 schema 7, workspace는 schema 8이 필요합니다. 명시적 effort 설정은 schema 9가, 계획·편집·검토 composition은 schema 10이 필요합니다. 새로 설치(`claude_control init`)하면 schema 10으로 시작합니다. 기존 schema-3 저장소는 `task` 하위 명령을 사용하기 전에 migration해야 하며, schema-3 저장소는 migration 전까지 task 명령을 거부합니다.
+Task 생명주기는 schema 4 이상이 필요합니다. queue는 schema 5, message는 schema 6, workflow는 schema 7, workspace는 schema 8이 필요합니다. 명시적 effort 설정은 schema 9가, 계획·편집·검토 composition은 schema 10이, run telemetry는 schema 11이, guarded workspace apply는 schema 12가 필요합니다. 새로 설치(`claude_control init`)하면 schema 12로 시작합니다. 기존 schema-3 저장소는 `task` 하위 명령을 사용하기 전에 migration해야 하며, schema-3 저장소는 migration 전까지 task 명령을 거부합니다.
 
 Migration은 백그라운드 서비스가 아니라 유지보수 작업입니다.
 

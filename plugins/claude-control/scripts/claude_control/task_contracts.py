@@ -253,7 +253,13 @@ def report_schema(snapshot):
                             for key in criterion_ids
                         },
                     },
-                    "unverified": {"type": "array", "items": _nonempty_string()},
+                    "unverified": {
+                        "type": "array",
+                        "items": _nonempty_string(),
+                        "description": (
+                            "Acceptance-criterion evidence gaps only; empty for approve."
+                        ),
+                    },
                     "revision_instructions": {"type": "string"},
                 },
             }
@@ -476,6 +482,7 @@ def inspect_run(store, db, row):
         if not execution or execution["base_sha256"] != digest(prompt):
             raise ControlError("invalid_snapshot", "Execution base differs from its revision.")
         snapshot = read(execution["prompt"])
+        revision_snapshot = read(prompt)
         base = {
             k: v
             for k, v in snapshot.items()
@@ -491,6 +498,11 @@ def inspect_run(store, db, row):
                 for k, v in base["report_contract"].items()
                 if k not in ("operations", "review")
             }
+            # Workspace materialization replaces the generic text-only wording
+            # with the fixed controller-operation contract.  Restore the frozen
+            # revision fields before proving the immutable base is unchanged.
+            base["instructions"] = revision_snapshot["instructions"]
+            base["role"] = revision_snapshot["role"]
         base["protocol"] = CONTRACT
         if canonical(base) != prompt or execution["prompt_sha256"] != link["prompt_sha256"]:
             raise ControlError("invalid_snapshot", "Execution input differs from its revision.")

@@ -126,7 +126,7 @@ each revision plus selected messages, must fit within 1 MiB. At reservation, the
 combined task, dependency reports and messages must also fit; failure consumes no
 run or binding. Queued task capacity and execution slots remain separate limits.
 
-New stores use schema 10. Existing stores need explicit offline
+New stores use schema 12. Existing stores need explicit offline
 migration for messages. The 5→6 step preserves P2 rows and creates a verified backup
 and recovery journal. Stop clients/workers and resolve unknown runs first; repeat
 `migrate --offline` after interruption. See [migration](tasks.md#schema-and-migration).

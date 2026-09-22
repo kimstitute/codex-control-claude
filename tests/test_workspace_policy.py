@@ -129,19 +129,20 @@ class WorkspacePolicyTests(unittest.TestCase):
                     "invalid_workspace_policy", workspace_policy.normalize_policy, value
                 )
 
-    def test_verifier_policy_cannot_write_or_execute_checks(self) -> None:
-        for name, value in {
-            "write": self.policy(role="verifier", checks={}),
-            "check": self.policy(role="verifier", write_paths=[]),
-        }.items():
-            with self.subTest(name=name):
-                self.assert_error(
-                    "invalid_workspace_policy", workspace_policy.normalize_policy, value
-                )
-        normalized = workspace_policy.normalize_policy(
-            self.policy(role="verifier", write_paths=[], checks={})
-        )
-        self.assertEqual((normalized["write_paths"], normalized["checks"]), ([], {}))
+    def test_readonly_policies_cannot_write_or_execute_checks(self) -> None:
+        for role in ("scout", "verifier"):
+            for name, value in {
+                "write": self.policy(role=role, checks={}),
+                "check": self.policy(role=role, write_paths=[]),
+            }.items():
+                with self.subTest(role=role, name=name):
+                    self.assert_error(
+                        "invalid_workspace_policy", workspace_policy.normalize_policy, value
+                    )
+            normalized = workspace_policy.normalize_policy(
+                self.policy(role=role, write_paths=[], checks={})
+            )
+            self.assertEqual((normalized["write_paths"], normalized["checks"]), ([], {}))
 
     def test_check_allowlist_rejects_unsafe_names_programs_and_arguments(self) -> None:
         cases = {

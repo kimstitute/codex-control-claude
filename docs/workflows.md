@@ -131,7 +131,7 @@ commands cannot alter the fixed template.
 
 ## Compatibility
 
-New stores use schema 10. Existing stores require explicit offline migration;
+New stores use schema 12. Existing stores require explicit offline migration;
 each schema step makes a verified backup and preserves prior task, queue, message,
 workflow, workspace, effort and decision rows. All clients and workers must be
 stopped and unknown executions resolved before migration. See

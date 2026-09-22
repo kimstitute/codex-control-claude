@@ -31,6 +31,7 @@ claude_control composition create \
   --editor-assignment-file /absolute/path/editor.json \
   --editor-policy-file /absolute/path/editor-policy.json \
   --reviewer-assignment-file /absolute/path/reviewer.json \
+  --scout-workspace <optional-finished-scout-workspace-uuid> \
   --repo /absolute/path/repository --ref HEAD \
   --operation-id feature-composition-001 \
   --max-revisions 2 --max-calls 6 \
@@ -44,7 +45,10 @@ claude_control composition status --composition <uuid>
 
 Creation resolves the requested Git ref to one immutable commit, records the
 composition and P4 workflow, and makes no model call. Later repository movement
-cannot retarget the editor snapshot. The
+cannot retarget the editor snapshot. The optional scout must be a finished
+read-only Sonnet researcher workspace with the same commit and readable paths.
+Its validated report and exact provenance are copied into the planner context.
+The
 planning workflow stops at `approve_recommended`. Inspect its exact worker task,
 revision, run and result digest, then record `task accept`. A later bounded
 composition run copies that verified plan report and provenance into the editor

@@ -31,6 +31,7 @@ claude_control composition create \
   --editor-assignment-file /absolute/path/editor.json \
   --editor-policy-file /absolute/path/editor-policy.json \
   --reviewer-assignment-file /absolute/path/reviewer.json \
+  --scout-workspace <선택적인-finished-scout-workspace-uuid> \
   --repo /absolute/path/repository --ref HEAD \
   --operation-id feature-composition-001 \
   --max-revisions 2 --max-calls 6 \
@@ -44,7 +45,9 @@ claude_control composition status --composition <uuid>
 
 생성 과정은 요청된 Git ref를 하나의 불변(immutable) 커밋으로 해석하고, 구성과
 P4 워크플로를 기록하며, 모델을 호출하지 않습니다. 이후 저장소가 이동하더라도
-편집자 스냅샷을 다시 타겟팅할 수 없습니다. 계획 워크플로는
+편집자 스냅샷을 다시 타겟팅할 수 없습니다. 선택적 scout는 동일 커밋과 동일
+읽기 경로를 사용해 완료된 read-only Sonnet researcher workspace여야 합니다.
+검증된 scout 보고서와 정확한 provenance가 계획자 context에 고정됩니다. 계획 워크플로는
 `approve_recommended`에서 멈춥니다. 정확한 워커 작업, 리비전, 실행, 결과
 digest를 확인한 뒤 `task accept`를 기록하세요. 이후의 경계 지정 구성 실행(bounded
 composition run)은 그 검증된 계획 보고서와 출처(provenance)를 편집자 할당에

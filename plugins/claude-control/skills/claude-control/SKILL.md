@@ -236,20 +236,20 @@ If no backend conversation was saved before the first turn stopped, a normal res
 
 Code updates should happen with managed runs stopped. Runtime data is separate from the plugin, and no uninstall or update should remove it. Process-group cleanup covers the managed tools-disabled execution; it is not a cgroup/filesystem sandbox or a promise about processes that escape their group. Do not enable shell/edit tools by modifying this CLI's fixed profile.
 
-New stores use schema 10. For an existing schema-3/4/5/6/7/8/9 store, finish/stop and reconcile all
+New stores use schema 12. For an existing schema-3 through schema-11 store, finish/stop and reconcile all
 managed work, stop all old CLI clients/workers, install the new code, then run
 `migrate --status` and `migrate --offline` on that same state directory. Migration
 makes a verified SQLite backup and a durable journal. If interrupted, repeat
 `migrate --offline` on the original directory; never run jobs against the backup.
 Active/unknown executions block migration. New code retains legacy diagnostic and
-stop/reconcile commands on schema 3; task lifecycle needs schema 4, queue commands schema 5, messages schema 6, workflows schema 7, workspaces schema 8, explicit effort schema 9, and compositions schema 10. Do not use
+stop/reconcile commands on schema 3; task lifecycle needs schema 4, queue commands schema 5, messages schema 6, workflows schema 7, workspaces schema 8, explicit effort schema 9, compositions schema 10, run telemetry schema 11, and guarded workspace apply schema 12. Do not use
 re-initialization, automatic downgrade or a fresh store to bypass uncertainty.
 
 The package launches workers for jobs, not an always-running coordinator. Codex is not automatically awakened after the conversation ends. A later Codex task can discover the same host-local records via `list`.
 
 ## Work in an explicit workspace
 
-Read [workspaces](references/workspaces.md) for policy, lifecycle, frozen review and recovery. Use an immutable Git commit snapshot, bounded readable paths, exact writable files and named check argv authorized for the task. Run `workspace doctor` first. Bind one executor or read-only Fable critic/verifier; drive `workspace run` with an explicit finite budget. Never enable native Claude tools to satisfy a workspace request. A completed report and frozen export still require Codex verification and explicit acceptance.
+Read [workspaces](references/workspaces.md) for policy, lifecycle, scout, frozen review, guarded apply and recovery. Use an immutable Git commit snapshot, bounded readable paths, exact writable files and named check argv authorized for the task. Run `workspace doctor` first. Bind an executor, a read-only Sonnet researcher scout, or a read-only Fable critic/verifier; drive `workspace run` with an explicit finite budget. Never enable native Claude tools to satisfy a workspace request. A completed report and frozen export still require Codex verification and explicit acceptance. `workspace apply` is an explicit operation and never commits, merges, or pushes.
 
 ## Compose a plan, controlled edit and frozen review
 

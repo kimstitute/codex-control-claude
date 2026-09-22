@@ -28,7 +28,9 @@ OPERATIONS = {
                 "old_count": "context plus removed line count",
                 "new_start": "1-based result line",
                 "new_count": "context plus added line count",
-                "lines": "exact lines prefixed by space, +, or -",
+                "lines": (
+                    "exact logical lines prefixed by space, +, or -; a final newline may be omitted"
+                ),
             }
         ],
     },
@@ -51,7 +53,9 @@ def review_contract(envelope):
             key: {"verdict": "pass|fail|unknown", "evidence": "non-empty string"}
             for key in envelope["criteria"]
         },
-        "unverified": "list of non-empty strings",
+        "unverified": (
+            "list of non-empty acceptance-criterion evidence gaps; must be empty for approve"
+        ),
         "revision_instructions": "string",
     }
 
@@ -201,6 +205,7 @@ def validate_envelope(data, *, protocol=PROTOCOL):
     if review is not None:
         if protocol != PROTOCOL or not isinstance(review, dict) or set(review) != {
             "target",
+            "evidence",
             "criteria",
         }:
             raise ControlError("invalid_snapshot", "Invalid workspace review envelope.")
@@ -220,3 +225,34 @@ def validate_envelope(data, *, protocol=PROTOCOL):
             or any(not isinstance(k, str) or not isinstance(v, str) or not v for k, v in criteria.items())
         ):
             raise ControlError("invalid_snapshot", "Invalid workspace review criteria.")
+        evidence = review["evidence"]
+        if (
+            not isinstance(evidence, dict)
+            or set(evidence) != {"requests", "receipts", "manifest"}
+            or not isinstance(evidence["requests"], list)
+            or not isinstance(evidence["receipts"], list)
+            or not isinstance(evidence["manifest"], dict)
+            or set(evidence["manifest"])
+            != {"changes", "files", "patch_sha256", "tree_sha256", "manifest_sha256"}
+            or evidence["manifest"].get("tree_sha256") != target["tree_sha256"]
+            or evidence["manifest"].get("manifest_sha256") != target["manifest_sha256"]
+        ):
+            raise ControlError("invalid_snapshot", "Invalid workspace review evidence.")
+        for item in evidence["requests"]:
+            if (
+                not isinstance(item, dict)
+                or set(item) != {"run_id", "seq", "action"}
+                or not isinstance(item["run_id"], str)
+                or type(item["seq"]) is not int
+                or not isinstance(item["action"], dict)
+            ):
+                raise ControlError("invalid_snapshot", "Invalid workspace review request evidence.")
+        for item in evidence["receipts"]:
+            if (
+                not isinstance(item, dict)
+                or set(item) != {"run_id", "seq", "result"}
+                or not isinstance(item["run_id"], str)
+                or type(item["seq"]) is not int
+                or not isinstance(item["result"], dict)
+            ):
+                raise ControlError("invalid_snapshot", "Invalid workspace review receipt evidence.")

@@ -369,13 +369,18 @@ def run_worker(state_dir, run_id):
             if parsed["validated_success"]:
                 status = "completed"
             divergent = any(s != row["backend_id"] for s in parsed["observed_session_ids"])
+            finished_at = time.time()
+            duration_ms = max(
+                0.0,
+                (finished_at - (final_state["started"] or finished_at)) * 1000,
+            )
             with store.db(write=True) as db:
                 db.execute(
                     "UPDATE runs SET status=?,finished=?,heartbeat=?,exit_code=?,reason=?,actual_models=?,result_sha256=? WHERE id=?",
                     (
                         status,
-                        time.time(),
-                        time.time(),
+                        finished_at,
+                        finished_at,
                         exit_code,
                         reason or ("; ".join(parsed["errors"])[:2000] or None),
                         json.dumps(parsed["actual_models"]),
@@ -383,6 +388,27 @@ def run_worker(state_dir, run_id):
                         run_id,
                     ),
                 )
+                if store.config["schema"] >= 11:
+                    db.execute(
+                        "INSERT INTO run_telemetry VALUES(?,?,?,?,?,?,?)",
+                        (
+                            run_id,
+                            json.dumps(
+                                parsed.get("usage", {}),
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            ),
+                            json.dumps(
+                                parsed.get("model_usage", {}),
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            ),
+                            parsed.get("provider_cost_usd"),
+                            parsed.get("duration_api_ms"),
+                            duration_ms,
+                            finished_at,
+                        ),
+                    )
                 if divergent:
                     db.execute("UPDATE sessions SET blocked=1 WHERE id=?", (session["id"],))
         except BaseException as exc:

@@ -28,6 +28,10 @@ Sonnet, 중요한 계획과 검토는 Fable에 맡기면서 각 대화의 정확
 base hash 기반 hunk patch, 부작용 없는 형식 오류의 1회 보정, 최종 reviewer
 거부권, 원장 검증형 acceptance evidence를 추가합니다.
 
+0.11 버전은 실제 Sonnet 편집→검사→동결→Fable 검토 파일럿을 통과했고,
+provider 원본 usage·비용·지연 기록, 원본 HEAD를 고정하는 명시적 `workspace apply`,
+계획 전에 저장소를 읽는 read-only Sonnet scout를 추가합니다.
+
 ## 어떤 명령을 선택해야 하나요?
 
 | 원하는 일 | 사용할 기능 | 추가되는 보장 |
@@ -163,7 +167,7 @@ claude_control() {
 > 별도 Fable 세션이 결과를 검증하게 해줘. 두 세션 ID를 보존하고 정확한
 > 결과를 확인하기 전에는 승인하거나 적용하지 마.
 
-0.9의 전체 흐름을 사용하려면 다음처럼 요청할 수 있습니다.
+0.11의 전체 흐름을 사용하려면 다음처럼 요청할 수 있습니다.
 
 > 이 저장소에서 $claude-control composition을 사용해줘. Fable이 계획을
 > 검토한 뒤 명시적 계획 승인을 기다리고, Sonnet은 허용된 파일만 수정하고
@@ -634,7 +638,7 @@ claude_control migrate --offline
 claude_control migrate --status
 ```
 
-새 저장소는 schema 10을 사용합니다. 기존 schema 3–9는 각 단계마다 검증된
+새 저장소는 schema 12를 사용합니다. 기존 schema 3–11은 각 단계마다 검증된
 SQLite 백업과 영속 migration journal을 만들면서 순서대로 이관됩니다.
 중단되었다면 원래 상태 디렉터리에서 같은 `migrate --offline`을 다시
 실행합니다. 백업 DB로 작업을 실행하거나 원본 DB를 단일 SQLite 파일

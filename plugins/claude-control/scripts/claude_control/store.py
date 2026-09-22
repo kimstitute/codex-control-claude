@@ -18,11 +18,13 @@ from pathlib import Path
 from .execution_settings import binary_identity, probe_effort, validate_effort
 from .schema import (
     VERSION,
+    add_application_schema,
     add_composition_schema,
     add_execution_schema,
     add_message_schema,
     add_queue_schema,
     add_task_schema,
+    add_telemetry_schema,
     add_workflow_schema,
     add_workspace_schema,
 )
@@ -175,6 +177,8 @@ class Store:
                 add_workspace_schema(db)
                 add_execution_schema(db)
                 add_composition_schema(db)
+                add_telemetry_schema(db)
+                add_application_schema(db)
                 db.execute("PRAGMA journal_mode=WAL")
             os.chmod(directory / "state.sqlite3", 0o600)
             (directory / "runs").mkdir(mode=0o700, exist_ok=True)
@@ -190,7 +194,7 @@ class Store:
             raise ControlError(
                 "not_initialized", "Run init with this state directory first."
             ) from None
-        if self.config.get("schema") not in (3, 4, 5, 6, 7, 8, 9, VERSION):
+        if self.config.get("schema") not in tuple(range(3, VERSION + 1)):
             raise ControlError("schema_mismatch", "Unsupported state schema.")
         if self.config.get("host_id") != host_identity() or self.config.get("uid") != os.getuid():
             raise ControlError(
@@ -210,7 +214,9 @@ class Store:
         with (self.path / "lifecycle.lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_SH)
             config = json.loads((self.path / "config.json").read_text())
-            if config != self.config or config.get("schema") not in (3, 4, 5, 6, 7, 8, 9, VERSION):
+            if config != self.config or config.get("schema") not in tuple(
+                range(3, VERSION + 1)
+            ):
                 raise ControlError("schema_mismatch", "State changed; reopen or finish migrate.")
             db = sqlite3.connect(self.path / "state.sqlite3", timeout=10, isolation_level=None)
             db.row_factory = sqlite3.Row
@@ -277,6 +283,11 @@ class Store:
         self.run_dir(run_id)
         with self.db() as db:
             row = db.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
+            telemetry = (
+                db.execute("SELECT * FROM run_telemetry WHERE run_id=?", (run_id,)).fetchone()
+                if self.config["schema"] >= 11
+                else None
+            )
         if not row:
             raise ControlError("run_not_found", "Unknown managed run ID.")
         row = dict(row)
@@ -296,6 +307,15 @@ class Store:
                     )
                 row["status"], row["reason"] = "failed", "result_integrity"
         row["actual_models"] = json.loads(row["actual_models"])
+        row["telemetry"] = (
+            {
+                **dict(telemetry),
+                "usage": json.loads(telemetry["usage"]),
+                "model_usage": json.loads(telemetry["model_usage"]),
+            }
+            if telemetry
+            else None
+        )
         row["artifacts"] = str(self.run_dir(run_id))
         row["installation_id"] = self.config["installation_id"]
         return row

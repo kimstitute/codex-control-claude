@@ -479,6 +479,7 @@ def apply_patch(directory, relative, base_sha256, hunks, policy):
     if current["sha256"] != base_sha256:
         _error("workspace_conflict", "Patch base SHA-256 does not match the current file.")
     source = current["content"].splitlines(keepends=True)
+    newline = "\r\n" if any(line.endswith("\r\n") for line in source) else "\n"
     output = []
     source_index = 0
     for hunk in hunks:
@@ -492,11 +493,20 @@ def apply_patch(directory, relative, base_sha256, hunks, policy):
         for line in hunk["lines"]:
             marker, payload = line[0], line[1:]
             if marker in " -":
-                if cursor >= len(source) or source[cursor] != payload:
+                if cursor >= len(source) or (
+                    source[cursor] != payload
+                    and source[cursor].removesuffix("\n").removesuffix("\r") != payload
+                ):
                     _error("workspace_conflict", "Patch context differs from the current file.")
+                original = source[cursor]
                 cursor += 1
-            if marker in " +":
-                output.append(payload)
+            if marker == " ":
+                # Preserve the source terminator when a logical context line omitted it.
+                output.append(original)
+            elif marker == "+":
+                output.append(
+                    payload if payload.endswith(("\n", "\r")) else payload + newline
+                )
         if cursor - start != hunk["old_count"]:
             _error("workspace_conflict", "Patch consumed an unexpected source range.")
         source_index = cursor

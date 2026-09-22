@@ -97,6 +97,59 @@ def _reviewer_policy(editor_policy):
     )
 
 
+def _scout_provenance(store, workspace_id, source_repo, pinned_commit, read_paths):
+    with store.db() as db:
+        row = workspace._get(db, workspace_id)
+        policy = json.loads(row["policy"])
+        binding = db.execute(
+            "SELECT * FROM workspace_tasks WHERE workspace_id=?", (workspace_id,)
+        ).fetchone()
+        saved = db.execute(
+            "SELECT * FROM workspace_exports WHERE workspace_id=?", (workspace_id,)
+        ).fetchone()
+        if (
+            row["state"] != "finished"
+            or row["source_workspace"] is not None
+            or row["source_repo"] != source_repo
+            or row["base_commit"] != pinned_commit
+            or policy["role"] != "scout"
+            or policy["read_paths"] != read_paths
+            or policy["write_paths"]
+            or policy["checks"]
+            or not binding
+            or not saved
+        ):
+            raise ControlError(
+                "invalid_composition",
+                "Scout must be a finished read-only Sonnet workspace at the exact source commit "
+                "with the editor's readable paths.",
+            )
+        run = db.execute("SELECT * FROM runs WHERE id=?", (saved["run_id"],)).fetchone()
+        checked = contract.inspect_run(store, db, run)
+        if checked["format_status"] != "valid" or checked["agent_status"] != "complete":
+            raise ControlError("invalid_composition", "Scout final report is not complete.")
+        manifest = files.verify_frozen(
+            workspace.directory(store, workspace_id) / "frozen",
+            policy,
+            saved["manifest_sha256"],
+        )
+        if manifest["changes"]:
+            raise ControlError("invalid_composition", "Scout snapshot unexpectedly contains changes.")
+        assignment = json.loads(binding["assignment"])
+        if assignment["role"] != "researcher" or assignment["model"] != "sonnet":
+            raise ControlError("invalid_composition", "Scout must use the Sonnet researcher role.")
+        return {
+            "protocol": "claude-control.scout.v1",
+            "workspace_id": workspace_id,
+            "task_id": binding["task_id"],
+            "run_id": saved["run_id"],
+            "result_sha256": saved["result_sha256"],
+            "manifest_sha256": saved["manifest_sha256"],
+            "tree_sha256": manifest["tree_sha256"],
+            "report": checked["report"],
+        }
+
+
 def create(
     store,
     planning_assignment,
@@ -111,6 +164,7 @@ def create(
     max_calls=6,
     dispatch_window_seconds=900,
     reviewer_effort=None,
+    scout_workspace=None,
 ):
     """Create a composition, recovering a previously created P4 child by operation ID."""
     _require(store)
@@ -136,6 +190,25 @@ def create(
     editor_policy = normalize_policy(editor_policy)
     if editor_policy["role"] != "executor":
         raise ControlError("invalid_composition", "The editor policy must use the executor role.")
+    scout = None
+    if scout_workspace is not None:
+        scout = _scout_provenance(
+            store,
+            scout_workspace,
+            source_repo,
+            pinned_commit,
+            editor_policy["read_paths"],
+        )
+        planning = dict(planning)
+        planning["context"] = (
+            planning["context"]
+            + "\n\nTrusted read-only scout evidence follows. Cite its file:line evidence and "
+            "identify any missing source context before planning.\n"
+            + contract.canonical(scout)
+        )
+        planning = _canonical_assignment(
+            store, planning, role=("planner", "architect", "executor")
+        )
     policy = {
         "version": 1,
         "repo": source_repo,
@@ -146,6 +219,7 @@ def create(
         "editor_policy": editor_policy,
         "reviewer_assignment": reviewer,
         "reviewer_policy": _reviewer_policy(editor_policy),
+        "scout": scout,
         "workflow": {
             "max_revisions": max_revisions,
             "max_calls": max_calls,

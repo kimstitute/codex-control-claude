@@ -56,6 +56,30 @@ after its durable reservation can appear as `preparing` with
 `creation_incomplete`. Inspect it; do not automatically replay or create a
 replacement workspace.
 
+## Create a read-only Sonnet scout
+
+Before creating a composition, a Sonnet researcher can inspect the exact source
+commit through the same controller loop. Use role `scout`, the editor policy's
+exact `read_paths`, and no writes or checks. Bind a `researcher` assignment with
+model `sonnet`; ask for a compact brief with `file:line` citations. Run it to a
+finished frozen export, then pass its UUID to composition creation:
+
+```bash
+claude_control composition create \
+  --scout-workspace <finished-scout-workspace-uuid> \
+  --planning-assignment-file /absolute/path/plan.json \
+  --editor-assignment-file /absolute/path/editor.json \
+  --editor-policy-file /absolute/path/editor-policy.json \
+  --reviewer-assignment-file /absolute/path/reviewer.json \
+  --repo /absolute/path/repository --ref <same-commit> \
+  --operation-id feature-composition-001
+```
+
+The controller accepts the scout only when its repository, base commit and
+readable paths exactly match the composition. It pins the scout task, run,
+result, manifest and tree digests plus the validated report into the planning
+assignment. Composition creation still makes no model call.
+
 Policy schema version 1 requires `role`, `read_paths`, `write_paths`, and
 `checks`. It permits 1–64 readable paths, 0–64 writable paths, and at most
 eight named checks. Every writable path must also be readable. Paths and check
@@ -139,6 +163,24 @@ acceptance decision. A model report is also not acceptance. Codex must inspect
 the frozen export and independently record `task accept` against that exact
 final run and result digest; the controller rejects acceptance without an intact
 final frozen export.
+
+## Apply a frozen result to the source
+
+Schema 12 adds one explicit source-application command:
+
+```bash
+claude_control workspace apply \
+  --workspace <finished-editor-workspace-uuid> \
+  --operation-id ledger-apply-001
+```
+
+Apply requires an intact nonempty frozen patch, source `HEAD` equal to the
+workspace `base_commit`, and a clean tracked/untracked worktree. It runs
+`git apply --check`, records an `applying` intent before mutation, applies the
+exact frozen patch, then verifies the changed path set, content hashes and
+executable modes. Success records `applied`; any failure after reservation is
+`unknown` and must be inspected manually. Repeating the same operation ID only
+returns its ledger record. Apply does not commit, merge or push.
 
 ## Read-only independent Fable review from a frozen snapshot
 
@@ -239,7 +281,8 @@ never replays a command or a model call. An `operating` workspace found after an
 interrupted controller is moved to `awaiting_codex` with `operation_unknown`;
 inspect receipts and state before any new decision.
 
-Workspace commands require schema 8. Existing schema 3–7 stores need the same
+Workspace creation and execution require schema 8; telemetry requires schema 11
+and guarded apply requires schema 12. Existing older stores need the same
 explicit offline migration discipline as earlier features: stop/reconcile active
 or unknown work, stop old clients/workers, inspect `migrate --status`, then run
 `migrate --offline` on the original state directory. Do not initialize a new

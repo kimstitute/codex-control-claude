@@ -1,6 +1,6 @@
 """Additive schemas; existing sessions and runs retain their identity and rowids."""
 
-VERSION = 10
+VERSION = 12
 TASK_SCHEMA = """
 CREATE TABLE tasks (
  id TEXT PRIMARY KEY, name TEXT NOT NULL, session_id TEXT REFERENCES sessions(id),
@@ -417,3 +417,51 @@ def add_composition_schema(db):
                 f"CREATE TRIGGER immutable_{table}_{action.lower()} BEFORE {action} ON {table} "
                 "BEGIN SELECT RAISE(ABORT,'composition records are append-only'); END"
             )
+
+
+TELEMETRY_SCHEMA = """
+CREATE TABLE run_telemetry (
+ run_id TEXT PRIMARY KEY REFERENCES runs(id),
+ usage TEXT NOT NULL, model_usage TEXT NOT NULL,
+ provider_cost_usd REAL, duration_api_ms REAL, duration_ms REAL NOT NULL,
+ created REAL NOT NULL,
+ CHECK(provider_cost_usd IS NULL OR provider_cost_usd>=0),
+ CHECK(duration_api_ms IS NULL OR duration_api_ms>=0),
+ CHECK(duration_ms>=0)
+);
+CREATE TRIGGER immutable_run_telemetry_update BEFORE UPDATE ON run_telemetry
+ BEGIN SELECT RAISE(ABORT,'run telemetry is append-only'); END;
+CREATE TRIGGER immutable_run_telemetry_delete BEFORE DELETE ON run_telemetry
+ BEGIN SELECT RAISE(ABORT,'run telemetry is append-only'); END;
+"""
+
+
+def add_telemetry_schema(db):
+    _apply(db, TELEMETRY_SCHEMA, 11)
+
+
+APPLICATION_SCHEMA = """
+CREATE TABLE workspace_applications (
+ workspace_id TEXT PRIMARY KEY REFERENCES workspace_exports(workspace_id),
+ operation_id TEXT NOT NULL UNIQUE REFERENCES task_operations(operation_id),
+ source_repo TEXT NOT NULL, base_commit TEXT NOT NULL,
+ patch_sha256 TEXT NOT NULL, manifest_sha256 TEXT NOT NULL,
+ state TEXT NOT NULL CHECK(state IN ('applying','applied','unknown')),
+ applied_tree_sha256 TEXT, created REAL NOT NULL, finished REAL,
+ CHECK((state='applied' AND applied_tree_sha256 IS NOT NULL AND finished IS NOT NULL)
+    OR state!='applied')
+);
+CREATE TRIGGER workspace_application_identity BEFORE UPDATE ON workspace_applications
+ WHEN NEW.workspace_id IS NOT OLD.workspace_id OR NEW.operation_id IS NOT OLD.operation_id
+ OR NEW.source_repo IS NOT OLD.source_repo OR NEW.base_commit IS NOT OLD.base_commit
+ OR NEW.patch_sha256 IS NOT OLD.patch_sha256
+ OR NEW.manifest_sha256 IS NOT OLD.manifest_sha256 OR NEW.created IS NOT OLD.created
+ OR OLD.state!='applying' OR NEW.state NOT IN ('applied','unknown')
+ BEGIN SELECT RAISE(ABORT,'workspace application identity is immutable'); END;
+CREATE TRIGGER workspace_application_no_delete BEFORE DELETE ON workspace_applications
+ BEGIN SELECT RAISE(ABORT,'workspace application history is retained'); END;
+"""
+
+
+def add_application_schema(db):
+    _apply(db, APPLICATION_SCHEMA, 12)

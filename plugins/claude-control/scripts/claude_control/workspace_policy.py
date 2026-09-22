@@ -63,9 +63,9 @@ def normalize_policy(value):
     if (
         type(value["version"]) is not int
         or value["version"] != 1
-        or value["role"] not in ("executor", "verifier")
+        or value["role"] not in ("executor", "scout", "verifier")
     ):
-        _invalid("Use policy version 1 and role executor or verifier.")
+        _invalid("Use policy version 1 and role executor, scout, or verifier.")
     result = {"version": 1, "role": value["role"]}
     for name in ("read_paths", "write_paths"):
         values = value[name]
@@ -113,8 +113,10 @@ def normalize_policy(value):
             _invalid("Check timeout must be an integer from 1 to 60 seconds.")
         result["checks"][name] = {"argv": list(argv), "timeout": check["timeout"]}
     result["checks"] = dict(sorted(result["checks"].items()))
-    if result["role"] == "verifier" and (result["write_paths"] or result["checks"]):
-        _invalid("Verifier policies are read-only and cannot execute commands.")
+    if result["role"] in ("scout", "verifier") and (
+        result["write_paths"] or result["checks"]
+    ):
+        _invalid("Scout and verifier policies are read-only and cannot execute commands.")
     for name, default, maximum in (("max_actions", 32, 100), ("max_calls", 8, 32)):
         limit = value.get(name, default)
         if type(limit) is not int or not 1 <= limit <= maximum:

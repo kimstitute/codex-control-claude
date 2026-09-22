@@ -182,6 +182,69 @@ class CompositionTests(ControllerTestCase):
                 db.execute("SELECT count(*) FROM composition_members").fetchone()[0], 0
             )
 
+    def test_finished_sonnet_scout_is_pinned_into_planning_context(self) -> None:
+        scout_policy = {
+            "version": 1,
+            "role": "scout",
+            "read_paths": ["."],
+            "write_paths": [],
+            "checks": {},
+            "max_actions": 4,
+            "max_calls": 4,
+        }
+        with mock.patch.object(workspace.sandbox, "require"):
+            scout = workspace.create(
+                Store(self.state),
+                scout_policy,
+                "composition-scout-create",
+                repo=str(self.repo),
+                ref="HEAD",
+            )
+            workspace.bind(
+                Store(self.state),
+                scout["id"],
+                self.assignment(
+                    "composition-scout",
+                    role="researcher",
+                    model="sonnet",
+                    fixture={
+                        "workspace_operations": [[{"op": "read", "path": "README.md"}], []]
+                    },
+                ),
+                "composition-scout-bind",
+            )
+            finished = workspace.run(Store(self.state), scout["id"], max_seconds=8)
+        self.assertEqual(finished["state"], "finished")
+
+        created = composition.create(
+            Store(self.state),
+            self.assignment("scouted-plan", role="planner", model="fable"),
+            self.assignment("scouted-edit", role="executor", model="sonnet"),
+            self.editor_policy(),
+            self.assignment("scouted-review", role="verifier", model="fable"),
+            "scouted-composition-create",
+            repo=str(self.repo),
+            reviewer_effort="high",
+            scout_workspace=scout["id"],
+        )
+
+        with Store(self.state).db() as db:
+            row = db.execute("SELECT policy FROM compositions WHERE id=?", (created["id"],)).fetchone()
+            policy = json.loads(row["policy"])
+            workflow_row = db.execute(
+                "SELECT worker_task_id FROM workflows WHERE id=?", (created["workflow_id"],)
+            ).fetchone()
+            prompt = json.loads(
+                db.execute(
+                    "SELECT prompt FROM task_revisions WHERE task_id=? AND revision=1",
+                    (workflow_row["worker_task_id"],),
+                ).fetchone()["prompt"]
+            )
+        self.assertEqual(policy["scout"]["workspace_id"], scout["id"])
+        self.assertEqual(policy["scout"]["report"]["status"], "complete")
+        self.assertIn("claude-control.scout.v1", prompt["assignment"]["context"])
+        self.assertIn("Fixture report for researcher", prompt["assignment"]["context"])
+
     def test_create_recovers_child_workflow_after_outer_transaction_crash(self) -> None:
         planning = self.assignment("crash-plan", role="planner", model="fable")
         editor = self.assignment("crash-edit", role="executor", model="sonnet")

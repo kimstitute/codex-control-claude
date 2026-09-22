@@ -316,6 +316,37 @@ class WorkspaceFilesTests(unittest.TestCase):
             policy,
         )
 
+    def test_hunk_patch_accepts_logical_lines_without_json_newlines(self) -> None:
+        tree = self.root / "logical-patch-tree"
+        tree.mkdir()
+        target = tree / "file.txt"
+        target.write_text("def add(a, b):\n    return a - b\n", encoding="utf-8")
+        target.chmod(0o644)
+        policy = self.policy(read=["file.txt"], write=["file.txt"])
+        base = workspace_files.read_text(tree, "file.txt", policy)["sha256"]
+
+        workspace_files.apply_patch(
+            tree,
+            "file.txt",
+            base,
+            [
+                {
+                    "old_start": 1,
+                    "old_count": 2,
+                    "new_start": 1,
+                    "new_count": 2,
+                    "lines": [
+                        " def add(a, b):",
+                        "-    return a - b",
+                        "+    return a + b",
+                    ],
+                }
+            ],
+            policy,
+        )
+
+        self.assertEqual(target.read_text(encoding="utf-8"), "def add(a, b):\n    return a + b\n")
+
     def test_freeze_records_only_authorized_text_changes_and_verifies_receipts(self) -> None:
         baseline = self.root / "baseline"
         working = self.root / "working"
