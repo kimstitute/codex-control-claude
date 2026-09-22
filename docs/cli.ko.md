@@ -32,6 +32,18 @@ claude_control doctor --auth
 
 실행 파일과 프로젝트 경로는 명시적입니다. 저장소는 이를 만든 호스트와 사용자에게 귀속됩니다. 초기화는 파일 시스템 격리를 부여하거나 Claude 인증을 변경하지 않습니다.
 
+## 실시간 모니터와 사용 기록
+
+```bash
+claude_control monitor tui --refresh-seconds 0.5 --history 100
+claude_control monitor snapshot --history 100
+```
+
+TUI는 graph, agents, history 화면을 제공하며 원장을 변경하거나 작업을
+진행시키지 않습니다. 자동화용 `snapshot`은 같은 정보를 JSON으로 반환합니다.
+자세한 키 조작과 실시간 추정치·완료 확정값의 차이는
+[실시간 모니터 안내](monitor.ko.md)를 참고하세요.
+
 ## 개정과 승인이 있는 Task
 
 `task create/list/show/submit/revise/retry/review/accept`와 `migrate --status/--offline`에 대해서는 [작업 생명주기 레퍼런스](tasks.ko.md)를 참고하세요. 새 task 턴은 구조화된 후속 작업을 포함해 명시적으로 기록된 v2 계약을 사용합니다. 기존 delegate와 비구조화 명령의 의미는 그대로 유지됩니다.

@@ -32,6 +32,9 @@ base hash 기반 hunk patch, 부작용 없는 형식 오류의 1회 보정, 최�
 provider 원본 usage·비용·지연 기록, 원본 HEAD를 고정하는 명시적 `workspace apply`,
 계획 전에 저장소를 읽는 read-only Sonnet scout를 추가합니다.
 
+0.12 버전은 에이전트·task·workspace·workflow·composition 관계를 그래프로
+보여주는 실시간 터미널 모니터와 실행 기록·토큰·비용 조회를 추가합니다.
+
 ## 어떤 명령을 선택해야 하나요?
 
 | 원하는 일 | 사용할 기능 | 추가되는 보장 |
@@ -44,9 +47,17 @@ provider 원본 usage·비용·지연 기록, 원본 HEAD를 고정하는 명시
 | 계획부터 구현·검토까지 연결하기 | `composition` | P4 계획과 P5 편집·동결 검토의 명시적 연결 |
 | 의존 작업을 순서대로 실행하기 | `task enqueue` + `dispatch` | FIFO 대기열과 정확한 부모 승인 조건 |
 | 다음 턴에 전달할 지시를 저장하기 | `message` | 선택된 개정에만 전달되는 지시와 결과 인수인계 |
+| 현재 에이전트와 사용 기록 관찰하기 | `monitor tui` | 역할·모델·작업 그래프, 실시간 토큰 추정치와 확정 사용량 |
 
 Codex 앱에서 사용할 때는 설치된 `$claude-control` 스킬을 명시하면 됩니다.
 직접 상태를 확인하거나 운영하려면 아래 CLI를 사용하세요.
+
+```bash
+claude_control monitor tui
+```
+
+키 조작과 토큰 수치의 의미는 [실시간 모니터 안내](docs/monitor.ko.md)를
+참고하세요.
 
 ## 안전 경계
 
@@ -669,6 +680,7 @@ SQLite 백업과 영속 migration journal을 만들면서 순서대로 이관됩
 - [제한된 worker/reviewer workflow](docs/workflows.ko.md)
 - [Workspace 정책과 격리](docs/workspaces.ko.md)
 - [계획·편집·동결 검토 composition](docs/compositions.ko.md)
+- [실시간 에이전트 모니터](docs/monitor.ko.md)
 - [Effort와 실행 설정](docs/execution-settings.ko.md)
 - [아키텍처와 신뢰 경계](docs/architecture.ko.md)
 - [테스트와 선택적 live test](docs/testing.ko.md)
@@ -689,9 +701,9 @@ ruff format --check .
 
 ## 현재 범위
 
-0.10 버전은 Linux, 텍스트 위임, 영속 세션, 검토·승인 가능한 task 개정,
+0.12 버전은 Linux, 텍스트 위임, 영속 세션, 검토·승인 가능한 task 개정,
 유한 대기열과 workflow, 컨트롤러 매개 workspace 편집, 명시적
-계획·편집·검토 composition을 지원합니다. Claude의 직접 파일·shell 도구,
+계획·편집·검토 composition, read-only 실시간 TUI를 지원합니다. Claude의 직접 파일·shell 도구,
 임의 기존 세션 인수, 대화 fork, Windows/macOS, MCP adapter, 서버 간 전달,
 Codex 자동 깨우기는 현재 범위 밖입니다.
 

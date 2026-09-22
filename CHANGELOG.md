@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.12.0 — 2026-09-22
+
+- Add a read-only curses TUI with graph, agent and run-history views.
+- Show each managed agent's role, requested and actual model, current work and
+  runtime state, with composition/workflow/workspace/task relationship edges.
+- Read Claude stream token estimates while a run is active and clearly separate
+  them from final provider usage, cost and latency records.
+- Add `monitor snapshot` as a bounded JSON observation interface for scripts.
+
 ## 0.11.0 — 2026-09-22
 
 - Pass one bounded live Sonnet edit/check/freeze and independent Fable review

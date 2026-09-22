@@ -32,6 +32,18 @@ claude_control doctor --auth
 
 The executable and project paths are explicit. The store belongs to its originating host and user. Initialization does not grant filesystem isolation or change Claude authentication.
 
+## Live monitor and usage history
+
+```bash
+claude_control monitor tui --refresh-seconds 0.5 --history 100
+claude_control monitor snapshot --history 100
+```
+
+The TUI provides graph, agents and history views without mutating the ledger or
+advancing work. `snapshot` returns the same observation data as JSON for scripts.
+See the [live monitor guide](monitor.md) for keys and the distinction between live
+estimates and final provider values.
+
 ## Tasks with revisions and approval
 
 Use the [task lifecycle reference](tasks.md) for `task create/list/show/submit/revise/retry/review/accept`

@@ -33,6 +33,9 @@ Version 0.11 passes a live Sonnet edit/check/freeze/Fable-review pilot and adds
 raw provider usage, cost and latency telemetry, explicit HEAD-pinned
 `workspace apply`, and a read-only Sonnet scout before planning.
 
+Version 0.12 adds a live terminal monitor for the agent/task/workspace/workflow/
+composition graph, run history, token usage and provider-reported cost.
+
 ## Choose the right workflow
 
 | Goal | Use | What it adds |
@@ -45,10 +48,17 @@ raw provider usage, cost and latency telemetry, explicit HEAD-pinned
 | Plan, implement and review | `composition` | P4 planning plus P5 editing and frozen Fable verification |
 | Schedule dependent tasks | `task enqueue` + `dispatch` | FIFO admission and exact accepted-parent gates |
 | Save instructions for the next turn | `message` | Explicit next-revision delivery and result handoff |
+| Observe agents and usage history | `monitor tui` | Role/model/work graph, live token estimates and final usage |
 
 If you use Codex interactively, ask Codex to apply the installed
 `$claude-control` skill. Use the CLI directly when you want to inspect or operate
 the controller yourself.
+
+```bash
+claude_control monitor tui
+```
+
+See the [live monitor guide](docs/monitor.md) for keys and token semantics.
 
 ## Safety model
 
@@ -670,6 +680,7 @@ a single copied SQLite file.
 - [Bounded worker/reviewer workflows](docs/workflows.md)
 - [Controlled workspace policy and isolation](docs/workspaces.md)
 - [Plan/edit/frozen-review compositions](docs/compositions.md)
+- [Live agent monitor](docs/monitor.md)
 - [Execution settings](docs/execution-settings.md)
 - [Architecture and trust boundaries](docs/architecture.md)
 - [Testing and live-test opt-in](docs/testing.md)
@@ -689,9 +700,9 @@ are opt-in and use your own Claude account; see [docs/testing.md](docs/testing.m
 
 ## Current scope
 
-Version 0.10 supports Linux, supplied-text delegation, persistent sessions,
+Version 0.12 supports Linux, supplied-text delegation, persistent sessions,
 review-gated task revisions, finite queues/workflows, controller-mediated
-workspace edits and explicit plan/edit/review compositions. Native Claude
+workspace edits, explicit plan/edit/review compositions and a read-only live TUI. Native Claude
 file/shell tools, arbitrary existing-session adoption, conversation forks,
 Windows/macOS, an MCP adapter, cross-host dispatch and automatic Codex wake-up
 remain outside this release.

@@ -5,7 +5,7 @@ description: Manage multiple persistent Claude Code sessions on the current Linu
 
 # Claude Control
 
-Use the bundled `../../scripts/claude_control_cli.py`, resolving that path from this skill's directory. Public commands return JSON. Python 3.10+ and locally authenticated Claude Code are prerequisites; run `--help` for flags. Version 0.10 supports Linux supplied-text delegation, JSON-schema task reports, base-hashed patch operations, one bounded format repair, reviewer vetoes, typed acceptance evidence, and finite plan/edit/review compositions. Claude native tools and MCP are disabled, with CLI safe mode and empty setting sources. The project-hook nonexecution test passed; administrator-managed policy still applies. For proposals, supply source text and inspect returned edits. For authorized file work, read [the workspace reference](references/workspaces.md) before creating a policy. The controller executes structured read/write/patch/named-check requests on private copies; source integration remains a Codex action.
+Use the bundled `../../scripts/claude_control_cli.py`, resolving that path from this skill's directory. Public commands return JSON except the explicit TUI. Python 3.10+ and locally authenticated Claude Code are prerequisites; run `--help` for flags. Version 0.12 supports Linux supplied-text delegation, JSON-schema task reports, base-hashed patch operations, one bounded format repair, reviewer vetoes, typed acceptance evidence, finite plan/edit/review compositions, guarded apply, read-only scout context, telemetry and live monitoring. Claude native tools and MCP are disabled, with CLI safe mode and empty setting sources. The project-hook nonexecution test passed; administrator-managed policy still applies. For proposals, supply source text and inspect returned edits. For authorized file work, read [the workspace reference](references/workspaces.md) before creating a policy. The controller executes structured read/write/patch/named-check requests on private copies; source integration remains a Codex action.
 
 ## Execution settings
 
@@ -246,6 +246,17 @@ stop/reconcile commands on schema 3; task lifecycle needs schema 4, queue comman
 re-initialization, automatic downgrade or a fresh store to bypass uncertainty.
 
 The package launches workers for jobs, not an always-running coordinator. Codex is not automatically awakened after the conversation ends. A later Codex task can discover the same host-local records via `list`.
+
+## Observe agents and usage
+
+Use `monitor tui` for a read-only terminal graph of compositions, workflows,
+workspaces, tasks and managed Claude sessions. It shows role, requested and actual
+model, current work, state, recent run history and token/cost data. Select Graph,
+Agents and History with `1`, `2`, `3`; use `q` to exit. Active token counts prefixed
+with `~` are Claude stream estimates. Completed usage and cost are provider values
+from the append-only telemetry ledger. Use `monitor snapshot --history <1..1000>`
+for bounded JSON. Monitoring does not refresh execution state, admit work, retry,
+stop, accept or apply anything.
 
 ## Work in an explicit workspace
 
