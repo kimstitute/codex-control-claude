@@ -692,6 +692,7 @@ SQLite 백업과 영속 migration journal을 만들면서 순서대로 이관됩
 - [테스트와 선택적 live test](docs/testing.ko.md)
 - [실제 프로젝트 파일럿 기록](docs/real-project-pilot.ko.md)
 - [OMX에서 도입한 설계](docs/omx-adoption.ko.md)
+- [Windows 네이티브 지원 구현 계획](docs/windows-support-plan.ko.md)
 
 ## 테스트
 
@@ -707,11 +708,12 @@ ruff format --check .
 
 ## 현재 범위
 
-0.12 버전은 Linux, 텍스트 위임, 영속 세션, 검토·승인 가능한 task 개정,
+0.13 버전은 Linux, 텍스트 위임, 영속 세션, 검토·승인 가능한 task 개정,
 유한 대기열과 workflow, 컨트롤러 매개 workspace 편집, 명시적
 계획·편집·검토 composition, read-only 실시간 TUI를 지원합니다. Claude의 직접 파일·shell 도구,
 임의 기존 세션 인수, 대화 fork, Windows/macOS, MCP adapter, 서버 간 전달,
-Codex 자동 깨우기는 현재 범위 밖입니다.
+Codex 자동 깨우기는 현재 구현 범위 밖입니다. Windows 지원은
+[별도 구현 계획](docs/windows-support-plan.ko.md)에 정의되어 있습니다.
 
 제작: [kimstitute](https://github.com/kimstitute). OpenAI 또는 Anthropic의
 공식 연동 제품이 아닌 독립 프로젝트입니다.
