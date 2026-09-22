@@ -5,6 +5,15 @@ import re
 from .store import ControlError
 
 PROTECTED = {".git", ".claude", ".codex", ".omx", ".agents", ".env"}
+RESERVED_DEVICE_BASENAMES = {
+    "con",
+    "prn",
+    "aux",
+    "nul",
+    "clock$",
+    *(f"com{number}" for number in range(1, 10)),
+    *(f"lpt{number}" for number in range(1, 10)),
+}
 
 
 def _invalid(message):
@@ -28,9 +37,32 @@ def path(value, allow_directory=False):
     parts = name.split("/")
     if any(p in ("", ".", "..") or p in PROTECTED or p.startswith(".env.") for p in parts):
         _invalid("Unsafe or protected path.")
+    for part in parts:
+        if part != part.rstrip(" ."):
+            _invalid("Path components cannot end in a dot or space.")
+        if ":" in part:
+            _invalid("Path components cannot contain a colon.")
+        if part.split(".", 1)[0].casefold() in RESERVED_DEVICE_BASENAMES:
+            _invalid("Path component uses a reserved Windows device name.")
     if parts[-1] in ("credentials.json", "auth.json") or parts[-1].endswith((".pem", ".key")):
         _invalid("Credential files cannot enter a workspace.")
     return value
+
+
+def find_case_collision(paths):
+    """Return the first Windows-insensitive path-prefix collision, if any."""
+    seen = {}
+    for relative in paths:
+        prefix = []
+        for component in relative.split("/"):
+            prefix.append(component)
+            original = "/".join(prefix)
+            folded = original.casefold()
+            existing = seen.get(folded)
+            if existing is not None and existing != original:
+                return existing, original
+            seen[folded] = original
+    return None
 
 
 def permits(paths, relative):

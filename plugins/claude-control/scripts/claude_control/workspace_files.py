@@ -244,6 +244,13 @@ def create_snapshot(repo, ref, destination, policy):
         selected.append((relative, object_id, mode))
     if len(selected) > MAX_FILES:
         _error("workspace_source", "Selected Git tree exceeds the file limit.")
+    collision = workspace_policy.find_case_collision(relative for relative, _, _ in selected)
+    if collision is not None:
+        first, second = collision
+        _error(
+            "workspace_source",
+            f"Git tree has a case-insensitive path collision: {first!r} vs {second!r}.",
+        )
     target = _prepare_destination(destination)
     files: dict[str, dict] = {}
     total = 0

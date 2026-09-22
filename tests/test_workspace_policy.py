@@ -86,6 +86,55 @@ class WorkspacePolicyTests(unittest.TestCase):
         self.assert_error("invalid_workspace_policy", workspace_policy.path, "src/")
         self.assertEqual(workspace_policy.path("src/", allow_directory=True), "src/")
 
+    def test_path_rejects_windows_unsafe_components(self) -> None:
+        invalid = (
+            "trailing.dot.",
+            "trailing space ",
+            "dir./file.txt",
+            "dir /file.txt",
+            "file.txt:stream",
+            "C:file.txt",
+            "CON",
+            "con.txt",
+            "PRN.log",
+            "aux",
+            "NUL.txt",
+            "CLOCK$",
+            "COM1",
+            "com9.txt",
+            "LPT1",
+            "lpt9.log",
+        )
+        for value in invalid:
+            with self.subTest(value=value):
+                self.assert_error("invalid_workspace_policy", workspace_policy.path, value)
+
+    def test_path_allows_ordinary_names_resembling_reserved_devices(self) -> None:
+        for value in (
+            "commonly.txt",
+            "console.txt",
+            "company/com10.txt",
+            "auxiliary.py",
+            "nullable.py",
+        ):
+            with self.subTest(value=value):
+                self.assertEqual(workspace_policy.path(value), value)
+
+    def test_case_collision_checks_every_path_prefix(self) -> None:
+        self.assertIsNone(workspace_policy.find_case_collision(["a.txt", "b.txt"]))
+        self.assertEqual(
+            workspace_policy.find_case_collision(["File.txt", "file.txt"]),
+            ("File.txt", "file.txt"),
+        )
+        self.assertEqual(
+            workspace_policy.find_case_collision(["straße.txt", "STRASSE.txt"]),
+            ("straße.txt", "STRASSE.txt"),
+        )
+        self.assertEqual(
+            workspace_policy.find_case_collision(["Dir/a.txt", "dir/b.txt"]),
+            ("Dir", "dir"),
+        )
+
     def test_protected_paths_and_secret_files_are_never_authorized(self) -> None:
         protected = (
             ".git/config",

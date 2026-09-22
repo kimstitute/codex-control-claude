@@ -155,6 +155,39 @@ class WorkspaceFilesTests(unittest.TestCase):
                     self.policy(),
                 )
 
+    def test_snapshot_rejects_windows_name_collisions_before_creating_destination(self) -> None:
+        for index, sources in enumerate(
+            (
+                {"File.txt": "a\n", "file.txt": "b\n"},
+                {"Dir/a.txt": "a\n", "dir/b.txt": "b\n"},
+            )
+        ):
+            with self.subTest(sources=sources):
+                repo, commit = self.repository(sources)
+                destination = self.root / f"collision-{index}"
+                self.assert_error(
+                    "workspace_source",
+                    workspace_files.create_snapshot,
+                    repo,
+                    commit,
+                    destination,
+                    self.policy(),
+                )
+                self.assertFalse(destination.exists())
+
+    def test_snapshot_rejects_windows_reserved_and_ads_paths(self) -> None:
+        for index, relative in enumerate(("CON.txt", "data/NUL", "file.txt:stream")):
+            with self.subTest(relative=relative):
+                repo, commit = self.repository({relative: "x\n"})
+                self.assert_error(
+                    "workspace_source",
+                    workspace_files.create_snapshot,
+                    repo,
+                    commit,
+                    self.root / f"windows-name-{index}",
+                    self.policy(),
+                )
+
     def test_snapshot_enforces_file_count_size_and_safe_destination(self) -> None:
         large_repo, large_commit = self.repository({"large.bin": b"x" * (256 * 1024 + 1)})
         occupied = self.root / "occupied"
