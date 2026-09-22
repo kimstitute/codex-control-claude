@@ -1,6 +1,8 @@
 """Installation rollback must retain the previous package even on a second failure."""
 
 import importlib.util
+import hashlib
+import json
 import multiprocessing
 import subprocess
 import tempfile
@@ -194,6 +196,71 @@ class WindowsDistributionTests(unittest.TestCase):
 
         self.assertIn("claude_control_cli.py", (scripts / "claude_control.cmd").read_text())
         self.assertIn("claude_control_cli.py", (scripts / "claude_control.ps1").read_text())
+
+    def test_installer_stages_a_sha256_pinned_helper(self):
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            helper = root / "helper.exe"
+            helper.write_bytes(b"verified-helper")
+            staged = root / "plugin"
+            staged.mkdir()
+            digest = hashlib.sha256(helper.read_bytes()).hexdigest()
+
+            INSTALLER.stage_windows_helper(staged, helper, digest, machine="AMD64")
+
+            manifest = json.loads((staged / "bin/windows-helper-manifest.json").read_text())
+            artifact = manifest["artifacts"][0]
+            self.assertEqual(artifact["sha256"], digest)
+            self.assertEqual(artifact["size"], len(b"verified-helper"))
+            self.assertEqual(
+                (staged / "bin" / artifact["name"]).read_bytes(), b"verified-helper"
+            )
+
+    def test_installer_rejects_a_helper_hash_mismatch(self):
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            helper = root / "helper.exe"
+            helper.write_bytes(b"untrusted")
+            staged = root / "plugin"
+            staged.mkdir()
+
+            with self.assertRaisesRegex(ValueError, "does not match"):
+                INSTALLER.stage_windows_helper(staged, helper, "0" * 64, machine="AMD64")
+
+    def test_update_preserves_only_a_verified_existing_helper(self):
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            existing = root / "existing"
+            staged = root / "staged"
+            binary_dir = existing / "bin"
+            binary_dir.mkdir(parents=True)
+            staged.mkdir()
+            name = "ccc-win-supervisor-x86_64-pc-windows-msvc.exe"
+            data = b"old-verified-helper"
+            (binary_dir / name).write_bytes(data)
+            (binary_dir / "windows-helper-manifest.json").write_text(
+                json.dumps(
+                    {
+                        "protocol": 1,
+                        "artifacts": [
+                            {
+                                "name": name,
+                                "sha256": hashlib.sha256(data).hexdigest(),
+                                "size": len(data),
+                            }
+                        ],
+                    }
+                )
+            )
+
+            self.assertTrue(INSTALLER.preserve_windows_helper(existing, staged))
+            self.assertEqual((staged / "bin" / name).read_bytes(), data)
+
+            (binary_dir / name).write_bytes(b"tampered")
+            clean = root / "clean"
+            clean.mkdir()
+            self.assertFalse(INSTALLER.preserve_windows_helper(existing, clean))
+            self.assertFalse((clean / "bin").exists())
 
 
 if __name__ == "__main__":
