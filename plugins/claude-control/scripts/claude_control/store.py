@@ -6,15 +6,14 @@ import math
 import os
 import socket
 import sqlite3
-import stat
 import subprocess
-import sys
 import time
 import uuid
 from contextlib import closing, contextmanager
 from pathlib import Path
 
 from .execution_settings import binary_identity, probe_effort, validate_effort
+from .platform import host as _host
 from .platform.locks import file_lock
 from .schema import (
     VERSION,
@@ -40,76 +39,51 @@ class ControlError(Exception):
         self.code = code
 
 
-def host_identity():
-    if sys.platform != "linux":
-        raise ControlError("unsupported_platform", "This controller supports Linux only.")
-    machine = Path("/etc/machine-id").read_text().strip()
-    if not machine:
-        raise ControlError("host_identity", "A nonempty /etc/machine-id is required.")
-    return hashlib.sha256(machine.encode()).hexdigest()
+def _translate(function):
+    def wrapper(*args, **kwargs):
+        try:
+            return function(*args, **kwargs)
+        except _host.HostError as exc:
+            raise ControlError(exc.code, str(exc)) from exc
+
+    return wrapper
 
 
-def boot_id():
-    return Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+host_identity = _translate(_host.host_identity)
+boot_id = _translate(_host.boot_id)
+pid_namespace = _translate(_host.pid_namespace)
+proc_identity = _translate(_host.proc_identity)
+alive = _translate(_host.alive)
+group_alive = _translate(_host.group_alive)
+private_dir = _translate(_host.private_dir)
+write_json = _translate(_host.write_json)
+principal_identity = _translate(_host.principal_identity)
+verify_private_entry = _translate(_host.verify_private_entry)
+secure_new_file = _translate(_host.secure_new_file)
 
 
-def pid_namespace():
-    return os.readlink("/proc/self/ns/pid")
-
-
-def proc_identity(pid):
-    """Return Linux start ticks/state/group without sending any signal."""
-    if not pid:
-        return None
-    try:
-        tail = Path(f"/proc/{int(pid)}/stat").read_text().rsplit(")", 1)[1].split()
-        return {"start": tail[19], "state": tail[0], "group": int(tail[2])}
-    except (FileNotFoundError, ProcessLookupError):
-        return None
-
-
-def alive(pid, start, boot):
-    if boot != boot_id():
-        return False
-    info = proc_identity(pid)
-    return bool(info and info["start"] == start and info["state"] not in ("Z", "X"))
-
-
-def group_alive(group):
-    for entry in Path("/proc").iterdir():
-        if entry.name.isdigit():
-            info = proc_identity(entry.name)
-            if info and info["group"] == group and info["state"] not in ("Z", "X"):
-                return True
-    return False
-
-
-def private_dir(path):
-    path = Path(path).absolute()
-    if path.is_symlink():
-        raise ControlError("unsafe_state", "State directory cannot be a symlink.")
-    path.mkdir(parents=True, mode=0o700, exist_ok=True)
-    info = path.stat()
-    if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077:
-        raise ControlError("unsafe_state", f"Require an owned mode-0700 directory: {path}")
-    return path.resolve()
-
-
-def write_json(path, value):
-    """Atomic replace inside a private state directory."""
-    path = Path(path)
-    tmp = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
-    with tmp.open("x") as handle:
-        os.chmod(tmp, 0o600)
-        json.dump(value, handle, ensure_ascii=False, indent=2)
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(tmp, path)
-    directory_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        os.fsync(directory_fd)
-    finally:
-        os.close(directory_fd)
+def check_host_and_principal(config):
+    if config.get("host_id") != host_identity():
+        raise ControlError(
+            "host_mismatch", "State belongs to another host or user; no dispatch attempted."
+        )
+    if "principal_id" in config or "platform" in config:
+        if (
+            config.get("platform") != _host.HOST.name
+            or config.get("principal_id") != principal_identity()
+        ):
+            raise ControlError(
+                "host_mismatch", "State belongs to another host or user; no dispatch attempted."
+            )
+    elif os.name == "posix":
+        if config.get("uid") != os.getuid():
+            raise ControlError(
+                "host_mismatch", "State belongs to another host or user; no dispatch attempted."
+            )
+    else:
+        raise ControlError(
+            "host_mismatch", "Windows state requires platform and principal identity."
+        )
 
 
 SCHEMA = """
@@ -138,6 +112,7 @@ class Store:
     def initialize(path, claude_bin, roots, max_parallel=2, max_queued=100):
         os.umask(0o077)
         identity = host_identity()
+        principal = principal_identity()
         directory = private_dir(path)
         binary = Path(claude_bin).expanduser().resolve(strict=True)
         if not binary.is_file() or not os.access(binary, os.X_OK):
@@ -161,12 +136,15 @@ class Store:
                 installation_id=str(uuid.uuid4()),
                 host_id=identity,
                 hostname=socket.gethostname(),
-                uid=os.getuid(),
+                platform=_host.HOST.name,
+                principal_id=principal,
                 claude_bin=str(binary),
                 allowed_roots=allowed,
                 max_parallel=max_parallel,
                 max_queued=max_queued,
             )
+            if os.name == "posix":
+                config["uid"] = os.getuid()
             with closing(sqlite3.connect(directory / "state.sqlite3")) as db, db:
                 db.executescript(SCHEMA)
                 add_task_schema(db)
@@ -179,8 +157,8 @@ class Store:
                 add_telemetry_schema(db)
                 add_application_schema(db)
                 db.execute("PRAGMA journal_mode=WAL")
-            os.chmod(directory / "state.sqlite3", 0o600)
-            (directory / "runs").mkdir(mode=0o700, exist_ok=True)
+            secure_new_file(directory / "state.sqlite3")
+            private_dir(directory / "runs")
             write_json(directory / "config.json", config)
         return {"state_dir": str(directory), **config}
 
@@ -195,14 +173,9 @@ class Store:
             ) from None
         if self.config.get("schema") not in tuple(range(3, VERSION + 1)):
             raise ControlError("schema_mismatch", "Unsupported state schema.")
-        if self.config.get("host_id") != host_identity() or self.config.get("uid") != os.getuid():
-            raise ControlError(
-                "host_mismatch", "State belongs to another host or user; no dispatch attempted."
-            )
+        check_host_and_principal(self.config)
         for name in ("config.json", "state.sqlite3", "runs"):
-            p = self.path / name
-            if p.is_symlink() or p.stat().st_uid != os.getuid() or p.stat().st_mode & 0o077:
-                raise ControlError("unsafe_state", f"State entry must be private and owned: {name}")
+            verify_private_entry(self.path / name)
         with self.db():
             pass
 

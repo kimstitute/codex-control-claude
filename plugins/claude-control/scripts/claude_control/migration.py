@@ -19,7 +19,15 @@ from .schema import (
     add_workflow_schema,
     add_workspace_schema,
 )
-from .store import ACTIVE, ControlError, host_identity, private_dir, write_json
+from .store import (
+    ACTIVE,
+    ControlError,
+    check_host_and_principal,
+    private_dir,
+    secure_new_file,
+    verify_private_entry,
+    write_json,
+)
 
 
 def _open(path):
@@ -27,12 +35,9 @@ def _open(path):
         raise ControlError("not_initialized", "Run init with this state directory first.")
     path = private_dir(path)
     for name in ("config.json", "state.sqlite3", "runs"):
-        entry = path / name
-        if entry.is_symlink() or entry.stat().st_uid != os.getuid() or entry.stat().st_mode & 0o077:
-            raise ControlError("unsafe_state", f"State entry must be private and owned: {name}")
+        verify_private_entry(path / name)
     config = json.loads((path / "config.json").read_text())
-    if config.get("host_id") != host_identity() or config.get("uid") != os.getuid():
-        raise ControlError("host_mismatch", "State belongs to another host or user.")
+    check_host_and_principal(config)
     return path, config
 
 
@@ -66,8 +71,12 @@ def _no_active(db):
 
 
 def _check_backup(path, source):
-    if path.is_symlink() or not path.is_file() or path.stat().st_mode & 0o077:
+    if not path.is_file():
         raise ControlError("migration_backup", "Private migration backup is missing or unsafe.")
+    try:
+        verify_private_entry(path)
+    except ControlError as exc:
+        raise ControlError("migration_backup", str(exc)) from exc
     with closing(sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True)) as db:
         if db.execute("PRAGMA integrity_check").fetchone()[0] != "ok" or db.execute(
             "PRAGMA user_version"
@@ -160,7 +169,7 @@ def _step(path, config, db, version, source):
             raise ControlError("unsafe_state", "Backup cannot be a symlink.")
         with closing(sqlite3.connect(backup)) as copy:
             db.backup(copy)
-        os.chmod(backup, 0o600)
+        secure_new_file(backup)
         with backup.open("rb") as handle:
             os.fsync(handle.fileno())
         _check_backup(backup, source)
