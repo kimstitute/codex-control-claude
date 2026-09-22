@@ -523,13 +523,29 @@ def _gemini(timeout):
     )
 
 
-def _cursor_auth():
+def _cursor_auth_candidates(environ=None, home=None):
+    """Return bounded local Cursor credential candidates without reading them."""
+    environ = os.environ if environ is None else environ
+    home = Path.home() if home is None else Path(home)
     candidates = []
-    xdg = os.environ.get("XDG_CONFIG_HOME")
+    explicit = environ.get("CURSOR_AUTH_FILE")
+    if explicit:
+        candidates.append(Path(explicit).expanduser())
+    xdg = environ.get("XDG_CONFIG_HOME")
     if xdg:
         candidates.append(Path(xdg) / "cursor" / "auth.json")
-    candidates.extend((Path.home() / ".config/cursor/auth.json", Path.home() / ".cursor/auth.json"))
-    for path in candidates:
+    appdata = environ.get("APPDATA")
+    if appdata:
+        candidates.append(Path(appdata) / "Cursor" / "auth.json")
+    localappdata = environ.get("LOCALAPPDATA")
+    if localappdata:
+        candidates.append(Path(localappdata) / "Cursor" / "auth.json")
+    candidates.extend((home / ".config/cursor/auth.json", home / ".cursor/auth.json"))
+    return candidates
+
+
+def _cursor_auth():
+    for path in _cursor_auth_candidates():
         value = _read_json(path)
         token = value.get("accessToken") if value else None
         if isinstance(token, str) and token.strip():

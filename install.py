@@ -2,7 +2,6 @@
 """Install this package using Codex's bundled personal-marketplace helpers."""
 
 import argparse
-import fcntl
 import json
 import os
 import shutil
@@ -13,13 +12,15 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent / "plugins/claude-control/scripts"))
+
+from claude_control.platform.locks import file_lock  # noqa: E402
+
 
 @contextmanager
 def installation_lock(lock_path):
     """Serialize installation and rollback across CLI processes on this host."""
-    descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
-    with os.fdopen(descriptor, "a") as handle:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+    with file_lock(lock_path, exclusive=True):
         yield
 
 
@@ -94,7 +95,7 @@ def install_package(args, parser):
         if args.helper_python
         else [
             sys.executable,
-            "/usr/bin/python3",
+            *([] if os.name == "nt" else ["/usr/bin/python3"]),
             *(
                 shutil.which(f"python3.{minor}")
                 for minor in range(10, max(15, sys.version_info.minor + 1))

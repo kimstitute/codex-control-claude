@@ -188,5 +188,13 @@ class ConcurrentInstallTests(unittest.TestCase):
         self.assertEqual(list(root.glob(".claude-control-backup-*")), [])
 
 
+class WindowsDistributionTests(unittest.TestCase):
+    def test_windows_launchers_are_shipped_with_the_plugin(self):
+        scripts = Path(__file__).resolve().parents[1] / "plugins/claude-control/scripts"
+
+        self.assertIn("claude_control_cli.py", (scripts / "claude_control.cmd").read_text())
+        self.assertIn("claude_control_cli.py", (scripts / "claude_control.ps1").read_text())
+
+
 if __name__ == "__main__":
     unittest.main()

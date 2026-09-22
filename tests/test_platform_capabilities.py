@@ -48,13 +48,15 @@ class CapabilityTests(unittest.TestCase):
         self.assertEqual(report["platform"], "linux")
         self.assertTrue(report["wsl"])
 
-    def test_native_windows_capabilities_fail_closed_until_backends_land(self):
+    def test_native_windows_reports_only_the_backends_that_have_landed(self):
         report = self.report("nt", "win32")
 
         self.assertEqual(report["platform"], "windows")
-        for capability in report["capabilities"].values():
-            self.assertFalse(capability["supported"])
-            self.assertTrue(capability["reason"])
+        self.assertTrue(report["capabilities"]["provider_usage"]["supported"])
+        self.assertTrue(report["capabilities"]["tui"]["supported"])
+        for name in ("session_control", "workspace", "sandbox"):
+            self.assertFalse(report["capabilities"][name]["supported"])
+            self.assertTrue(report["capabilities"][name]["reason"])
 
 
 class DefaultPathTests(unittest.TestCase):

@@ -666,6 +666,18 @@ def _limit_lines(data):
     return lines
 
 
+def _view_lines(data, view, active_only):
+    if view == 0:
+        return graph_lines(data, active_only=active_only), (
+            "active graph" if active_only else "all graph"
+        )
+    if view == 1:
+        return _agent_lines(data), "managed agents"
+    if view == 2:
+        return _history_lines(data), "recent run history"
+    return _limit_lines(data), "provider quotas and token activity"
+
+
 def _safe_add(window, y, x, text, width, attribute=0):
     if y < 0 or x < 0 or width <= 0:
         return
@@ -701,15 +713,7 @@ def _draw(window, data, view, offset, active_only):
         _safe_add(window, 4, 0, "Terminal is too small (minimum 50×8).", width, curses.A_BOLD)
         window.refresh()
         return 0
-    if view == 0:
-        lines = graph_lines(data, active_only=active_only)
-        mode = "active graph" if active_only else "all graph"
-    elif view == 1:
-        lines, mode = _agent_lines(data), "managed agents"
-    elif view == 2:
-        lines, mode = _history_lines(data), "recent run history"
-    else:
-        lines, mode = _limit_lines(data), "provider quotas and token activity"
+    lines, mode = _view_lines(data, view, active_only)
     visible = max(1, height - 5)
     offset = max(0, min(offset, max(0, len(lines) - visible)))
     _safe_add(
@@ -766,14 +770,21 @@ class _UsagePoller:
 
 
 def run_tui(store, *, refresh_seconds=0.5, history=100, limits_refresh_seconds=60.0):
-    if curses is None:
-        raise ControlError("tui_unavailable", "The curses TUI is unavailable on this platform.")
     if not math.isfinite(refresh_seconds) or not 0.1 <= refresh_seconds <= 60:
         raise ControlError("invalid_limit", "Monitor refresh must be finite, 0.1–60 seconds.")
     if not math.isfinite(limits_refresh_seconds) or not 30 <= limits_refresh_seconds <= 3600:
         raise ControlError(
             "invalid_limit", "Provider-limit refresh must be finite, 30–3600 seconds."
         )
+    if os.name == "nt":
+        return _run_windows_tui(
+            store,
+            refresh_seconds=refresh_seconds,
+            history=history,
+            limits_refresh_seconds=limits_refresh_seconds,
+        )
+    if curses is None:
+        raise ControlError("tui_unavailable", "The curses TUI is unavailable on this platform.")
 
     poller = _UsagePoller(
         interval=limits_refresh_seconds, timeout=min(15, limits_refresh_seconds / 2)
@@ -820,5 +831,79 @@ def run_tui(store, *, refresh_seconds=0.5, history=100, limits_refresh_seconds=6
         curses.wrapper(main)
     except curses.error as exc:
         raise ControlError("monitor_terminal", "Monitor needs an interactive terminal.") from exc
+    finally:
+        poller.close()
+
+
+def _windows_header(data, view, mode, offset, visible, total):
+    summary = data["summary"]
+    totals = summary["telemetry"]
+    title = (
+        f" Claude Control Monitor  {data['host']}  schema {data['schema']}  "
+        f"agents {summary['active_agents']}/{summary['agents']} active  "
+        f"cost ${totals['provider_cost_usd']:.4f}  "
+        f"tokens {_tokens(totals['output_tokens'])} out"
+    )
+    tabs = ["1 Graph", "2 Agents", "3 History", "4 Limits"]
+    tab_line = "   ".join(
+        f"[{tab}]" if index == view else tab for index, tab in enumerate(tabs)
+    )
+    help_line = "q quit · 1-4 view · arrows/jk scroll · PgUp/PgDn · r refresh · a active"
+    last = min(total, offset + visible)
+    status = f"{mode} · rows {offset + 1}-{last}/{total}"
+    return [title, tab_line, help_line, status]
+
+
+def _run_windows_tui(store, *, refresh_seconds, history, limits_refresh_seconds):
+    from . import windows_console
+
+    vt_enabled = windows_console.enable_vt_processing()
+    poller = _UsagePoller(
+        interval=limits_refresh_seconds,
+        timeout=min(15, limits_refresh_seconds / 2),
+    )
+    view = 0
+    offsets = [0, 0, 0, 0]
+    active_only = True
+    data = _attach_provider_usage(snapshot(store, history=history), poller.get())
+    try:
+        while True:
+            columns, rows = windows_console.terminal_size()
+            lines, mode = _view_lines(data, view, active_only)
+            visible = max(1, rows - 4)
+            offset = max(0, min(offsets[view], max(0, len(lines) - visible)))
+            offsets[view] = offset
+            header = _windows_header(data, view, mode, offset, visible, len(lines))
+            frame = windows_console.render_frame(
+                header,
+                lines[offset : offset + visible],
+                columns=columns,
+                rows=rows,
+                clear=vt_enabled,
+            )
+            print(frame, flush=True)
+            key = windows_console.read_key(refresh_seconds)
+            data = _attach_provider_usage(data, poller.get())
+            if key == windows_console.KEY_QUIT:
+                return
+            if key in ("1", "2", "3", "4"):
+                view = int(key) - 1
+            elif key == windows_console.KEY_TAB:
+                view = (view + 1) % 4
+            elif key == windows_console.ARROW_DOWN:
+                offsets[view] += 1
+            elif key == windows_console.ARROW_UP:
+                offsets[view] = max(0, offsets[view] - 1)
+            elif key == windows_console.PAGE_DOWN:
+                offsets[view] += max(1, rows - 5)
+            elif key == windows_console.PAGE_UP:
+                offsets[view] = max(0, offsets[view] - max(1, rows - 5))
+            elif key == windows_console.KEY_ACTIVE and view == 0:
+                active_only = not active_only
+                offsets[view] = 0
+            if key in (None, windows_console.KEY_REFRESH):
+                data = snapshot(store, history=history)
+                if key == windows_console.KEY_REFRESH:
+                    poller.refresh()
     finally:
         poller.close()

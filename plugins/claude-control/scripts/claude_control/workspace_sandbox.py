@@ -3,7 +3,6 @@
 import hashlib
 import json
 import os
-import resource
 import selectors
 import shutil
 import subprocess
@@ -11,6 +10,11 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+
+try:
+    import resource
+except ImportError:  # pragma: no cover - native Windows
+    resource = None
 
 from .runner import bind_parent
 from .store import ControlError, Store, alive, boot_id, pid_namespace, proc_identity
@@ -24,7 +28,16 @@ ENVIRONMENT = {
 }
 
 
+def _require_posix():
+    if os.name != "posix" or resource is None:
+        raise ControlError(
+            "sandbox_unavailable",
+            "Bubblewrap checks require Linux process and resource primitives.",
+        )
+
+
 def _process_limit():
+    _require_posix()
     # Account for visible existing UID threads before namespace bootstrap. Kernel
     # accounting is namespace-hierarchical; this is not an aggregate cgroup quota.
     threads = 0
@@ -43,6 +56,7 @@ def _process_limit():
 
 
 def argv_for(directory, argv):
+    _require_posix()
     binary = shutil.which("bwrap")
     if not binary:
         raise ControlError("sandbox_unavailable", "Bubblewrap is required; no unconfined fallback.")

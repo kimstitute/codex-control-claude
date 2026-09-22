@@ -209,6 +209,20 @@ class ProviderUsageTests(unittest.TestCase):
         self.assertIn("250 requests / 750 req", rendered)
         self.assertIn("100% means fully remaining", rendered)
 
+    def test_cursor_candidates_include_explicit_and_windows_locations(self) -> None:
+        candidates = provider_usage._cursor_auth_candidates(
+            environ={
+                "CURSOR_AUTH_FILE": "C:/secrets/cursor.json",
+                "APPDATA": "C:/Users/test/AppData/Roaming",
+                "LOCALAPPDATA": "C:/Users/test/AppData/Local",
+            },
+            home="C:/Users/test",
+        )
+
+        self.assertEqual(candidates[0], Path("C:/secrets/cursor.json"))
+        self.assertIn(Path("C:/Users/test/AppData/Roaming/Cursor/auth.json"), candidates)
+        self.assertIn(Path("C:/Users/test/AppData/Local/Cursor/auth.json"), candidates)
+
 
 if __name__ == "__main__":
     unittest.main()

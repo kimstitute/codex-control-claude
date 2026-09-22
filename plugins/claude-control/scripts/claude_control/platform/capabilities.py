@@ -52,19 +52,23 @@ def _linux_report(has_module, which, environ):
 
 def _windows_report():
     reasons = {
-        "provider_usage": "Windows provider paths are not implemented yet",
-        "tui": "The Windows VT console backend is not implemented yet",
         "session_control": "The Windows Job Object backend is not implemented yet",
         "workspace": "The WSL2 Bubblewrap workspace bridge is not implemented yet",
         "sandbox": "The WSL2 Bubblewrap sandbox bridge is not implemented yet",
+    }
+    capabilities = {
+        "provider_usage": _capability(True, backend="windows-local"),
+        "tui": _capability(True, backend="windows-ansi-vt"),
+        **{
+            name: _capability(False, reason=reason)
+            for name, reason in reasons.items()
+        },
     }
     return {
         "report_version": REPORT_VERSION,
         "platform": "windows",
         "wsl": False,
-        "capabilities": {
-            name: _capability(False, reason=reasons[name]) for name in CAPABILITY_NAMES
-        },
+        "capabilities": {name: capabilities[name] for name in CAPABILITY_NAMES},
     }
 
 
