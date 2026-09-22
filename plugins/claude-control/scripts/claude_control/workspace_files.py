@@ -6,18 +6,26 @@ import difflib
 import hashlib
 import json
 import os
+import shutil
 import stat
 import subprocess
 import tempfile
 from pathlib import Path
 
 from . import workspace_policy
-from .store import ControlError
+from .store import (
+    ControlError,
+    flush_directory,
+    private_dir,
+    reject_reparse,
+    secure_new_file,
+)
 
 MAX_FILES = 1024
 MAX_FILE_BYTES = 256 * 1024
 MAX_TOTAL_BYTES = 16 * 1024 * 1024
 MAX_TEXT_BYTES = 128 * 1024
+_ON_WINDOWS = os.name == "nt"
 
 
 def _canonical(value) -> bytes:
@@ -47,18 +55,23 @@ def _prepare_destination(destination: str | os.PathLike[str]) -> Path:
             info = target.lstat()
             if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
                 _error("workspace_integrity", "Destination must be a new or empty directory.")
-            if info.st_uid != os.getuid() or any(target.iterdir()):
+            reject_reparse(target)
+            if (not _ON_WINDOWS and info.st_uid != os.getuid()) or any(target.iterdir()):
                 _error("workspace_integrity", "Destination must be owned and empty.")
-            target.chmod(0o700)
+            private_dir(target)
         else:
-            target.mkdir(mode=0o700, parents=False)
+            if not target.parent.is_dir():
+                _error("workspace_integrity", "Destination parent must already exist.")
+            private_dir(target)
+        if _ON_WINDOWS and (_mode_path(target).exists() or _mode_path(target).is_symlink()):
+            _error("workspace_integrity", "Destination mode metadata already exists.")
     except ControlError:
         raise
     except OSError as exc:
         _error("workspace_integrity", "Cannot create private destination.", exc)
     marker = target / ".incomplete"
     marker.write_bytes(b"")
-    marker.chmod(0o600)
+    secure_new_file(marker)
     return target
 
 
@@ -82,11 +95,72 @@ def _reject_overlap(destination, *sources: Path) -> None:
 def _finish_destination(target: Path) -> None:
     marker = target / ".incomplete"
     marker.unlink()
-    directory_fd = os.open(target, os.O_RDONLY | os.O_DIRECTORY)
+    flush_directory(target)
+
+
+def _mode_path(directory) -> Path:
+    root = Path(directory)
+    return root.with_name(root.name + ".modes.json")
+
+
+def _write_modes(directory, modes) -> None:
+    if not _ON_WINDOWS:
+        return
     try:
-        os.fsync(directory_fd)
+        valid = isinstance(modes, dict) and all(
+            isinstance(name, str)
+            and workspace_policy.path(name) == name
+            and mode in ("100644", "100755")
+            for name, mode in modes.items()
+        )
+    except ControlError:
+        valid = False
+    if not valid:
+        _error("workspace_integrity", "Workspace mode metadata is invalid.")
+    path = _mode_path(directory)
+    raw = _canonical(dict(sorted(modes.items())))
+    temporary = path.with_name(path.name + ".tmp")
+    try:
+        if path.exists() or path.is_symlink():
+            reject_reparse(path)
+        with temporary.open("xb") as handle:
+            handle.write(raw)
+            handle.flush()
+            os.fsync(handle.fileno())
+        secure_new_file(temporary)
+        os.replace(temporary, path)
+        flush_directory(path.parent)
+    except OSError as exc:
+        _error("workspace_integrity", "Cannot persist workspace mode metadata.", exc)
     finally:
-        os.close(directory_fd)
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _load_modes(directory) -> dict[str, str]:
+    if not _ON_WINDOWS:
+        return {}
+    path = _mode_path(directory)
+    try:
+        reject_reparse(path)
+        raw = path.read_bytes()
+        value = json.loads(raw.decode("ascii"))
+    except (OSError, UnicodeError, ValueError, ControlError) as exc:
+        _error("workspace_integrity", "Workspace mode metadata is unavailable.", exc)
+    try:
+        valid = isinstance(value, dict) and raw == _canonical(value) and all(
+            isinstance(name, str)
+            and workspace_policy.path(name) == name
+            and mode in ("100644", "100755")
+            for name, mode in value.items()
+        )
+    except ControlError:
+        valid = False
+    if not valid:
+        _error("workspace_integrity", "Workspace mode metadata is invalid.")
+    return value
 
 
 def _manifest(files: dict[str, dict]) -> dict:
@@ -102,23 +176,26 @@ def _bounds(files: dict[str, dict]) -> None:
 
 
 def _git(repo: Path, *arguments: str, binary: bool = False) -> bytes | str:
+    executable = shutil.which("git")
+    if not executable:
+        _error("workspace_source", "Git is unavailable.")
     command = [
-        "/usr/bin/git",
+        executable,
         "--no-pager",
         "--no-replace-objects",
         "-c",
-        "core.hooksPath=/dev/null",
+        f"core.hooksPath={os.devnull}",
         "-C",
         str(repo),
         *arguments,
     ]
     environment = {
-        "PATH": "/usr/bin:/bin",
+        "PATH": str(Path(executable).parent),
         "LANG": "C",
         "LC_ALL": "C",
-        "HOME": "/nonexistent",
+        "HOME": str(repo / ".claude-control-no-home"),
         "GIT_CONFIG_NOSYSTEM": "1",
-        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_CONFIG_GLOBAL": os.devnull,
         "GIT_NO_REPLACE_OBJECTS": "1",
     }
     try:
@@ -143,6 +220,7 @@ def _safe_repo(repo: str | os.PathLike[str]) -> Path:
         value = Path(repo)
         if value.is_symlink():
             _error("workspace_source", "Repository path cannot be a symlink.")
+        reject_reparse(value.absolute())
         value = value.resolve(strict=True)
         if not value.is_dir():
             _error("workspace_source", "Repository must be a directory.")
@@ -188,8 +266,9 @@ def _write_blob(root: Path, relative: str, data: bytes, mode: str) -> None:
             info = current.lstat()
             if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
                 _error("workspace_integrity", "Selected path crosses an unsafe component.")
+            reject_reparse(current)
         else:
-            current.mkdir(mode=0o700)
+            private_dir(current)
     output = current / parts[-1]
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     if hasattr(os, "O_NOFOLLOW"):
@@ -200,7 +279,9 @@ def _write_blob(root: Path, relative: str, data: bytes, mode: str) -> None:
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
-        output.chmod(0o755 if mode == "100755" else 0o644)
+        secure_new_file(output)
+        if not _ON_WINDOWS:
+            output.chmod(0o755 if mode == "100755" else 0o644)
     except OSError as exc:
         _error("workspace_integrity", "Cannot materialize selected file.", exc)
 
@@ -270,6 +351,7 @@ def create_snapshot(repo, ref, destination, policy):
             _error("workspace_source", "Git blob size changed while reading.")
         _write_blob(target, relative, data, mode)
         files[relative] = {"sha256": _sha(data), "size": size, "mode": mode}
+    _write_modes(target, {name: receipt["mode"] for name, receipt in files.items()})
     _finish_destination(target)
     return {"base_commit": commit, **_manifest(files)}
 
@@ -280,6 +362,7 @@ def _directory_root(directory, *, code="workspace_integrity") -> Path:
         info = value.lstat()
         if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
             _error(code, "Workspace root must be a real directory.")
+        reject_reparse(value)
         return value
     except ControlError:
         raise
@@ -302,6 +385,7 @@ def inspect_tree(directory, policy):
     policy = _normalized(policy)
     root = _directory_root(directory)
     files: dict[str, dict] = {}
+    modes = _load_modes(root)
     total = 0
 
     def visit(current: Path, prefix: str = "") -> None:
@@ -317,6 +401,7 @@ def inspect_tree(directory, policy):
                     relative, allow_directory=entry.is_dir(follow_symlinks=False)
                 )
                 info = entry.stat(follow_symlinks=False)
+                reject_reparse(entry.path)
             except (OSError, ControlError) as exc:
                 _error("workspace_integrity", "Workspace contains an unsafe path.", exc)
             if stat.S_ISLNK(info.st_mode):
@@ -332,9 +417,15 @@ def inspect_tree(directory, policy):
                 workspace_policy.check_access(policy, relative)
             except ControlError:
                 raise
-            mode_bits = stat.S_IMODE(info.st_mode)
-            if mode_bits not in (0o644, 0o755):
-                _error("workspace_integrity", "Workspace file mode is unsupported.")
+            if _ON_WINDOWS:
+                mode = modes.get(relative)
+                if mode not in ("100644", "100755"):
+                    _error("workspace_integrity", "Workspace file mode metadata is missing.")
+            else:
+                mode_bits = stat.S_IMODE(info.st_mode)
+                if mode_bits not in (0o644, 0o755):
+                    _error("workspace_integrity", "Workspace file mode is unsupported.")
+                mode = "100755" if mode_bits == 0o755 else "100644"
             if info.st_size > MAX_FILE_BYTES:
                 _error("workspace_integrity", "Workspace file exceeds the file limit.")
             if len(files) >= MAX_FILES:
@@ -351,10 +442,12 @@ def inspect_tree(directory, policy):
             files[relative] = {
                 "sha256": _sha(data),
                 "size": len(data),
-                "mode": "100755" if mode_bits == 0o755 else "100644",
+                "mode": mode,
             }
 
     visit(root)
+    if _ON_WINDOWS and set(modes) != set(files):
+        _error("workspace_integrity", "Workspace mode metadata differs from its files.")
     return _manifest(files)
 
 
@@ -369,6 +462,7 @@ def copy_tree(source, destination, policy):
         if _sha(data) != receipt["sha256"]:
             _error("workspace_integrity", "Source changed during copy.")
         _write_blob(target, relative, data, receipt["mode"])
+    _write_modes(target, {name: receipt["mode"] for name, receipt in manifest["files"].items()})
     _finish_destination(target)
     copied = inspect_tree(target, policy)
     if copied != manifest:
@@ -392,11 +486,12 @@ def _safe_file(
             info = current.lstat()
         except FileNotFoundError:
             if write and missing:
-                current.mkdir(mode=0o700)
+                private_dir(current)
                 continue
             _error("workspace_integrity", "Workspace parent is missing.")
         if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
             _error("workspace_integrity", "Workspace path crosses an unsafe component.")
+        reject_reparse(current)
     target = current / parts[-1]
     try:
         info = target.lstat()
@@ -404,6 +499,7 @@ def _safe_file(
         return target, None
     if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
         _error("workspace_integrity", "Workspace target is not a private regular file.")
+    reject_reparse(target)
     return target, info
 
 
@@ -439,6 +535,7 @@ def write_text(directory, relative, content, policy):
     target, info = _safe_file(directory, relative, policy, write=True, missing=True)
     before = None
     mode = 0o644
+    modes = _load_modes(directory)
     if info is not None:
         try:
             old = target.read_bytes()
@@ -446,9 +543,15 @@ def write_text(directory, relative, content, policy):
             _error("workspace_integrity", "Existing workspace text cannot be read.", exc)
         _text(old)
         before = _sha(old)
-        mode = stat.S_IMODE(info.st_mode)
-        if mode not in (0o644, 0o755):
-            _error("workspace_integrity", "Workspace file mode is unsupported.")
+        if _ON_WINDOWS:
+            stored_mode = modes.get(workspace_policy.path(relative))
+            if stored_mode not in ("100644", "100755"):
+                _error("workspace_integrity", "Workspace file mode metadata is missing.")
+            mode = 0o755 if stored_mode == "100755" else 0o644
+        else:
+            mode = stat.S_IMODE(info.st_mode)
+            if mode not in (0o644, 0o755):
+                _error("workspace_integrity", "Workspace file mode is unsupported.")
     temporary = None
     try:
         descriptor, name = tempfile.mkstemp(prefix=".write-", dir=target.parent)
@@ -457,14 +560,15 @@ def write_text(directory, relative, content, policy):
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
-        temporary.chmod(mode)
+        secure_new_file(temporary)
+        if not _ON_WINDOWS:
+            temporary.chmod(mode)
         os.replace(temporary, target)
         temporary = None
-        directory_fd = os.open(target.parent, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+        if _ON_WINDOWS and relative not in modes:
+            modes[relative] = "100644"
+            _write_modes(directory, modes)
+        flush_directory(target.parent)
     except OSError as exc:
         _error("workspace_integrity", "Atomic workspace write failed.", exc)
     finally:
@@ -578,7 +682,7 @@ def freeze(baseline, working, destination, policy):
     patch = "".join(patch_parts).encode("utf-8")
     patch_path = target / "patch.diff"
     patch_path.write_bytes(patch)
-    patch_path.chmod(0o600)
+    secure_new_file(patch_path)
     manifest = {
         "files": after_manifest["files"],
         "tree_sha256": after_manifest["sha256"],
@@ -588,7 +692,7 @@ def freeze(baseline, working, destination, policy):
     raw = _canonical(manifest)
     manifest_path = target / "manifest.json"
     manifest_path.write_bytes(raw)
-    manifest_path.chmod(0o600)
+    secure_new_file(manifest_path)
     _finish_destination(target)
     return {**manifest, "manifest_sha256": _sha(raw)}
 
@@ -602,12 +706,18 @@ def verify_frozen(destination, policy, manifest_sha256):
         entries = {entry.name: entry for entry in os.scandir(root)}
     except OSError as exc:
         _error("workspace_integrity", "Frozen workspace cannot be enumerated.", exc)
-    if set(entries) != {"tree", "manifest.json", "patch.diff"}:
+    expected_entries = {"tree", "manifest.json", "patch.diff"}
+    receipt_names = ["manifest.json", "patch.diff"]
+    if _ON_WINDOWS:
+        expected_entries.add("tree.modes.json")
+        receipt_names.append("tree.modes.json")
+    if set(entries) != expected_entries:
         _error("workspace_integrity", "Frozen workspace contains unexpected entries.")
-    for name in ("manifest.json", "patch.diff"):
+    for name in receipt_names:
         info = entries[name].stat(follow_symlinks=False)
         if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
             _error("workspace_integrity", "Frozen receipt is not a regular private file.")
+        reject_reparse(entries[name].path)
     try:
         raw = (root / "manifest.json").read_bytes()
         patch = (root / "patch.diff").read_bytes()

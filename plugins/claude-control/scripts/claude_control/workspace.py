@@ -20,7 +20,7 @@ from . import workspace_sandbox as sandbox
 from .assignments import MAX_BYTES
 from .platform.locks import file_lock
 from .runner import launch_worker
-from .store import ACTIVE, ControlError, alive, boot_id, pid_namespace, proc_identity
+from .store import ACTIVE, ControlError, alive, boot_id, pid_namespace, private_dir, proc_identity
 from .workspace_contracts import OPERATIONS, PROTOCOL, review_contract, validate_operations
 from .workspace_policy import find_case_collision, normalize_policy
 
@@ -170,8 +170,8 @@ def create(store, policy, operation_id, *, repo=None, ref="HEAD", from_snapshot=
         )
     _checkpoint("creation_reserved")
     root = directory(store, workspace_id)
-    root.mkdir(parents=True, mode=0o700)
-    (root / "control").mkdir(mode=0o700)
+    private_dir(root)
+    private_dir(root / "control")
     if from_snapshot:
         source = export(store, from_snapshot)
         source_repo, commit = parent["source_repo"], parent["base_commit"]

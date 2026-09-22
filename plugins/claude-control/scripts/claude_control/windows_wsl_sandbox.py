@@ -22,7 +22,7 @@ import time
 import uuid
 from pathlib import Path
 
-from . import windows_process
+from . import windows_process, workspace_files
 from .store import ControlError
 from .workspace_files import MAX_TOTAL_BYTES as _MAX_TREE_BYTES
 
@@ -255,9 +255,17 @@ main()
 def _pack_tree(directory):
     """Sorted names, uid/gid/mtime normalized, regular files only, 0644/0755, 16 MiB bound."""
     root = Path(directory)
+    modes = workspace_files._load_modes(root) if workspace_files._ON_WINDOWS else {}
     relatives = []
     for current, dirs, filenames in os.walk(root):
         dirs.sort()
+        for dirname in dirs:
+            entry = Path(current) / dirname
+            info = entry.lstat()
+            if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+                raise ControlError(
+                    "workspace_integrity", "Scratch tree contains an unsafe directory."
+                )
         for filename in filenames:
             path = Path(current) / filename
             relatives.append(path.relative_to(root).as_posix())
@@ -273,11 +281,19 @@ def _pack_tree(directory):
                 raise ControlError(
                     "workspace_integrity", "Scratch tree contains a non-regular file."
                 )
-            mode = stat.S_IMODE(info.st_mode)
-            if mode not in (0o644, 0o755):
-                raise ControlError(
-                    "workspace_integrity", "Scratch tree file mode is unsupported."
-                )
+            if workspace_files._ON_WINDOWS:
+                recorded = modes.get(relative)
+                if recorded not in ("100644", "100755"):
+                    raise ControlError(
+                        "workspace_integrity", "Scratch tree mode metadata is missing."
+                    )
+                mode = 0o755 if recorded == "100755" else 0o644
+            else:
+                mode = stat.S_IMODE(info.st_mode)
+                if mode not in (0o644, 0o755):
+                    raise ControlError(
+                        "workspace_integrity", "Scratch tree file mode is unsupported."
+                    )
             data = path.read_bytes()
             total += len(data)
             if total > _MAX_TREE_BYTES:
@@ -299,6 +315,10 @@ def _pack_tree(directory):
                 "size": len(data),
                 "mode": mode,
             }
+    if workspace_files._ON_WINDOWS and set(modes) != set(manifest):
+        raise ControlError(
+            "workspace_integrity", "Scratch tree mode metadata differs from its files."
+        )
     packed = buffer.getvalue()
     if len(packed) > MAX_TAR_BYTES:
         raise ControlError("workspace_integrity", "Scratch archive exceeds the transport bound.")
