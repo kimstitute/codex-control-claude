@@ -68,6 +68,8 @@ twice, `resume` twice) is an error, not a crash.
 3. Open the three stdio files directly via `CreateFileW` (no shell, no
    `cmd.exe`/PowerShell interpretation), inheritable only for the duration
    of process creation, and drop inheritance again afterward.
+   `argv[0]` must be an absolute drive or UNC path, preventing executable
+   lookup from the target repository.
 4. Create the child suspended (`CREATE_SUSPENDED`) with
    `CREATE_NEW_PROCESS_GROUP | CREATE_UNICODE_ENVIRONMENT`, first attempting
    `CREATE_BREAKAWAY_FROM_JOB`. If that specific attempt fails with the
@@ -76,7 +78,8 @@ twice, `resume` twice) is an error, not a crash.
 5. Assign the (still-suspended) child to the job before it can execute.
 6. Verify with `IsProcessInJob`.
 7. Read the child's creation `FILETIME` via `GetProcessTimes` and report it
-   as a decimal string (100ns ticks since 1601-01-01 UTC).
+   as exactly 16 lowercase hexadecimal digits, matching the controller's live
+   process-identity encoding.
 8. On any failure in this sequence, terminate the suspended child and the
    job and fail closed; every handle opened along the way is closed on
    every path.
@@ -90,6 +93,10 @@ handle immediately after.
 `TerminateJobObject`.
 
 `abort` calls `TerminateJobObject` unconditionally.
+
+If the child-exit event wins a race with a pending `stop` or `abort`, the helper
+accepts that command as a successful no-op. The controller then drains the
+already queued terminal event instead of converting a known exit into `unknown`.
 
 ## Crash / EOF behavior
 

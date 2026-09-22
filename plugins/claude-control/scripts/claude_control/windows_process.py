@@ -61,6 +61,14 @@ def _expected_digest(value):
     return value
 
 
+def _valid_creation_filetime(value):
+    return (
+        isinstance(value, str)
+        and len(value) == 16
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
 def _verified(path, expected, target, source):
     path = Path(path).expanduser().absolute()
     if path.is_symlink() or not path.is_file():
@@ -269,8 +277,7 @@ class HelperClient:
             value["event"] != "created"
             or type(value["pid"]) is not int
             or value["pid"] <= 0
-            or not isinstance(value["creation_filetime"], str)
-            or not value["creation_filetime"].isdigit()
+            or not _valid_creation_filetime(value["creation_filetime"])
             or type(value["broke_away"]) is not bool
         ):
             raise HelperError("helper_protocol", "Invalid Windows helper create reply.", uncertain=True)

@@ -23,6 +23,10 @@ const HELPER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const MAX_FRAME_BYTES: usize = 1024 * 1024;
 const MAX_GRACE_MS: u64 = 30_000;
 
+fn format_creation_filetime(value: u64) -> String {
+    format!("{value:016x}")
+}
+
 #[derive(Debug, PartialEq, Eq)]
 enum Frame {
     Line(String),
@@ -400,6 +404,15 @@ fn valid_run_id(value: &str) -> bool {
         })
 }
 
+fn valid_windows_absolute_path(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    (bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'\\' | b'/'))
+        || value.starts_with(r"\\")
+}
+
 fn de_command_from_raw(mut raw: HashMap<String, Value>) -> Result<Command, ProtocolError> {
     let op = raw
         .remove("op")
@@ -433,6 +446,9 @@ fn de_command_from_raw(mut raw: HashMap<String, Value>) -> Result<Command, Proto
             check_empty(&raw)?;
             if !valid_run_id(&run_id) {
                 return Err(ProtocolError("run_id must be a canonical UUID".into()));
+            }
+            if !valid_windows_absolute_path(&argv[0]) {
+                return Err(ProtocolError("argv[0] must be an absolute Windows path".into()));
             }
             if !job_name.starts_with(r"Local\ccc-") {
                 return Err(ProtocolError(
@@ -792,7 +808,7 @@ mod win {
             process,
             thread: Some(thread),
             pid: proc_info.dwProcessId,
-            creation_filetime: creation_ticks.to_string(),
+            creation_filetime: format_creation_filetime(creation_ticks),
             broke_away,
         })
     }
@@ -965,6 +981,13 @@ mod win {
                 }
             }
             Command::Stop { id, grace_ms } => {
+                if *phase == Phase::Done {
+                    emit(
+                        out,
+                        &serde_json::json!({ "id": id, "ok": true, "event": "stopping" }),
+                    );
+                    return;
+                }
                 if *phase != Phase::Running {
                     emit(out, &err_reply(id, "stop called in invalid state"));
                     return;
@@ -981,6 +1004,13 @@ mod win {
                 );
             }
             Command::Abort { id } => {
+                if *phase == Phase::Done {
+                    emit(
+                        out,
+                        &serde_json::json!({ "id": id, "ok": true, "event": "aborted" }),
+                    );
+                    return;
+                }
                 if *phase != Phase::Created && *phase != Phase::Running {
                     emit(out, &err_reply(id, "abort called in invalid state"));
                     return;
@@ -1074,6 +1104,11 @@ mod tests {
     use super::*;
 
     #[test]
+    fn creation_filetime_matches_windows_process_identity_encoding() {
+        assert_eq!(format_creation_filetime(0x1c8), "00000000000001c8");
+        assert_eq!(format_creation_filetime(u64::MAX), "ffffffffffffffff");
+    }
+    #[test]
     fn parses_hello() {
         let cmd = parse_command(r#"{"id":1,"op":"hello","protocol":1}"#).unwrap();
         assert!(matches!(cmd, Command::Hello { id: 1, protocol: 1 }));
@@ -1165,7 +1200,7 @@ mod tests {
     fn accepts_valid_create() {
         let line = r#"{"id":1,"op":"create",
             "run_id":"12345678-1234-1234-1234-123456789abc",
-            "job_name":"Local\\ccc-123","argv":["a.exe"],
+            "job_name":"Local\\ccc-123","argv":["C:\\Program Files\\Claude\\claude.exe"],
             "cwd":"c","env":{"A":"1"},"stdin_path":"i","stdout_path":"o","stderr_path":"e"}"#;
         assert!(parse_command(line).is_ok());
     }
@@ -1176,8 +1211,17 @@ mod tests {
             "argv":["a.exe"],"cwd":"c","env":{},"stdin_path":"i","stdout_path":"o","stderr_path":"e"}"#;
         assert!(parse_command(bad_run).unwrap_err().0.contains("run_id"));
         let bad_job = r#"{"id":1,"op":"create","run_id":"12345678-1234-1234-1234-123456789abc",
-            "job_name":"Global\\other","argv":["a.exe"],"cwd":"c","env":{},
+            "job_name":"Global\\other","argv":["C:\\Claude\\claude.exe"],"cwd":"c","env":{},
             "stdin_path":"i","stdout_path":"o","stderr_path":"e"}"#;
         assert!(parse_command(bad_job).unwrap_err().0.contains("job_name"));
+    }
+
+    #[test]
+    fn rejects_relative_executable_path() {
+        let line = r#"{"id":1,"op":"create",
+            "run_id":"12345678-1234-1234-1234-123456789abc",
+            "job_name":"Local\\ccc-123","argv":["claude.exe"],
+            "cwd":"c","env":{},"stdin_path":"i","stdout_path":"o","stderr_path":"e"}"#;
+        assert!(parse_command(line).unwrap_err().0.contains("argv[0]"));
     }
 }

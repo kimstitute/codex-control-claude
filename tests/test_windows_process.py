@@ -86,7 +86,7 @@ class ProtocolTests(unittest.TestCase):
                     "ok": True,
                     "event": "created",
                     "pid": 123,
-                    "creation_filetime": "456",
+                    "creation_filetime": "00000000000001c8",
                     "broke_away": True,
                 },
             ]
@@ -104,9 +104,51 @@ class ProtocolTests(unittest.TestCase):
             stderr_path="err",
         )
         self.assertEqual(created["pid"], 123)
+        self.assertEqual(created["creation_filetime"], "00000000000001c8")
         self.assertEqual(client.next_event(0.1)["exit_code"], 0)
         sent = [json.loads(line) for line in process.stdin.getvalue().splitlines()]
         self.assertEqual([item["op"] for item in sent], ["hello", "create"])
+
+    def test_create_rejects_noncanonical_creation_filetime(self):
+        process = FakeProcess(
+            [
+                {"id": 1, "ok": True, "event": "hello", "protocol": 1, "version": "0.1.0"},
+                {
+                    "id": 2,
+                    "ok": True,
+                    "event": "created",
+                    "pid": 123,
+                    "creation_filetime": "456",
+                    "broke_away": True,
+                },
+            ]
+        )
+        client = windows_process.HelperClient(process)
+        client.hello()
+        with self.assertRaises(windows_process.HelperError):
+            client.create(
+                run_id="12345678-1234-1234-1234-123456789abc",
+                job_name="Local\\ccc-test",
+                argv=["C:\\claude.exe"],
+                cwd="C:\\repo",
+                env={},
+                stdin_path="in",
+                stdout_path="out",
+                stderr_path="err",
+            )
+
+    def test_stop_reply_can_follow_a_deferred_exit_event(self):
+        process = FakeProcess(
+            [
+                {"id": 1, "ok": True, "event": "hello", "protocol": 1, "version": "0.1.0"},
+                {"event": "exited", "exit_code": 0, "reason": None},
+                {"id": 2, "ok": True, "event": "stopping"},
+            ]
+        )
+        client = windows_process.HelperClient(process)
+        client.hello()
+        client.stop(0)
+        self.assertEqual(client.next_event(0.1)["exit_code"], 0)
 
     def test_duplicate_key_and_nonfinite_json_are_rejected(self):
         for raw in (b'{"id":1,"id":2}\n', b'{"value":NaN}\n'):
