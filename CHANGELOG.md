@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.13.0 — 2026-09-22
+
+- Add a fourth TUI view for signed-in Codex, Claude Code, Gemini CLI and Cursor
+  quota windows, remaining percentages, reset times and provider-specific units.
+- Read Codex rate limits and account token activity through the supported app
+  server, Claude's service-reported local cache, Gemini Code Assist quota buckets
+  and Cursor's dashboard usage endpoint.
+- Keep account quota percentages separate from token activity. Never infer an
+  absolute or remaining token count when the provider does not publish a token
+  ceiling.
+- Add `monitor limits`, `monitor snapshot --limits`, bounded provider polling,
+  stale-reading labels and credential-redacted JSON output.
+
 ## 0.12.0 — 2026-09-22
 
 - Add a read-only curses TUI with graph, agent and run-history views.

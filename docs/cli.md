@@ -37,10 +37,12 @@ The executable and project paths are explicit. The store belongs to its originat
 ```bash
 claude_control monitor tui --refresh-seconds 0.5 --history 100
 claude_control monitor snapshot --history 100
+claude_control monitor limits
 ```
 
-The TUI provides graph, agents and history views without mutating the ledger or
-advancing work. `snapshot` returns the same observation data as JSON for scripts.
+The TUI provides graph, agents, history and provider-limit views without mutating
+the ledger or advancing work. `snapshot` returns observation data as JSON;
+`limits` reads signed-in Codex, Claude Code, Gemini CLI and Cursor quota sources.
 See the [live monitor guide](monitor.md) for keys and the distinction between live
 estimates and final provider values.
 

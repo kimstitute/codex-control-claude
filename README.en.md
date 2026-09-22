@@ -36,6 +36,11 @@ raw provider usage, cost and latency telemetry, explicit HEAD-pinned
 Version 0.12 adds a live terminal monitor for the agent/task/workspace/workflow/
 composition graph, run history, token usage and provider-reported cost.
 
+Version 0.13 adds Codex, Claude Code, Gemini CLI and Cursor CLI account limits
+to the same TUI. It preserves provider-reported percentages, resets, token or
+request units and overage spending, and never estimates an unpublished token
+ceiling.
+
 ## Choose the right workflow
 
 | Goal | Use | What it adds |
@@ -48,7 +53,7 @@ composition graph, run history, token usage and provider-reported cost.
 | Plan, implement and review | `composition` | P4 planning plus P5 editing and frozen Fable verification |
 | Schedule dependent tasks | `task enqueue` + `dispatch` | FIFO admission and exact accepted-parent gates |
 | Save instructions for the next turn | `message` | Explicit next-revision delivery and result handoff |
-| Observe agents and usage history | `monitor tui` | Role/model/work graph, live token estimates and final usage |
+| Observe agents and account limits | `monitor tui` | Role/model/work graph, run tokens and Codex/Claude/Gemini/Cursor limits |
 
 If you use Codex interactively, ask Codex to apply the installed
 `$claude-control` skill. Use the CLI directly when you want to inspect or operate
@@ -56,6 +61,7 @@ the controller yourself.
 
 ```bash
 claude_control monitor tui
+claude_control monitor limits
 ```
 
 See the [live monitor guide](docs/monitor.md) for keys and token semantics.

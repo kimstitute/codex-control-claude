@@ -101,4 +101,3 @@ class MonitorTests(ControllerTestCase):
         self.assertIn("session → [agent] sonnet-1", rendered)
         self.assertIn("claude-sonnet-test", rendered)
         self.assertIn("~1.2k tok", rendered)
-

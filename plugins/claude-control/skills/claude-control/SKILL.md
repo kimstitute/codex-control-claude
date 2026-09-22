@@ -252,11 +252,16 @@ The package launches workers for jobs, not an always-running coordinator. Codex 
 Use `monitor tui` for a read-only terminal graph of compositions, workflows,
 workspaces, tasks and managed Claude sessions. It shows role, requested and actual
 model, current work, state, recent run history and token/cost data. Select Graph,
-Agents and History with `1`, `2`, `3`; use `q` to exit. Active token counts prefixed
+Agents, History and Limits with `1`, `2`, `3`, `4`; use `q` to exit. Limits reads
+signed-in Codex, Claude Code, Gemini CLI and Cursor quotas without returning
+credentials or account identity. Treat quota percentages and token activity as
+separate metrics; never infer remaining tokens without a provider-reported absolute
+allowance. Active token counts prefixed
 with `~` are Claude stream estimates. Completed usage and cost are provider values
-from the append-only telemetry ledger. Use `monitor snapshot --history <1..1000>`
-for bounded JSON. Monitoring does not refresh execution state, admit work, retry,
-stop, accept or apply anything.
+from the append-only telemetry ledger. Use `monitor limits` for provider JSON and
+`monitor snapshot --history <1..1000> --limits` for combined bounded JSON.
+Monitoring does not refresh execution state, admit work, retry, stop, accept or
+apply anything.
 
 ## Work in an explicit workspace
 

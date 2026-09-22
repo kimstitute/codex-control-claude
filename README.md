@@ -35,6 +35,11 @@ provider 원본 usage·비용·지연 기록, 원본 HEAD를 고정하는 명시
 0.12 버전은 에이전트·task·workspace·workflow·composition 관계를 그래프로
 보여주는 실시간 터미널 모니터와 실행 기록·토큰·비용 조회를 추가합니다.
 
+0.13 버전은 같은 TUI에 Codex, Claude Code, Gemini CLI, Cursor CLI의 계정별
+한도 화면을 추가합니다. provider가 공개한 사용/남은 비율, 초기화 시각,
+토큰·요청·초과 지출 단위를 그대로 표시하며 공개되지 않은 토큰 상한은
+추정하지 않습니다.
+
 ## 어떤 명령을 선택해야 하나요?
 
 | 원하는 일 | 사용할 기능 | 추가되는 보장 |
@@ -47,13 +52,14 @@ provider 원본 usage·비용·지연 기록, 원본 HEAD를 고정하는 명시
 | 계획부터 구현·검토까지 연결하기 | `composition` | P4 계획과 P5 편집·동결 검토의 명시적 연결 |
 | 의존 작업을 순서대로 실행하기 | `task enqueue` + `dispatch` | FIFO 대기열과 정확한 부모 승인 조건 |
 | 다음 턴에 전달할 지시를 저장하기 | `message` | 선택된 개정에만 전달되는 지시와 결과 인수인계 |
-| 현재 에이전트와 사용 기록 관찰하기 | `monitor tui` | 역할·모델·작업 그래프, 실시간 토큰 추정치와 확정 사용량 |
+| 현재 에이전트와 계정 한도 관찰하기 | `monitor tui` | 역할·모델·작업 그래프, 실행 토큰, Codex/Claude/Gemini/Cursor 한도 |
 
 Codex 앱에서 사용할 때는 설치된 `$claude-control` 스킬을 명시하면 됩니다.
 직접 상태를 확인하거나 운영하려면 아래 CLI를 사용하세요.
 
 ```bash
 claude_control monitor tui
+claude_control monitor limits
 ```
 
 키 조작과 토큰 수치의 의미는 [실시간 모니터 안내](docs/monitor.ko.md)를

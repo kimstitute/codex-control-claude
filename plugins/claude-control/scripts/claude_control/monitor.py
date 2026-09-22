@@ -6,10 +6,11 @@ import curses
 import json
 import math
 import os
-import textwrap
+import threading
 import time
 from pathlib import Path
 
+from . import provider_usage
 from .store import ACTIVE, ControlError
 
 PROTOCOL = "claude-control.monitor.v1"
@@ -183,10 +184,11 @@ def snapshot(store, *, history=100, live=True):
                 "ORDER BY rowid"
             )
         ]
-        recent_rows = db.execute(run_select + "ORDER BY r.rowid DESC LIMIT ?", (history,)).fetchall()
+        recent_rows = db.execute(
+            run_select + "ORDER BY r.rowid DESC LIMIT ?", (history,)
+        ).fetchall()
         latest_rows = db.execute(
-            run_select
-            + "WHERE r.rowid IN (SELECT max(rowid) FROM runs GROUP BY session_id) "
+            run_select + "WHERE r.rowid IN (SELECT max(rowid) FROM runs GROUP BY session_id) "
             "ORDER BY r.rowid DESC"
         ).fetchall()
         all_telemetry = db.execute(
@@ -220,9 +222,7 @@ def snapshot(store, *, history=100, live=True):
                 "role": session["role"],
                 "requested_model": session["model"],
                 "actual_model": (
-                    current["actual_models"][-1]
-                    if current and current["actual_models"]
-                    else None
+                    current["actual_models"][-1] if current and current["actual_models"] else None
                 ),
                 "effort": session.get("effort"),
                 "project": Path(session["project"]).name,
@@ -275,9 +275,7 @@ def snapshot(store, *, history=100, live=True):
             ("worker", row["worker_task_id"]),
             ("reviewer", row["reviewer_task_id"]),
         ):
-            edges.append(
-                {"from": f"workflow:{row['id']}", "to": f"task:{task_id}", "label": role}
-            )
+            edges.append({"from": f"workflow:{row['id']}", "to": f"task:{task_id}", "label": role})
     for row in workspaces:
         policy = _json(row["policy"], {})
         nodes.append(
@@ -332,7 +330,8 @@ def snapshot(store, *, history=100, live=True):
                 model=agent["actual_model"] or agent["requested_model"],
                 work=agent["work"],
                 estimated_output_tokens=(run.get("live") or {}).get("estimated_output_tokens")
-                if run else None,
+                if run
+                else None,
             )
         )
     for row in dependencies:
@@ -381,6 +380,37 @@ def snapshot(store, *, history=100, live=True):
         "agents": agents,
         "runs": recent,
     }
+
+
+def _attach_provider_usage(data, usage):
+    """Attach account limits and label locally observed Claude token totals."""
+    value = {
+        "protocol": usage.get("protocol"),
+        "captured_at": usage.get("captured_at"),
+        "providers": [dict(item) for item in usage.get("providers", [])],
+    }
+    totals = data["summary"]["telemetry"]
+    for item in value["providers"]:
+        if item.get("provider") != "claude":
+            continue
+        tokens = dict(item.get("tokens") or {})
+        tokens.update(
+            {
+                "managed_input_used": totals["input_tokens"],
+                "managed_cache_read_used": totals["cache_read_input_tokens"],
+                "managed_output_used": totals["output_tokens"],
+                "managed_total_used": (
+                    totals["input_tokens"]
+                    + totals["cache_creation_input_tokens"]
+                    + totals["cache_read_input_tokens"]
+                    + totals["output_tokens"]
+                ),
+                "note": "tokens observed by this controller; they are not the subscription quota denominator",
+            }
+        )
+        item["tokens"] = tokens
+    data["provider_usage"] = value
+    return data
 
 
 def _short(value, width):
@@ -444,7 +474,9 @@ def graph_lines(data, *, active_only=False):
         if node.get("estimated_output_tokens") is not None:
             suffix.append("~" + _tokens(node["estimated_output_tokens"]) + " tok")
         detail = " · ".join(suffix)
-        return f"[{node['kind']}] {node['label']}  {node['state']}" + (f"  {detail}" if detail else "")
+        return f"[{node['kind']}] {node['label']}  {node['state']}" + (
+            f"  {detail}" if detail else ""
+        )
 
     def walk(key, prefix="", branch="", edge_label=None):
         node = nodes[key]
@@ -475,7 +507,9 @@ def graph_lines(data, *, active_only=False):
 
 def _agent_lines(data):
     lines = ["STATE        MODEL                 ROLE          TOKENS       COST      CURRENT WORK"]
-    for agent in sorted(data["agents"], key=lambda item: (item["state"] not in ACTIVE, item["name"])):
+    for agent in sorted(
+        data["agents"], key=lambda item: (item["state"] not in ACTIVE, item["name"])
+    ):
         run = agent["run"] or {}
         telemetry = run.get("telemetry") or {}
         live = run.get("live") or {}
@@ -488,9 +522,9 @@ def _agent_lines(data):
         if cost is None:
             cost = live.get("provider_cost_usd")
         lines.append(
-            f"{agent['state']:<12} {_short(agent['actual_model'] or agent['requested_model'],21):<21} "
-            f"{_short(agent['role'],13):<13} {token_text:>8} "
-            f"{('$%.4f' % cost) if cost is not None else '-':>10}  {_short(agent['work'],42)}"
+            f"{agent['state']:<12} {_short(agent['actual_model'] or agent['requested_model'], 21):<21} "
+            f"{_short(agent['role'], 13):<13} {token_text:>8} "
+            f"{('$%.4f' % cost) if cost is not None else '-':>10}  {_short(agent['work'], 42)}"
         )
     return lines
 
@@ -512,10 +546,119 @@ def _history_lines(data):
         if cost is None:
             cost = live.get("provider_cost_usd")
         lines.append(
-            f"{run['status']:<12} {_short(model,21):<21} {token_text:<18} "
+            f"{run['status']:<12} {_short(model, 21):<21} {token_text:<18} "
             f"{_duration(run['elapsed_ms']):>9} {('$%.4f' % cost) if cost is not None else '-':>10}  "
-            f"{_short(agent.get('work') or agent.get('name') or run['id'],36)}"
+            f"{_short(agent.get('work') or agent.get('name') or run['id'], 36)}"
         )
+    return lines
+
+
+def _percent_bar(remaining, width=18):
+    if remaining is None:
+        return "[" + "?".center(width) + "]"
+    remaining = max(0.0, min(100.0, float(remaining)))
+    filled = round(width * remaining / 100)
+    return "[" + "█" * filled + "·" * (width - filled) + "]"
+
+
+def _reset_text(value, now=None):
+    if value is None:
+        return "-"
+    now = time.time() if now is None else now
+    seconds = max(0, int(float(value) - now))
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m"
+    if seconds < 86400:
+        return f"{seconds // 3600}h{(seconds % 3600) // 60:02d}m"
+    return f"{seconds // 86400}d{(seconds % 86400) // 3600:02d}h"
+
+
+def _amount(value, unit):
+    if value is None:
+        return "-"
+    if unit == "percent":
+        return f"{float(value):.1f}%"
+    return f"{_tokens(value)} {unit}"
+
+
+def _limit_lines(data):
+    report = data.get("provider_usage") or {}
+    providers = report.get("providers") or []
+    if not providers:
+        return ["Provider limits are loading…"]
+    lines = [
+        "PROVIDER  STATUS       LIMIT / MODEL                    REMAINING CAPACITY        USED / LEFT        RESET"
+    ]
+    now = time.time()
+    for provider in providers:
+        name = str(provider.get("provider") or "?").upper()
+        status = str(provider.get("status") or "unknown") + ("*" if provider.get("stale") else "")
+        windows = provider.get("windows") or []
+        if not windows:
+            detail = provider.get("error") or provider.get("note") or "no reported quota"
+            lines.append(f"{name:<9} {status:<12} {_short(detail, 76)}")
+        for index, item in enumerate(windows):
+            remaining = item.get("remaining_percent")
+            unit = item.get("unit") or "percent"
+            if item.get("exact_amounts"):
+                amounts = (
+                    f"{_amount(item.get('used'), unit)} / {_amount(item.get('remaining'), unit)}"
+                )
+            else:
+                used = item.get("used_percent")
+                amounts = (
+                    f"{used:.1f}% / {remaining:.1f}%"
+                    if used is not None and remaining is not None
+                    else "absolute tokens unavailable"
+                )
+            label = item.get("label") or "quota"
+            if item.get("model") and item["model"] not in str(label):
+                label = f"{label} · {item['model']}"
+            lines.append(
+                f"{name if index == 0 else '':<9} {status if index == 0 else '':<12} "
+                f"{_short(label, 32):<32} {_percent_bar(remaining)} "
+                f"{_short(amounts, 23):<23} {_reset_text(item.get('resets_at'), now):>8}"
+            )
+        tokens = provider.get("tokens") or {}
+        token_parts = []
+        for key, label in (
+            ("today_used", "today"),
+            ("lifetime_used", "lifetime"),
+            ("managed_total_used", "managed"),
+        ):
+            if tokens.get(key) is not None:
+                token_parts.append(f"{label} {_tokens(tokens[key])}")
+        if token_parts:
+            lines.append(
+                f"{'':<9} {'tokens':<12} {' · '.join(token_parts)} · remaining token ceiling unavailable"
+            )
+        spending = provider.get("spending") or {}
+        if spending:
+            spend_parts = []
+            if spending.get("plan"):
+                spend_parts.append("plan " + str(spending["plan"]))
+            used_cents = spending.get("used_cents")
+            limit_cents = spending.get("limit_cents")
+            if used_cents is not None:
+                text = f"on-demand ${used_cents / 100:.2f}"
+                if limit_cents is not None:
+                    text += f" / ${limit_cents / 100:.2f}"
+                spend_parts.append(text)
+            elif spending.get("used") is not None:
+                spend_parts.append(f"extra {spending.get('currency', '')} {spending['used']:.2f}")
+            if spend_parts:
+                lines.append(f"{'':<9} {'spend':<12} {' · '.join(spend_parts)}")
+        lines.append("")
+    lines.extend(
+        [
+            "Semantics:",
+            "  • Bars use provider-reported quota percentages; 100% means fully remaining.",
+            "  • Token totals and quota percentages are separate metrics unless an exact amount is reported.",
+            "  • A '*' after status means the last good reading is being shown after a refresh failure.",
+        ]
+    )
     return lines
 
 
@@ -540,14 +683,14 @@ def _draw(window, data, view, offset, active_only):
         f"tokens {_tokens(totals['output_tokens'])} out "
     )
     _safe_add(window, 0, 0, title.ljust(width), width, curses.A_REVERSE)
-    tabs = ["1 Graph", "2 Agents", "3 History"]
+    tabs = ["1 Graph", "2 Agents", "3 History", "4 Limits"]
     tab_line = "   ".join(f"[{tab}]" if index == view else tab for index, tab in enumerate(tabs))
     _safe_add(window, 1, 0, tab_line, width, curses.A_BOLD)
     _safe_add(
         window,
         2,
         0,
-        "q quit · 1/2/3 view · ↑↓/jk scroll · PgUp/PgDn · r refresh · a active graph",
+        "q quit · 1/2/3/4 view · ↑↓/jk scroll · PgUp/PgDn · r refresh · a active graph",
         width,
     )
     if height < 8 or width < 50:
@@ -559,13 +702,22 @@ def _draw(window, data, view, offset, active_only):
         mode = "active graph" if active_only else "all graph"
     elif view == 1:
         lines, mode = _agent_lines(data), "managed agents"
-    else:
+    elif view == 2:
         lines, mode = _history_lines(data), "recent run history"
+    else:
+        lines, mode = _limit_lines(data), "provider quotas and token activity"
     visible = max(1, height - 5)
     offset = max(0, min(offset, max(0, len(lines) - visible)))
-    _safe_add(window, 3, 0, f"{mode} · rows {offset + 1}-{min(len(lines), offset + visible)}/{len(lines)}", width, curses.A_DIM)
+    _safe_add(
+        window,
+        3,
+        0,
+        f"{mode} · rows {offset + 1}-{min(len(lines), offset + visible)}/{len(lines)}",
+        width,
+        curses.A_DIM,
+    )
     for row, line in enumerate(lines[offset : offset + visible], start=4):
-        attribute = curses.A_BOLD if row == 4 and view in (1, 2) and offset == 0 else 0
+        attribute = curses.A_BOLD if row == 4 and view in (1, 2, 3) and offset == 0 else 0
         _safe_add(window, row, 0, line, width, attribute)
     captured = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(data["captured_at"]))
     _safe_add(window, height - 1, 0, f"updated {captured}".ljust(width), width, curses.A_REVERSE)
@@ -573,9 +725,53 @@ def _draw(window, data, view, offset, active_only):
     return offset
 
 
-def run_tui(store, *, refresh_seconds=0.5, history=100):
+class _UsagePoller:
+    def __init__(self, *, interval, timeout):
+        self.interval = interval
+        self.timeout = timeout
+        self.lock = threading.Lock()
+        self.wake = threading.Event()
+        self.stop = threading.Event()
+        self.value = {"protocol": provider_usage.PROTOCOL, "captured_at": None, "providers": []}
+        self.thread = threading.Thread(target=self._run, name="provider-usage", daemon=True)
+        self.thread.start()
+
+    def _run(self):
+        while not self.stop.is_set():
+            value = provider_usage.collect(timeout=self.timeout)
+            with self.lock:
+                self.value = value
+            self.wake.wait(self.interval)
+            self.wake.clear()
+
+    def get(self):
+        with self.lock:
+            return {
+                "protocol": self.value.get("protocol"),
+                "captured_at": self.value.get("captured_at"),
+                "providers": [dict(item) for item in self.value.get("providers", [])],
+            }
+
+    def refresh(self):
+        self.wake.set()
+
+    def close(self):
+        self.stop.set()
+        self.wake.set()
+        self.thread.join(timeout=0.2)
+
+
+def run_tui(store, *, refresh_seconds=0.5, history=100, limits_refresh_seconds=60.0):
     if not math.isfinite(refresh_seconds) or not 0.1 <= refresh_seconds <= 60:
         raise ControlError("invalid_limit", "Monitor refresh must be finite, 0.1–60 seconds.")
+    if not math.isfinite(limits_refresh_seconds) or not 30 <= limits_refresh_seconds <= 3600:
+        raise ControlError(
+            "invalid_limit", "Provider-limit refresh must be finite, 30–3600 seconds."
+        )
+
+    poller = _UsagePoller(
+        interval=limits_refresh_seconds, timeout=min(15, limits_refresh_seconds / 2)
+    )
 
     def main(window):
         try:
@@ -585,18 +781,19 @@ def run_tui(store, *, refresh_seconds=0.5, history=100):
         window.keypad(True)
         window.timeout(max(100, int(refresh_seconds * 1000)))
         view = 0
-        offsets = [0, 0, 0]
+        offsets = [0, 0, 0, 0]
         active_only = True
-        data = snapshot(store, history=history)
+        data = _attach_provider_usage(snapshot(store, history=history), poller.get())
         while True:
+            data = _attach_provider_usage(data, poller.get())
             offsets[view] = _draw(window, data, view, offsets[view], active_only)
             key = window.getch()
             if key in (ord("q"), ord("Q")):
                 return
-            if key in (ord("1"), ord("2"), ord("3")):
+            if key in (ord("1"), ord("2"), ord("3"), ord("4")):
                 view = key - ord("1")
             elif key == 9:
-                view = (view + 1) % 3
+                view = (view + 1) % 4
             elif key in (curses.KEY_DOWN, ord("j")):
                 offsets[view] += 1
             elif key in (curses.KEY_UP, ord("k")):
@@ -610,8 +807,12 @@ def run_tui(store, *, refresh_seconds=0.5, history=100):
                 offsets[view] = 0
             if key in (-1, ord("r"), ord("R")):
                 data = snapshot(store, history=history)
+                if key in (ord("r"), ord("R")):
+                    poller.refresh()
 
     try:
         curses.wrapper(main)
     except curses.error as exc:
         raise ControlError("monitor_terminal", "Monitor needs an interactive terminal.") from exc
+    finally:
+        poller.close()
