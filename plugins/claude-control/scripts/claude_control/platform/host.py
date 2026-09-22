@@ -77,6 +77,17 @@ class LinuxHost:
     def secure_new_file(self, path):
         os.chmod(path, 0o600)
 
+    def reject_reparse(self, path):
+        if Path(path).is_symlink():
+            raise HostError("unsafe_state", f"Refusing a symlink: {path}")
+
+    def flush_directory(self, path):
+        directory_fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+
     def verify_private_entry(self, path):
         entry = Path(path)
         if (
@@ -469,6 +480,16 @@ class WindowsHost:
         self._reject_reparse(path)
         self.api.set_private_dacl(str(path), self.principal_identity())
 
+    def reject_reparse(self, path):
+        self._reject_reparse(path)
+
+    def flush_directory(self, path):
+        handle = self.api.open_directory(path)
+        try:
+            self.api.flush_file_buffers(handle)
+        finally:
+            self.api.close_handle(handle)
+
     def verify_private_entry(self, path):
         path = Path(path)
         self._reject_reparse(path)
@@ -550,6 +571,14 @@ def private_dir(path):
 
 def secure_new_file(path):
     return HOST.secure_new_file(path)
+
+
+def reject_reparse(path):
+    return HOST.reject_reparse(path)
+
+
+def flush_directory(path):
+    return HOST.flush_directory(path)
 
 
 def verify_private_entry(path):

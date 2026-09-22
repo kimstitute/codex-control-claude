@@ -184,6 +184,17 @@ class WindowsHostTests(unittest.TestCase):
                 ],
             )
 
+    def test_windows_reparse_and_directory_flush_use_host_api(self):
+        with tempfile.TemporaryDirectory() as root:
+            api = FakeWinApi()
+            host = WindowsHost(api=api)
+            host.reject_reparse(root)
+            host.flush_directory(root)
+            self.assertEqual(
+                [call[0] for call in api.calls],
+                ["is_reparse_point", "open_directory", "flush_file_buffers", "close_handle"],
+            )
+
     def test_windows_state_requires_portable_principal_fields(self):
         fake = WindowsHost(api=FakeWinApi())
         with (

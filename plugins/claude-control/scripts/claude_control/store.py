@@ -61,6 +61,8 @@ write_json = _translate(_host.write_json)
 principal_identity = _translate(_host.principal_identity)
 verify_private_entry = _translate(_host.verify_private_entry)
 secure_new_file = _translate(_host.secure_new_file)
+reject_reparse = _translate(_host.reject_reparse)
+flush_directory = _translate(_host.flush_directory)
 
 
 def execution_alive(row):
