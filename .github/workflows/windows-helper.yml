@@ -1,0 +1,122 @@
+name: windows-helper
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build-${{ matrix.target }}
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64-pc-windows-msvc, aarch64-pc-windows-msvc]
+    defaults:
+      run:
+        working-directory: native/windows/ccc-win-supervisor
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Add Rust target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Run unit tests (host target only)
+        if: matrix.target == 'x86_64-pc-windows-msvc'
+        run: cargo test --release --target ${{ matrix.target }}
+
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Stage artifact
+        shell: pwsh
+        run: |
+          Copy-Item "target/${{ matrix.target }}/release/ccc-win-supervisor.exe" `
+            "ccc-win-supervisor-${{ matrix.target }}.exe"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ccc-win-supervisor-${{ matrix.target }}
+          path: native/windows/ccc-win-supervisor/ccc-win-supervisor-${{ matrix.target }}.exe
+          if-no-files-found: error
+
+  release-manifest:
+    name: release-manifest
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: ccc-win-supervisor-*
+          merge-multiple: true
+
+      - name: Generate SHA256SUMS and manifest.json
+        shell: pwsh
+        run: |
+          Set-Location dist
+          $files = Get-ChildItem -Filter "*.exe" | Sort-Object Name
+          $sumLines = foreach ($f in $files) {
+            $hash = (Get-FileHash -Algorithm SHA256 $f.Name).Hash.ToLower()
+            "$hash  $($f.Name)"
+          }
+          $sumLines | Set-Content -Encoding ascii SHA256SUMS
+
+          $entries = foreach ($f in $files) {
+            [ordered]@{
+              name   = $f.Name
+              sha256 = (Get-FileHash -Algorithm SHA256 $f.Name).Hash.ToLower()
+              size   = $f.Length
+            }
+          }
+          [ordered]@{
+            protocol  = 1
+            tag       = "${{ github.ref_name }}"
+            commit    = "${{ github.sha }}"
+            artifacts = $entries
+          } | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 manifest.json
+
+      - name: Attest build provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: "dist/*.exe"
+
+      - name: Publish release assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --verify-tag --generate-notes
+          }
+          gh release upload $tag dist/* --clobber
+
+      - name: Upload release manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-manifest
+          path: |
+            dist/SHA256SUMS
+            dist/manifest.json

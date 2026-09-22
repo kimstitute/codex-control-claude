@@ -12,6 +12,7 @@ venv/
 # Build and runtime output
 dist/
 build/
+target/
 outputs/
 artifacts/
 state/

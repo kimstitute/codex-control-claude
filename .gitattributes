@@ -1,0 +1,2 @@
+native/windows/ccc-win-supervisor/src/*.rs text eol=lf
+native/windows/ccc-win-supervisor/*.toml text eol=lf
