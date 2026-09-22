@@ -359,6 +359,84 @@ class WorkspaceTests(ControllerTestCase):
             "applied",
         )
 
+    def test_applied_source_uses_git_line_ending_normalization(self) -> None:
+        base_commit = self.git("rev-parse", "HEAD")
+        frozen_tree = self.state / "canonical-frozen"
+        frozen_tree.mkdir()
+        frozen = b"line one\nline two\n"
+        digest = hashlib.sha256(frozen).hexdigest()
+        (frozen_tree / "README.md").write_bytes(frozen)
+        manifest = {
+            "files": {
+                "README.md": {"sha256": digest, "size": len(frozen), "mode": "100644"}
+            },
+            "changes": [
+                {
+                    "path": "README.md",
+                    "before_sha256": hashlib.sha256(b"base\n").hexdigest(),
+                    "after_sha256": digest,
+                }
+            ],
+        }
+        for setting, working in (
+            ("false", frozen),
+            ("input", frozen),
+            ("true", b"line one\r\nline two\r\n"),
+        ):
+            with self.subTest(core_autocrlf=setting):
+                self.git("config", "core.autocrlf", setting)
+                (self.repo / "README.md").write_bytes(working)
+                workspace._verify_applied_source(
+                    str(self.repo), base_commit, manifest, frozen_tree
+                )
+
+        (self.repo / "README.md").write_bytes(b"line one\nDIFFERENT\n")
+        self.assert_error(
+            "workspace_conflict",
+            workspace._verify_applied_source,
+            str(self.repo),
+            base_commit,
+            manifest,
+            frozen_tree,
+        )
+
+    def test_windows_rejects_only_new_executable_files(self) -> None:
+        base_commit = self.git("rev-parse", "HEAD")
+        existing = {
+            "files": {
+                "README.md": {"sha256": "0" * 64, "size": 1, "mode": "100644"}
+            },
+            "changes": [
+                {
+                    "path": "README.md",
+                    "before_sha256": "1" * 64,
+                    "after_sha256": "0" * 64,
+                }
+            ],
+        }
+        workspace._preflight_apply(str(self.repo), base_commit, existing)
+
+        added = {
+            "files": {
+                "script.sh": {"sha256": "0" * 64, "size": 1, "mode": "100755"}
+            },
+            "changes": [
+                {
+                    "path": "script.sh",
+                    "before_sha256": None,
+                    "after_sha256": "0" * 64,
+                }
+            ],
+        }
+        with mock.patch.object(workspace.os, "name", "nt"):
+            self.assert_error(
+                "workspace_apply",
+                workspace._preflight_apply,
+                str(self.repo),
+                base_commit,
+                added,
+            )
+
     def test_apply_rejects_dirty_or_advanced_source_before_reservation(self) -> None:
         fixture = {
             "workspace_operations": [

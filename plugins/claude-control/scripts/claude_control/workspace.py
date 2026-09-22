@@ -11,6 +11,7 @@ import tempfile
 import time
 import uuid
 from contextlib import contextmanager
+from pathlib import Path
 
 from . import task_contracts as contract
 from . import tasks
@@ -21,7 +22,7 @@ from .platform.locks import file_lock
 from .runner import launch_worker
 from .store import ACTIVE, ControlError, alive, boot_id, pid_namespace, proc_identity
 from .workspace_contracts import OPERATIONS, PROTOCOL, review_contract, validate_operations
-from .workspace_policy import normalize_policy
+from .workspace_policy import find_case_collision, normalize_policy
 
 FORMAT_REPAIR_SCOPE = (
     "This is the single controller-authorized repair for the preceding malformed report. "
@@ -465,8 +466,6 @@ def _check_command(store, row, run_id, seq, action):
             return _get(db, row["id"])["state"] != "operating"
 
     with tempfile.TemporaryDirectory(prefix="check-", dir=directory(store, row["id"])) as temporary:
-        from pathlib import Path
-
         scratch = Path(temporary) / "tree"
         files.copy_tree(directory(store, row["id"]) / "tree", scratch, policy)
         return sandbox.execute(
@@ -824,11 +823,12 @@ def export(store, workspace_id):
     }
 
 
-def _git(repo, *arguments):
+def _git(repo, *arguments, input_data=None):
     try:
         result = subprocess.run(
             ["git", "-C", repo, *arguments],
-            stdin=subprocess.DEVNULL,
+            input=input_data,
+            stdin=subprocess.DEVNULL if input_data is None else None,
             capture_output=True,
             timeout=30,
             check=False,
@@ -860,7 +860,61 @@ def _source_status(repo):
     return entries
 
 
-def _verify_applied_source(repo, base_commit, manifest):
+def _object_id(raw):
+    digest = raw.decode("ascii", errors="strict").strip()
+    if len(digest) != 40 or any(character not in "0123456789abcdef" for character in digest):
+        raise ControlError("workspace_apply", "Git returned an invalid object id.")
+    return digest
+
+
+def _canonical_blob(repo, relative, *, data=None, path=None):
+    if (data is None) == (path is None):
+        raise ValueError("Supply exactly one blob source.")
+    arguments = ["hash-object", "--path", relative]
+    if data is not None:
+        return _object_id(_git(repo, *arguments, "--stdin", input_data=data))
+    return _object_id(_git(repo, *arguments, os.fspath(path)))
+
+
+def _base_mode(repo, base_commit, relative):
+    raw = _git(repo, "ls-tree", "-z", base_commit, "--", relative)
+    records = [record for record in raw.split(b"\0") if record]
+    if len(records) != 1:
+        return None
+    try:
+        header, encoded = records[0].split(b"\t", 1)
+        mode, kind, _object_id_value = header.decode("ascii").split(" ")
+        path = encoded.decode("utf-8")
+    except (UnicodeError, ValueError) as exc:
+        raise ControlError("workspace_apply", "Git returned invalid mode metadata.") from exc
+    if path != relative or kind != "blob" or mode not in ("100644", "100755"):
+        raise ControlError("workspace_apply", "Git returned unexpected mode metadata.")
+    return mode
+
+
+def _preflight_apply(repo, base_commit, manifest):
+    collision = find_case_collision(change["path"] for change in manifest["changes"])
+    if collision is not None:
+        raise ControlError(
+            "workspace_apply",
+            f"Frozen changes have a case-insensitive path collision: {collision[0]!r} vs {collision[1]!r}.",
+        )
+    for change in manifest["changes"]:
+        relative = change["path"]
+        after = manifest["files"].get(relative)
+        if after is None:
+            continue
+        before_mode = _base_mode(repo, base_commit, relative)
+        if change["before_sha256"] is not None and before_mode != after["mode"]:
+            raise ControlError("workspace_apply", f"Frozen mode differs from base: {relative}")
+        if os.name == "nt" and change["before_sha256"] is None and after["mode"] == "100755":
+            raise ControlError(
+                "workspace_apply",
+                f"A new executable file cannot be represented on Windows: {relative}",
+            )
+
+
+def _verify_applied_source(repo, base_commit, manifest, frozen_tree):
     if _source_head(repo) != base_commit:
         raise ControlError("workspace_conflict", "Source HEAD changed during apply.")
     expected = {change["path"] for change in manifest["changes"]}
@@ -876,20 +930,27 @@ def _verify_applied_source(repo, base_commit, manifest):
             continue
         try:
             info = os.lstat(target)
-            with open(target, "rb") as handle:
-                data = handle.read(files.MAX_TEXT_BYTES + 1)
+            frozen_data = (Path(frozen_tree) / relative).read_bytes()
         except OSError as exc:
             raise ControlError("workspace_conflict", f"Cannot verify applied path: {relative}") from exc
         if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
             raise ControlError("workspace_conflict", f"Applied path is not a private regular file: {relative}")
-        if len(data) > files.MAX_TEXT_BYTES:
+        if info.st_size > files.MAX_TEXT_BYTES:
             raise ControlError("workspace_conflict", f"Applied path exceeds the text limit: {relative}")
-        if hashlib.sha256(data).hexdigest() != change["after_sha256"]:
+        if (
+            len(frozen_data) > files.MAX_TEXT_BYTES
+            or hashlib.sha256(frozen_data).hexdigest() != change["after_sha256"]
+        ):
+            raise ControlError("workspace_conflict", f"Frozen path differs from its manifest: {relative}")
+        if _canonical_blob(repo, relative, data=frozen_data) != _canonical_blob(
+            repo, relative, path=target
+        ):
             raise ControlError("workspace_conflict", f"Applied path hash differs from frozen result: {relative}")
-        executable = bool(stat.S_IMODE(info.st_mode) & 0o111)
-        expected_executable = manifest["files"][relative]["mode"] == "100755"
-        if executable != expected_executable:
-            raise ControlError("workspace_conflict", f"Applied path mode differs from frozen result: {relative}")
+        if os.name != "nt":
+            executable = bool(stat.S_IMODE(info.st_mode) & 0o111)
+            expected_executable = manifest["files"][relative]["mode"] == "100755"
+            if executable != expected_executable:
+                raise ControlError("workspace_conflict", f"Applied path mode differs from frozen result: {relative}")
 
 
 def apply(store, workspace_id, operation_id):
@@ -924,6 +985,7 @@ def apply(store, workspace_id, operation_id):
         if existing:
             raise ControlError("workspace_already_applied", "Frozen workspace already has an apply attempt.")
         repo, base_commit = row["source_repo"], row["base_commit"]
+    _preflight_apply(repo, base_commit, manifest)
     if _source_head(repo) != base_commit:
         raise ControlError("workspace_conflict", "Source HEAD no longer matches the frozen base commit.")
     if _source_status(repo):
@@ -953,7 +1015,12 @@ def apply(store, workspace_id, operation_id):
         )
     try:
         _git(repo, "apply", "--whitespace=nowarn", str(patch_path))
-        _verify_applied_source(repo, base_commit, manifest)
+        _verify_applied_source(
+            repo,
+            base_commit,
+            manifest,
+            Path(frozen["directory"]) / "tree",
+        )
     except BaseException as exc:
         with store.db(write=True) as db:
             db.execute(
