@@ -66,12 +66,36 @@ class CapabilityTests(unittest.TestCase):
             lambda _name: None,
             {},
             helper_probe=lambda _env: (True, "windows-job-object", None, object()),
+            wsl_probe=lambda: {
+                "ready": False,
+                "backend": None,
+                "reason": "WSL unavailable",
+            },
         )
 
         self.assertTrue(report["capabilities"]["session_control"]["supported"])
         self.assertEqual(
             report["capabilities"]["session_control"]["backend"], "windows-job-object"
         )
+
+    def test_native_windows_enables_workspace_only_after_live_wsl_probe(self):
+        report = capability_report(
+            "nt",
+            "win32",
+            lambda _name: False,
+            lambda _name: None,
+            {},
+            helper_probe=lambda _env: (True, "windows-job-object", None, object()),
+            wsl_probe=lambda: {
+                "ready": True,
+                "backend": "wsl2-bubblewrap",
+                "reason": None,
+                "distro": "Ubuntu",
+            },
+        )
+
+        self.assertTrue(report["capabilities"]["workspace"]["supported"])
+        self.assertTrue(report["capabilities"]["sandbox"]["supported"])
 
 
 class DefaultPathTests(unittest.TestCase):

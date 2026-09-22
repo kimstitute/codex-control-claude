@@ -16,6 +16,7 @@ try:
 except ImportError:  # pragma: no cover - native Windows
     resource = None
 
+from . import windows_wsl_sandbox
 from .runner import bind_parent
 from .store import ControlError, Store, alive, boot_id, pid_namespace, proc_identity
 
@@ -160,6 +161,15 @@ def execute(
     directory, argv, timeout, *, cancelled=lambda: False, started=lambda _: None, managed=None
 ):
     """The caller supplies a disposable copy, never the editor or source tree."""
+    if os.name == "nt":
+        return windows_wsl_sandbox.execute(
+            directory,
+            argv,
+            timeout,
+            cancelled=cancelled,
+            started=started,
+            managed=managed,
+        )
     parent = os.getpid()
     process_limit = _process_limit()
 
@@ -253,6 +263,8 @@ def execute(
 
 def probe():
     """Exercise production namespace flags without reading login data or making a model call."""
+    if os.name == "nt":
+        return windows_wsl_sandbox.probe()
     with tempfile.TemporaryDirectory(prefix="claude-workspace-probe-") as directory:
         try:
             result = execute(directory, ["/usr/bin/true"], 5)
@@ -269,6 +281,8 @@ def probe():
 
 
 def require():
+    if os.name == "nt":
+        return windows_wsl_sandbox.require()
     result = probe()
     if not result["ready"]:
         raise ControlError("sandbox_unavailable", result["reason"] or "Sandbox probe failed.")

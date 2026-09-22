@@ -50,12 +50,18 @@ def _linux_report(has_module, which, environ):
     }
 
 
-def _windows_report(environ, helper_probe):
+def _windows_report(environ, helper_probe, wsl_probe):
     helper_supported, helper_backend, helper_reason, _ = helper_probe(environ)
-    reasons = {
-        "workspace": "The WSL2 Bubblewrap workspace bridge is not implemented yet",
-        "sandbox": "The WSL2 Bubblewrap sandbox bridge is not implemented yet",
-    }
+    wsl_result = (
+        wsl_probe()
+        if helper_supported
+        else {"ready": False, "backend": None, "reason": helper_reason}
+    )
+    workspace_supported = helper_supported and bool(wsl_result.get("ready"))
+    workspace_reason = None if workspace_supported else (
+        wsl_result.get("reason") or helper_reason or "WSL2 Bubblewrap is unavailable"
+    )
+    workspace_backend = wsl_result.get("backend") if workspace_supported else None
     capabilities = {
         "provider_usage": _capability(True, backend="windows-local"),
         "tui": _capability(True, backend="windows-ansi-vt"),
@@ -64,10 +70,12 @@ def _windows_report(environ, helper_probe):
             backend=helper_backend,
             reason=helper_reason,
         ),
-        **{
-            name: _capability(False, reason=reason)
-            for name, reason in reasons.items()
-        },
+        "workspace": _capability(
+            workspace_supported, backend=workspace_backend, reason=workspace_reason
+        ),
+        "sandbox": _capability(
+            workspace_supported, backend=workspace_backend, reason=workspace_reason
+        ),
     }
     return {
         "report_version": REPORT_VERSION,
@@ -96,6 +104,7 @@ def capability_report(
     which,
     environ=None,
     helper_probe=None,
+    wsl_probe=None,
 ):
     """Return current feature support from caller-supplied platform facts."""
     environ = {} if environ is None else environ
@@ -106,5 +115,7 @@ def capability_report(
             from ..windows_process import helper_capability
 
             helper_probe = helper_capability
-        return _windows_report(environ, helper_probe)
+        if wsl_probe is None:
+            from ..windows_wsl_sandbox import probe as wsl_probe
+        return _windows_report(environ, helper_probe, wsl_probe)
     return _unsupported_report(sys_platform)
