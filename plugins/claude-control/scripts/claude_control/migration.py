@@ -1,12 +1,12 @@
 """Explicit offline incremental upgrade, with a verified backup and resumable marker."""
 
-import fcntl
 import json
 import os
 import sqlite3
 from contextlib import closing
 from pathlib import Path
 
+from .platform.locks import file_lock
 from .schema import (
     VERSION,
     add_application_schema,
@@ -88,13 +88,14 @@ def migrate(path, *, offline=False, target=VERSION):
     path, _ = _open(path)
     changed = False
     backups = []
-    with (path / "lifecycle.lock").open("a") as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            raise ControlError(
-                "migration_busy", "Another controller operation still holds the store lock."
-            ) from None
+    lock_context = file_lock(path / "lifecycle.lock", exclusive=True, blocking=False)
+    try:
+        lock_context.__enter__()
+    except BlockingIOError:
+        raise ControlError(
+            "migration_busy", "Another controller operation still holds the store lock."
+        ) from None
+    try:
         while True:
             path, config = _open(path)
             with closing(sqlite3.connect(path / "state.sqlite3", isolation_level=None)) as db:
@@ -140,6 +141,8 @@ def migrate(path, *, offline=False, target=VERSION):
                 backup = _step(path, config, db, version, source)
                 backups.append(str(backup))
                 changed = True
+    finally:
+        lock_context.__exit__(None, None, None)
 
 
 def _step(path, config, db, version, source):

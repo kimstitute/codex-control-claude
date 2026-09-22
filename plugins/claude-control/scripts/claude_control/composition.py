@@ -1,6 +1,5 @@
 """Durable composition of the bounded P4 workflow and P5 workspaces."""
 
-import fcntl
 import json
 import math
 import sqlite3
@@ -11,6 +10,7 @@ from contextlib import contextmanager
 from . import task_contracts as contract
 from . import tasks, workflow, workspace
 from . import workspace_files as files
+from .platform.locks import file_lock
 from .store import ControlError
 from .workspace_policy import normalize_policy
 
@@ -677,14 +677,17 @@ def status(store, composition_id):
 @contextmanager
 def _coordinator(store, composition_id):
     lock_path = store.path / ("composition-" + composition_id + ".lock")
-    with lock_path.open("a") as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            raise ControlError(
-                "composition_busy", "Another coordinator owns this composition."
-            ) from None
+    lock_context = file_lock(lock_path, exclusive=True, blocking=False)
+    try:
+        lock_context.__enter__()
+    except BlockingIOError:
+        raise ControlError(
+            "composition_busy", "Another coordinator owns this composition."
+        ) from None
+    try:
         yield
+    finally:
+        lock_context.__exit__(None, None, None)
 
 
 def run(store, composition_id, *, once=False, max_seconds=30):

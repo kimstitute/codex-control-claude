@@ -1,7 +1,6 @@
 """One detached, single-threaded supervisor per tools-disabled Claude turn."""
 
 import ctypes
-import fcntl
 import hashlib
 import json
 import os
@@ -12,6 +11,7 @@ import time
 from pathlib import Path
 
 from .execution_settings import binary_identity, validate_effort
+from .platform.locks import file_lock
 from .protocol import build_argv, parse_stream
 from .store import (
     CLAIM_SECONDS,
@@ -220,11 +220,12 @@ def run_worker(state_dir, run_id):
     store = Store(state_dir)
     directory = store.run_dir(run_id)
     proc = None
-    with (directory / "worker.lock").open("a") as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            return
+    lock_context = file_lock(directory / "worker.lock", exclusive=True, blocking=False)
+    try:
+        lock_context.__enter__()
+    except BlockingIOError:
+        return
+    try:
         identity = proc_identity(os.getpid())
         with store.db(write=True) as db:
             claimed = db.execute(
@@ -437,3 +438,5 @@ def run_worker(state_dir, run_id):
                     ),
                 )
             raise
+    finally:
+        lock_context.__exit__(None, None, None)

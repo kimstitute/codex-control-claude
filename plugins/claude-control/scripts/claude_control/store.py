@@ -1,6 +1,5 @@
 """Private host-local records and transactional execution reservations."""
 
-import fcntl
 import hashlib
 import json
 import math
@@ -16,6 +15,7 @@ from contextlib import closing, contextmanager
 from pathlib import Path
 
 from .execution_settings import binary_identity, probe_effort, validate_effort
+from .platform.locks import file_lock
 from .schema import (
     VERSION,
     add_application_schema,
@@ -151,8 +151,7 @@ class Store:
             raise ControlError("invalid_limit", "max-parallel must be between 1 and 32.")
         if type(max_queued) is not int or not 1 <= max_queued <= 10000:
             raise ControlError("invalid_limit", "max-queued must be between 1 and 10000.")
-        with (directory / "init.lock").open("a") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
+        with file_lock(directory / "init.lock", exclusive=True):
             if (directory / "config.json").exists():
                 raise ControlError(
                     "already_initialized", "Existing configuration is preserved; use doctor."
@@ -211,8 +210,7 @@ class Store:
     def db(self, write=False):
         # New clients take a shared lifecycle lock; migration excludes all DB operations.
         # Schema-3 clients predating this lock must be stopped by the offline operator.
-        with (self.path / "lifecycle.lock").open("a") as lock:
-            fcntl.flock(lock, fcntl.LOCK_SH)
+        with file_lock(self.path / "lifecycle.lock", exclusive=False):
             config = json.loads((self.path / "config.json").read_text())
             if config != self.config or config.get("schema") not in tuple(
                 range(3, VERSION + 1)
@@ -647,11 +645,16 @@ class Store:
             raise ControlError(
                 "namespace_mismatch", "Reconcile from the same PID namespace as the worker."
             )
-        with (self.run_dir(run_id) / "worker.lock").open("a") as lock:
-            try:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                raise ControlError("worker_active", "Worker still holds its run lock.") from None
+        lock_context = file_lock(
+            self.run_dir(run_id) / "worker.lock",
+            exclusive=True,
+            blocking=False,
+        )
+        try:
+            lock_context.__enter__()
+        except BlockingIOError:
+            raise ControlError("worker_active", "Worker still holds its run lock.") from None
+        try:
             if alive(row["worker_pid"], row["worker_start"], row["boot"]):
                 raise ControlError("worker_active", "Worker identity is still alive.")
             if row["boot"] == boot_id():
@@ -667,6 +670,8 @@ class Store:
                     "UPDATE runs SET status='interrupted',finished=?,reason='reconciled_dead_execution' WHERE id=? AND status='unknown'",
                     (time.time(), run_id),
                 )
+        finally:
+            lock_context.__exit__(None, None, None)
         return self.get_run(run_id)
 
     def list_all(self):

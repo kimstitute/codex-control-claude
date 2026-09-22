@@ -1,6 +1,5 @@
 """Explicit workspace authority and a finite controller-mediated operation loop."""
 
-import fcntl
 import hashlib
 import json
 import math
@@ -18,6 +17,7 @@ from . import tasks
 from . import workspace_files as files
 from . import workspace_sandbox as sandbox
 from .assignments import MAX_BYTES
+from .platform.locks import file_lock
 from .runner import launch_worker
 from .store import ACTIVE, ControlError, alive, boot_id, pid_namespace, proc_identity
 from .workspace_contracts import OPERATIONS, PROTOCOL, review_contract, validate_operations
@@ -687,14 +687,21 @@ def _advance(store, workspace_id):
 
 @contextmanager
 def _coordinator(store, workspace_id):
-    with (directory(store, workspace_id) / "coordinator.lock").open("a") as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            raise ControlError(
-                "workspace_busy", "Another coordinator owns this workspace."
-            ) from None
+    lock_context = file_lock(
+        directory(store, workspace_id) / "coordinator.lock",
+        exclusive=True,
+        blocking=False,
+    )
+    try:
+        lock_context.__enter__()
+    except BlockingIOError:
+        raise ControlError(
+            "workspace_busy", "Another coordinator owns this workspace."
+        ) from None
+    try:
         yield
+    finally:
+        lock_context.__exit__(None, None, None)
 
 
 def run(store, workspace_id, *, once=False, max_seconds=30):
