@@ -7,7 +7,7 @@
 <p align="center">Let Codex coordinate persistent local Claude Code sessions.</p>
 
 <p align="center">
-  <strong>Linux</strong> · <strong>Python 3.10+</strong> · <strong>Standard-library runtime</strong>
+  <strong>Linux · Windows 10/11</strong> · <strong>Python 3.10+</strong> · <strong>Standard-library runtime</strong>
 </p>
 
 <p align="center">
@@ -40,6 +40,11 @@ Version 0.13 adds Codex, Claude Code, Gemini CLI and Cursor CLI account limits
 to the same TUI. It preserves provider-reported percentages, resets, token or
 request units and overage spending, and never estimates an unpublished token
 ceiling.
+
+Version 0.14 adds same-host Claude sessions, tasks, workflows, compositions,
+provider limits and an ANSI/VT TUI on Windows 10/11. A SHA-256-pinned
+`ccc-win-supervisor.exe` owns native sessions. Windows workspaces run only through
+Bubblewrap inside WSL2. AppContainer and an unconfined fallback are excluded.
 
 ## Choose the right workflow
 
@@ -89,9 +94,9 @@ requests to the Claude service through your existing login.
 
 ## Requirements
 
-### All workflows
+### Common
 
-- Linux
+- Linux or Windows 10/11
 - Python 3.10 or newer
 - Claude Code installed and signed in for the same user
 - Codex CLI with plugin support and its bundled `plugin-creator` helpers
@@ -100,11 +105,20 @@ requests to the Claude service through your existing login.
 The controller runtime itself uses only the Python standard library. The
 installer does not install missing packages.
 
-### Workspace and composition workflows
+### Linux workspace and composition workflows
 
 - Git
 - Bubblewrap (`bwrap`)
 - Usable unprivileged user, PID and network namespaces
+
+### Windows
+
+- An architecture-matching `ccc-win-supervisor.exe` and its published SHA-256
+- WSL2 and `bwrap` inside the selected WSL distribution for workspaces/compositions
+- A private ext4 state path outside `/mnt` for WSL workspace state
+
+Native Windows sessions do not require WSL2. See the [Windows guide](docs/windows.md)
+for the exact setup and support boundary.
 
 Run `workspace doctor` before the first controlled edit. The controller refuses
 workspace work if isolation is unavailable; it has no unconfined fallback.
@@ -120,6 +134,16 @@ git clone https://github.com/kimstitute/codex-control-claude.git
 cd codex-control-claude
 python3 install.py
 ```
+
+On Windows, verify and pin the native helper during installation:
+
+```powershell
+$sha = (Get-FileHash .\ccc-win-supervisor.exe -Algorithm SHA256).Hash.ToLower()
+py -3 install.py --windows-helper .\ccc-win-supervisor.exe --windows-helper-sha256 $sha
+```
+
+A missing or mismatched helper fails closed; session control is never silently
+routed through another launcher.
 
 The installer:
 
@@ -655,7 +679,7 @@ claude_control migrate --offline
 claude_control migrate --status
 ```
 
-New stores use schema 12. Existing schema 3–11 stores are upgraded step by step
+New stores use schema 13. Existing schema 3–12 stores are upgraded step by step
 with verified SQLite backups and a durable migration journal. Repeat
 `migrate --offline` on the original state directory after an interrupted
 migration. Never run jobs against a backup or replace the original database with
@@ -669,7 +693,9 @@ a single copied SQLite file.
 | `doctor --auth` is not ready | Complete the normal local Claude Code login, then run it again |
 | Explicit model fails | Confirm the account can use that alias; there is no model fallback |
 | `project_not_allowed` | Use a path inside an initialized `--allow-root`; do not create a second state store |
-| `workspace doctor` fails | Fix Bubblewrap or unprivileged namespaces; checks will not run unconfined |
+| `workspace doctor` fails on Linux | Fix Bubblewrap or unprivileged namespaces; checks will not run unconfined |
+| Session control is disabled on Windows | Verify the architecture-matching `ccc-win-supervisor.exe` and the SHA-256 pin used during installation |
+| Workspace is disabled on Windows | Verify WSL2, `bwrap` inside WSL and a private ext4 state path; state below `/mnt` is rejected |
 | `capacity_full` or busy session | Inspect existing runs, wait, or intentionally stop the owned run |
 | `context_changed` | Inspect the exact latest turn and create an explicit revision/follow-up with the required acknowledgement |
 | `unknown` | Inspect and reconcile the original run; never retry or replace it automatically |
@@ -692,6 +718,7 @@ a single copied SQLite file.
 - [Testing and live-test opt-in](docs/testing.md)
 - [Observed real-project pilot](docs/real-project-pilot.md)
 - [OMX adoption decisions](docs/omx-adoption.md)
+- [Windows setup and operations](docs/windows.md)
 
 ## Tests
 
@@ -706,12 +733,14 @@ are opt-in and use your own Claude account; see [docs/testing.md](docs/testing.m
 
 ## Current scope
 
-Version 0.12 supports Linux, supplied-text delegation, persistent sessions,
-review-gated task revisions, finite queues/workflows, controller-mediated
-workspace edits, explicit plan/edit/review compositions and a read-only live TUI. Native Claude
-file/shell tools, arbitrary existing-session adoption, conversation forks,
-Windows/macOS, an MCP adapter, cross-host dispatch and automatic Codex wake-up
-remain outside this release.
+Version 0.14 supports supplied-text delegation, persistent sessions,
+review-gated task revisions, finite queues/workflows, explicit plan/edit/review
+compositions and a read-only live TUI on Linux and Windows 10/11. Linux workspaces
+use native Bubblewrap; Windows workspaces use Bubblewrap inside WSL2. Native
+Claude file/shell tools, arbitrary existing-session adoption, conversation forks,
+macOS, AppContainer, an MCP adapter, cross-host dispatch and automatic Codex
+wake-up remain outside this release. Windows hardware and WSL2 integration have
+not yet been validated on a physical Windows host, so Windows support is beta.
 
 Maintained by [kimstitute](https://github.com/kimstitute). This is an independent
 project, not an official OpenAI or Anthropic integration.

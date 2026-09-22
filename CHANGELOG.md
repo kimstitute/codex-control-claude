@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.14.0 — 2026-09-22
+
+- Add same-host Windows 10/11 session control through the pinned native
+  `ccc-win-supervisor.exe`, which creates suspended children inside kill-on-close
+  Job Objects and records process creation identity before resume.
+- Add Windows ANSI/VT monitoring and portable locks, private-state DACL checks,
+  reparse-point rejection, boot/process identity and provider paths.
+- Add a Windows workspace backend that transports bounded deterministic archives
+  to private WSL2 ext4 state and runs the existing networkless Bubblewrap sandbox.
+- Reject Windows-ambiguous Git paths and preserve Git executable modes in
+  canonical sidecars; verify apply results with Git-normalized blob hashes.
+- Upgrade stores to schema 13. Native AppContainer is excluded and there is no
+  unconfined fallback. Physical Windows/WSL2 live validation remains pending.
+
+## 0.14.0 — 2026-09-22
+
+- Add same-host Windows 10/11 session control through the pinned native
+  `ccc-win-supervisor.exe`, which creates suspended children inside kill-on-close
+  Job Objects and records process creation identity before resume.
+- Add Windows ANSI/VT monitoring and portable locks, private-state DACL checks,
+  reparse-point rejection, boot/process identity and provider paths.
+- Add a Windows workspace backend that transports bounded deterministic archives
+  to private WSL2 ext4 state and runs the existing networkless Bubblewrap sandbox.
+- Reject Windows-ambiguous Git paths and preserve Git executable modes in
+  canonical sidecars; verify apply results with Git-normalized blob hashes.
+- Upgrade stores to schema 13. Native AppContainer is excluded and there is no
+  unconfined fallback. Physical Windows/WSL2 live validation remains pending.
+
 ## 0.13.0 — 2026-09-22
 
 - Add a fourth TUI view for signed-in Codex, Claude Code, Gemini CLI and Cursor

@@ -230,7 +230,7 @@ claude_control reconcile --run <run-uuid>
 
 같은 부팅 세션에서는 reconcile이 worker의 PID namespace 안에서 실행되어야 합니다. 기록된 worker와 프로세스 그룹이 더 이상 살아 있지 않거나, 호스트 재부팅으로 인해 이전 프로세스가 더 이상 실행 중일 수 없음이 증명된 경우에만 불확실성이 해소됩니다. 저장된 PID에 무작정 시그널을 보내지 않습니다. backend 세션이 일치하지 않는 대화는 계속 차단된 상태로 남습니다.
 
-새 저장소는 schema 12를 사용합니다. 기존 schema 3–11은 새 기능을 사용하려면 [명시적 오프라인 migration](tasks.ko.md#schema-and-migration)이 필요합니다. migration 전에도 레거시 진단과 stop/reconcile은 계속 사용할 수 있습니다. schema 1과 2는 지원되지 않습니다. 활성 또는 unknown 실행을 우회하기 위해 상태를 삭제하거나 교체하지 마세요.
+새 저장소는 schema 13를 사용합니다. 기존 schema 3–11은 새 기능을 사용하려면 [명시적 오프라인 migration](tasks.ko.md#schema-and-migration)이 필요합니다. migration 전에도 레거시 진단과 stop/reconcile은 계속 사용할 수 있습니다. schema 1과 2는 지원되지 않습니다. 활성 또는 unknown 실행을 우회하기 위해 상태를 삭제하거나 교체하지 마세요.
 
 ## 문제 해결
 
@@ -271,7 +271,7 @@ Dependency JSON은 정확한 `task_id`/`revision` 참조의 배열입니다. 승
 
 ## 통제된 Workspace
 
-`workspace doctor/create/task/run/status/list/export/apply/stop/reconcile`은 [workspace 가이드](workspaces.ko.md)에 문서화되어 있습니다. 생성 시 복사하기 전에 하나의 불변 workspace identity를 예약합니다. schema 12는 원본 HEAD와 clean worktree를 검사하는 명시적 apply를 추가합니다. Workspace에는 작동하는 Linux Bubblewrap backend가 필요합니다.
+`workspace doctor/create/task/run/status/list/export/apply/stop/reconcile`은 [workspace 가이드](workspaces.ko.md)에 문서화되어 있습니다. 생성 시 복사하기 전에 하나의 불변 workspace identity를 예약합니다. schema 12는 원본 HEAD와 clean worktree를 검사하는 명시적 apply를 추가합니다. Linux workspace는 Bubblewrap을, Windows workspace는 고정된 네이티브 supervisor와 WSL2 내부 Bubblewrap을 필요로 합니다.
 
 ## 명시적 실행 설정
 

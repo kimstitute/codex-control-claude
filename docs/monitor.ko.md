@@ -3,6 +3,7 @@
 `monitor`는 현재 호스트의 claude-control 상태를 읽기 전용으로 보여줍니다.
 작업을 시작하거나 다음 단계로 진행시키지 않으며, 재시도·중단·승인·apply도
 수행하지 않습니다.
+Linux에서는 curses, Windows 10/11에서는 ANSI/VT console backend를 사용합니다.
 
 ## TUI 실행
 

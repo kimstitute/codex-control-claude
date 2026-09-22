@@ -273,7 +273,7 @@ claude_control reconcile --run <run-uuid>
 
 On the same boot, reconcile must run in the worker's PID namespace. It releases uncertainty only when the recorded worker and process group are no longer live, or when a host reboot proves the earlier processes cannot still be running. It does not blindly signal a saved PID. A conversation with a mismatched backend session remains blocked.
 
-New stores use schema 12. Existing schema 3–11 stores require [explicit offline migration](tasks.md#schema-and-migration) for newer features; legacy diagnosis and stop/reconcile remain available before migration. Schemas 1 and 2 are unsupported. Never delete or replace state to bypass an active or unknown execution.
+New stores use schema 13. Existing schema 3–12 stores require [explicit offline migration](tasks.md#schema-and-migration) for newer features; legacy diagnosis and stop/reconcile remain available before migration. Schemas 1 and 2 are unsupported. Never delete or replace state to bypass an active or unknown execution.
 
 ## Troubleshooting
 
@@ -316,7 +316,7 @@ make no model calls. Delivery receipts bind only at explicit submit or dispatch.
 
 ## Controlled workspaces
 
-`workspace doctor/create/task/run/status/list/export/apply/stop/reconcile` are documented in the [workspace guide](workspaces.md). Creation reserves one immutable workspace identity before copying. Use explicit file/check policies, a finite run admission window, and a frozen export for review. Schema 12 adds guarded source application; workspaces require a working Linux Bubblewrap backend.
+`workspace doctor/create/task/run/status/list/export/apply/stop/reconcile` are documented in the [workspace guide](workspaces.md). Creation reserves one immutable workspace identity before copying. Use explicit file/check policies, a finite run admission window, and a frozen export for review. Schema 12 adds guarded source application. Linux workspaces require Bubblewrap; Windows workspaces require the pinned native supervisor and Bubblewrap inside WSL2.
 
 ## Explicit execution settings
 

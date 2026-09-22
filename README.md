@@ -7,7 +7,7 @@
 <p align="center">Codex에서 여러 로컬 Claude Code 세션을 지속적으로 관리합니다.</p>
 
 <p align="center">
-  <strong>Linux</strong> · <strong>Python 3.10+</strong> · <strong>실행 시 외부 Python 의존성 없음</strong>
+  <strong>Linux · Windows 10/11</strong> · <strong>Python 3.10+</strong> · <strong>실행 시 외부 Python 의존성 없음</strong>
 </p>
 
 <p align="center">
@@ -39,6 +39,12 @@ provider 원본 usage·비용·지연 기록, 원본 HEAD를 고정하는 명시
 한도 화면을 추가합니다. provider가 공개한 사용/남은 비율, 초기화 시각,
 토큰·요청·초과 지출 단위를 그대로 표시하며 공개되지 않은 토큰 상한은
 추정하지 않습니다.
+
+0.14 버전은 Windows 10/11에서 같은 호스트의 Claude 세션, task, workflow,
+composition, provider 한도와 ANSI/VT TUI를 지원합니다. 네이티브 세션은
+SHA-256으로 고정한 `ccc-win-supervisor.exe`가 관리하며, Windows workspace는
+WSL2 안의 Bubblewrap으로만 실행됩니다. AppContainer와 비격리 대체 실행은
+포함하지 않습니다.
 
 ## 어떤 명령을 선택해야 하나요?
 
@@ -87,9 +93,9 @@ Claude 서비스에 모델 요청을 보냅니다.
 
 ## 준비 사항
 
-### 모든 기능
+### 공통
 
-- Linux
+- Linux 또는 Windows 10/11
 - Python 3.10 이상
 - 같은 사용자로 설치하고 로그인한 Claude Code
 - 플러그인 기능과 `plugin-creator` 도구가 포함된 Codex CLI
@@ -98,11 +104,20 @@ Claude 서비스에 모델 요청을 보냅니다.
 컨트롤러 실행 자체는 Python 표준 라이브러리만 사용합니다. 설치기는 빠진
 패키지를 자동으로 설치하지 않습니다.
 
-### Workspace와 composition
+### Linux workspace와 composition
 
 - Git
 - Bubblewrap (`bwrap`)
 - 사용할 수 있는 비특권 user, PID, network namespace
+
+### Windows
+
+- 아키텍처가 일치하는 `ccc-win-supervisor.exe`와 배포자가 제공한 SHA-256
+- workspace와 composition에는 WSL2와 WSL 배포판 내부의 `bwrap`
+- WSL workspace 상태를 둘 `/mnt` 밖의 private ext4 경로
+
+Windows 네이티브 세션만 사용할 때는 WSL2가 필요하지 않습니다. 자세한 설치와
+지원 범위는 [Windows 안내](docs/windows.ko.md)를 참고하세요.
 
 첫 편집 전에 `workspace doctor`를 실행하세요. 격리를 사용할 수 없으면
 workspace 실행을 거절하며, 격리 없는 대체 경로는 없습니다.
@@ -118,6 +133,16 @@ git clone https://github.com/kimstitute/codex-control-claude.git
 cd codex-control-claude
 python3 install.py
 ```
+
+Windows에서는 helper의 SHA-256을 먼저 확인하고 함께 설치합니다.
+
+```powershell
+$sha = (Get-FileHash .\ccc-win-supervisor.exe -Algorithm SHA256).Hash.ToLower()
+py -3 install.py --windows-helper .\ccc-win-supervisor.exe --windows-helper-sha256 $sha
+```
+
+helper가 없거나 해시가 다르면 설치 또는 Windows session control이 fail-closed로
+중단되며 다른 실행 경로로 대체되지 않습니다.
 
 설치기는 다음 작업을 수행합니다.
 
@@ -655,7 +680,7 @@ claude_control migrate --offline
 claude_control migrate --status
 ```
 
-새 저장소는 schema 12를 사용합니다. 기존 schema 3–11은 각 단계마다 검증된
+새 저장소는 schema 13을 사용합니다. 기존 schema 3–12는 각 단계마다 검증된
 SQLite 백업과 영속 migration journal을 만들면서 순서대로 이관됩니다.
 중단되었다면 원래 상태 디렉터리에서 같은 `migrate --offline`을 다시
 실행합니다. 백업 DB로 작업을 실행하거나 원본 DB를 단일 SQLite 파일
@@ -669,7 +694,9 @@ SQLite 백업과 영속 migration journal을 만들면서 순서대로 이관됩
 | `doctor --auth`가 ready가 아님 | 일반 Claude Code 로그인 후 다시 검사 |
 | 지정 모델 호출 실패 | 계정의 모델 사용 가능 여부 확인; 자동 대체 없음 |
 | `project_not_allowed` | 초기화한 `--allow-root` 내부 경로 사용; 새 state store로 우회하지 않음 |
-| `workspace doctor` 실패 | Bubblewrap 또는 비특권 namespace를 복구; 비격리 실행은 하지 않음 |
+| Linux에서 `workspace doctor` 실패 | Bubblewrap 또는 비특권 namespace를 복구; 비격리 실행은 하지 않음 |
+| Windows에서 session control 비활성 | 아키텍처에 맞는 `ccc-win-supervisor.exe`와 설치 시 고정한 SHA-256을 확인 |
+| Windows에서 workspace 비활성 | WSL2, WSL 내부 `bwrap`, private ext4 상태 경로를 확인; `/mnt` 아래 상태는 거절됨 |
 | `capacity_full` 또는 session busy | 기존 실행을 확인하고 기다리거나 소유 실행을 의도적으로 중단 |
 | `context_changed` | 최신 정확한 턴을 확인하고 요구된 acknowledgement와 함께 명시적 개정/후속 턴 생성 |
 | `unknown` | 원래 실행을 조사하고 reconcile; 자동 재시도·대체 금지 |
@@ -692,7 +719,8 @@ SQLite 백업과 영속 migration journal을 만들면서 순서대로 이관됩
 - [테스트와 선택적 live test](docs/testing.ko.md)
 - [실제 프로젝트 파일럿 기록](docs/real-project-pilot.ko.md)
 - [OMX에서 도입한 설계](docs/omx-adoption.ko.md)
-- [Windows 네이티브 지원 구현 계획](docs/windows-support-plan.ko.md)
+- [Windows 설치와 운영](docs/windows.ko.md)
+- [Windows 지원 설계 기록](docs/windows-support-plan.ko.md)
 
 ## 테스트
 
@@ -708,12 +736,14 @@ ruff format --check .
 
 ## 현재 범위
 
-0.13 버전은 Linux, 텍스트 위임, 영속 세션, 검토·승인 가능한 task 개정,
-유한 대기열과 workflow, 컨트롤러 매개 workspace 편집, 명시적
-계획·편집·검토 composition, read-only 실시간 TUI를 지원합니다. Claude의 직접 파일·shell 도구,
-임의 기존 세션 인수, 대화 fork, Windows/macOS, MCP adapter, 서버 간 전달,
-Codex 자동 깨우기는 현재 구현 범위 밖입니다. Windows 지원은
-[별도 구현 계획](docs/windows-support-plan.ko.md)에 정의되어 있습니다.
+0.14 버전은 Linux와 Windows 10/11에서 텍스트 위임, 영속 세션,
+검토·승인 가능한 task 개정, 유한 대기열과 workflow, 명시적
+계획·편집·검토 composition, read-only 실시간 TUI를 지원합니다. Linux
+workspace는 네이티브 Bubblewrap, Windows workspace는 WSL2 내부 Bubblewrap을
+사용합니다. Claude의 직접 파일·shell 도구, 임의 기존 세션 인수, 대화 fork,
+macOS, AppContainer, MCP adapter, 서버 간 전달, Codex 자동 깨우기는 현재
+범위 밖입니다. Windows 실기기와 WSL2 통합 검증은 아직 수행되지 않았으므로
+Windows 지원은 beta로 표시합니다.
 
 제작: [kimstitute](https://github.com/kimstitute). OpenAI 또는 Anthropic의
 공식 연동 제품이 아닌 독립 프로젝트입니다.

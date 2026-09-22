@@ -2,6 +2,7 @@
 
 `monitor` observes the current host's claude-control state without advancing,
 retrying, stopping, accepting or applying any work.
+It uses curses on Linux and the ANSI/VT console backend on Windows 10/11.
 
 ## Run the TUI
 
