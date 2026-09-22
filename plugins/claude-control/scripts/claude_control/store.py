@@ -21,6 +21,7 @@ from .schema import (
     add_composition_schema,
     add_execution_schema,
     add_message_schema,
+    add_platform_schema,
     add_queue_schema,
     add_task_schema,
     add_telemetry_schema,
@@ -60,6 +61,16 @@ write_json = _translate(_host.write_json)
 principal_identity = _translate(_host.principal_identity)
 verify_private_entry = _translate(_host.verify_private_entry)
 secure_new_file = _translate(_host.secure_new_file)
+
+
+def execution_alive(row):
+    """Check an owned execution without treating a reused Windows PID as the child."""
+    if not row["child_pid"] or row["boot"] != boot_id():
+        return False
+    keys = row.keys() if hasattr(row, "keys") else ()
+    if "process_backend" in keys and row["process_backend"] == "windows-job-object":
+        return alive(row["child_pid"], row["child_start"], row["boot"])
+    return group_alive(row["child_pid"])
 
 
 def check_host_and_principal(config):
@@ -156,6 +167,7 @@ class Store:
                 add_composition_schema(db)
                 add_telemetry_schema(db)
                 add_application_schema(db)
+                add_platform_schema(db)
                 db.execute("PRAGMA journal_mode=WAL")
             secure_new_file(directory / "state.sqlite3")
             private_dir(directory / "runs")
@@ -631,10 +643,10 @@ class Store:
             if alive(row["worker_pid"], row["worker_start"], row["boot"]):
                 raise ControlError("worker_active", "Worker identity is still alive.")
             if row["boot"] == boot_id():
-                if row["child_pid"] and group_alive(row["child_pid"]):
+                if execution_alive(row):
                     raise ControlError(
                         "unresolved_execution",
-                        "Cannot establish stopped process group; retain quarantine until independently resolved or host reboot.",
+                        "Cannot establish a stopped owned execution; retain quarantine until independently resolved or host reboot.",
                     )
             # The exec wrapper records child identity transactionally BEFORE Claude exec.
             # With no child record, the following CAS also prevents a late wrapper launch.

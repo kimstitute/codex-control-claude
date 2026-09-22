@@ -9,7 +9,7 @@ import uuid
 from . import messages, scheduler, tasks
 from . import task_contracts as contract
 from .assignments import MAX_BYTES
-from .store import ACTIVE, ControlError, alive, boot_id, group_alive
+from .store import ACTIVE, ControlError, alive, execution_alive
 from .workflow_contracts import PROTOCOL, envelope
 
 STATE_ERRORS = (ControlError, OSError, ValueError, KeyError, TypeError, sqlite3.IntegrityError)
@@ -634,7 +634,7 @@ def _finish_stop(store, workflow_id):
         unresolved = any(
             r["status"] in ACTIVE
             or alive(r["worker_pid"], r["worker_start"], r["boot"])
-            or (r["boot"] == boot_id() and r["child_pid"] and group_alive(r["child_pid"]))
+            or execution_alive(r)
             for r in runs
         )
         if not unresolved:

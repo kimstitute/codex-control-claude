@@ -1,6 +1,6 @@
 """Additive schemas; existing sessions and runs retain their identity and rowids."""
 
-VERSION = 12
+VERSION = 13
 TASK_SCHEMA = """
 CREATE TABLE tasks (
  id TEXT PRIMARY KEY, name TEXT NOT NULL, session_id TEXT REFERENCES sessions(id),
@@ -465,3 +465,18 @@ CREATE TRIGGER workspace_application_no_delete BEFORE DELETE ON workspace_applic
 
 def add_application_schema(db):
     _apply(db, APPLICATION_SCHEMA, 12)
+
+
+def add_platform_schema(db):
+    _apply(
+        db,
+        """
+ALTER TABLE runs ADD COLUMN platform TEXT;
+ALTER TABLE runs ADD COLUMN worker_identity_json TEXT;
+ALTER TABLE runs ADD COLUMN child_identity_json TEXT;
+ALTER TABLE runs ADD COLUMN execution_scope TEXT;
+ALTER TABLE runs ADD COLUMN process_backend TEXT;
+ALTER TABLE runs ADD COLUMN sandbox_backend TEXT;
+""",
+        13,
+    )

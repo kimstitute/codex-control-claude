@@ -8,7 +8,7 @@ import uuid
 from . import task_contracts as contract
 from . import tasks
 from .assignments import MAX_BYTES
-from .store import ACTIVE, ControlError, alive, boot_id, group_alive, pid_namespace
+from .store import ACTIVE, ControlError, alive, boot_id, execution_alive, pid_namespace
 
 MAX_SELECTED = 64
 MAX_QUEUED = 100
@@ -272,7 +272,7 @@ def _stopped_failure(row):
             return False
         if alive(row["worker_pid"], row["worker_start"], row["boot"]):
             return False
-        if row["boot"] == boot_id() and row["child_pid"] and group_alive(row["child_pid"]):
+        if execution_alive(row):
             return False
     return True
 

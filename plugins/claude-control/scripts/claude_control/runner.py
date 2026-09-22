@@ -40,6 +40,16 @@ def child_environment():
         "LC_ALL",
         "TERM",
         "TMPDIR",
+        "TEMP",
+        "TMP",
+        "USERPROFILE",
+        "LOCALAPPDATA",
+        "APPDATA",
+        "SYSTEMROOT",
+        "SystemRoot",
+        "COMSPEC",
+        "ComSpec",
+        "PATHEXT",
         "XDG_CONFIG_HOME",
         "XDG_DATA_HOME",
         "XDG_CACHE_HOME",
@@ -54,10 +64,34 @@ def child_environment():
     return {name: os.environ[name] for name in names if name in os.environ}
 
 
+def worker_environment():
+    environment = child_environment()
+    for name in (
+        "CLAUDE_CONTROL_WINDOWS_HELPER",
+        "CLAUDE_CONTROL_WINDOWS_HELPER_SHA256",
+    ):
+        if name in os.environ:
+            environment[name] = os.environ[name]
+    return environment
+
+
 def launch_worker(store, run_id):
     script = Path(__file__).resolve().parents[1] / "claude_control_cli.py"
     with (store.run_dir(run_id) / "worker.log").open("ab") as log:
         try:
+            options = dict(
+                stdin=subprocess.DEVNULL,
+                stdout=log,
+                stderr=log,
+                close_fds=True,
+                env=worker_environment(),
+            )
+            if os.name == "nt":
+                options["creationflags"] = getattr(
+                    subprocess, "CREATE_NO_WINDOW", 0x08000000
+                ) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+            else:
+                options["start_new_session"] = True
             subprocess.Popen(
                 [
                     sys.executable,
@@ -68,12 +102,7 @@ def launch_worker(store, run_id):
                     "--run",
                     run_id,
                 ],
-                stdin=subprocess.DEVNULL,
-                stdout=log,
-                stderr=log,
-                start_new_session=True,
-                close_fds=True,
-                env=child_environment(),
+                **options,
             )
         except OSError as exc:
             with store.db(write=True) as db:
@@ -174,10 +203,30 @@ def exec_claude(state_dir, run_id):
             or os.getppid() != row["worker_pid"]
         ):
             return
-        changed = db.execute(
-            "UPDATE runs SET status='running',child_pid=?,child_start=?,heartbeat=? WHERE id=? AND status='launching' AND child_pid IS NULL",
-            (os.getpid(), identity["start"], time.time(), run_id),
-        ).rowcount
+        if store.config["schema"] >= 13:
+            child_identity = json.dumps(
+                {
+                    "pid": os.getpid(),
+                    "start": identity["start"],
+                    "boot": row["boot"],
+                    "namespace": pid_namespace(),
+                    "process_group": os.getpgrp(),
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            changed = db.execute(
+                "UPDATE runs SET status='running',child_pid=?,child_start=?,"
+                "child_identity_json=?,heartbeat=? WHERE id=? AND status='launching' "
+                "AND child_pid IS NULL",
+                (os.getpid(), identity["start"], child_identity, time.time(), run_id),
+            ).rowcount
+        else:
+            changed = db.execute(
+                "UPDATE runs SET status='running',child_pid=?,child_start=?,heartbeat=? "
+                "WHERE id=? AND status='launching' AND child_pid IS NULL",
+                (os.getpid(), identity["start"], time.time(), run_id),
+            ).rowcount
         if not changed:
             return
     os.chdir(project)
@@ -213,9 +262,12 @@ def kill_group(proc, graceful=True):
 
 def run_worker(state_dir, run_id):
     os.umask(0o077)
-    signal.signal(signal.SIGHUP, signal.SIG_IGN)
+    if hasattr(signal, "SIGHUP"):
+        signal.signal(signal.SIGHUP, signal.SIG_IGN)
     stopping = [False]
-    for sig in (signal.SIGTERM, signal.SIGINT):
+    for sig in tuple(
+        getattr(signal, name) for name in ("SIGTERM", "SIGINT") if hasattr(signal, name)
+    ):
         signal.signal(sig, lambda *_: stopping.__setitem__(0, True))
     store = Store(state_dir)
     directory = store.run_dir(run_id)
@@ -240,6 +292,28 @@ def run_worker(state_dir, run_id):
                     time.time() - CLAIM_SECONDS,
                 ),
             ).rowcount
+            if claimed and store.config["schema"] >= 13:
+                platform_name = "windows" if os.name == "nt" else "linux"
+                worker_identity = json.dumps(
+                    {
+                        "pid": os.getpid(),
+                        "start": identity["start"],
+                        "boot": boot_id(),
+                        "namespace": pid_namespace(),
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                db.execute(
+                    "UPDATE runs SET platform=?,worker_identity_json=?,execution_scope='host',"
+                    "process_backend=?,sandbox_backend='none' WHERE id=?",
+                    (
+                        platform_name,
+                        worker_identity,
+                        "windows-job-object" if os.name == "nt" else "posix-process-group",
+                        run_id,
+                    ),
+                )
         if not claimed:
             return
         try:
@@ -286,58 +360,80 @@ def run_worker(state_dir, run_id):
             exec_environment = child_environment()
             if effort is not None:
                 exec_environment[EFFORT_IDENTITY_ENV] = json.dumps(store._effort_identity)
-            script = Path(__file__).resolve().parents[1] / "claude_control_cli.py"
-            with (
-                (directory / "prompt.txt").open("rb") as source,
-                (directory / "events.jsonl").open("wb") as out,
-                (directory / "stderr.txt").open("wb") as err,
-            ):
-                proc = subprocess.Popen(
-                    [
-                        sys.executable,
-                        str(script),
-                        "--state-dir",
-                        str(store.path),
-                        "_exec",
-                        "--run",
-                        run_id,
-                    ],
-                    cwd=project,
-                    stdin=source,
-                    stdout=out,
-                    stderr=err,
-                    start_new_session=True,
-                    close_fds=True,
-                    env=exec_environment,
-                    preexec_fn=lambda: bind_parent(parent),
+            if json_schema is not None:
+                exec_environment["MAX_STRUCTURED_OUTPUT_RETRIES"] = "0"
+            uncertain = False
+            if os.name == "nt":
+                from .windows_process import run_windows_child
+
+                outcome = run_windows_child(
+                    store,
+                    row,
+                    project,
+                    argv,
+                    directory,
+                    exec_environment,
+                    stopping,
+                    OUTPUT_LIMIT,
                 )
-                start = time.monotonic()
-                reason = None
-                while True:
-                    current = store.get_run(run_id)
-                    if stopping[0] or current["cancel_requested"]:
-                        reason = "cancel_requested"
-                    elif child_exited(proc):
-                        break
-                    elif time.monotonic() - start >= row["timeout"]:
-                        reason = "timeout"
-                    elif any(
-                        (directory / name).stat().st_size > OUTPUT_LIMIT
-                        for name in ("events.jsonl", "stderr.txt")
-                    ):
-                        reason = "output_limit"
-                    if reason:
+                exit_code = outcome["exit_code"]
+                reason = outcome["reason"]
+                uncertain = outcome["uncertain"]
+            else:
+                script = Path(__file__).resolve().parents[1] / "claude_control_cli.py"
+                with (
+                    (directory / "prompt.txt").open("rb") as source,
+                    (directory / "events.jsonl").open("wb") as out,
+                    (directory / "stderr.txt").open("wb") as err,
+                ):
+                    proc = subprocess.Popen(
+                        [
+                            sys.executable,
+                            str(script),
+                            "--state-dir",
+                            str(store.path),
+                            "_exec",
+                            "--run",
+                            run_id,
+                        ],
+                        cwd=project,
+                        stdin=source,
+                        stdout=out,
+                        stderr=err,
+                        start_new_session=True,
+                        close_fds=True,
+                        env=exec_environment,
+                        preexec_fn=lambda: bind_parent(parent),
+                    )
+                    start = time.monotonic()
+                    reason = None
+                    while True:
+                        current = store.get_run(run_id)
+                        if stopping[0] or current["cancel_requested"]:
+                            reason = "cancel_requested"
+                        elif child_exited(proc):
+                            break
+                        elif time.monotonic() - start >= row["timeout"]:
+                            reason = "timeout"
+                        elif any(
+                            (directory / name).stat().st_size > OUTPUT_LIMIT
+                            for name in ("events.jsonl", "stderr.txt")
+                        ):
+                            reason = "output_limit"
+                        if reason:
+                            with store.db(write=True) as db:
+                                db.execute(
+                                    "UPDATE runs SET status='stopping',reason=? WHERE id=?",
+                                    (reason, run_id),
+                                )
+                            break
                         with store.db(write=True) as db:
                             db.execute(
-                                "UPDATE runs SET status='stopping',reason=? WHERE id=?",
-                                (reason, run_id),
+                                "UPDATE runs SET heartbeat=? WHERE id=?", (time.time(), run_id)
                             )
-                        break
-                    with store.db(write=True) as db:
-                        db.execute("UPDATE runs SET heartbeat=? WHERE id=?", (time.time(), run_id))
-                    time.sleep(0.15)
-                exit_code = kill_group(proc, graceful=bool(reason))
-                proc = None
+                        time.sleep(0.15)
+                    exit_code = kill_group(proc, graceful=bool(reason))
+                    proc = None
             final_state = store.get_run(run_id)
             if reason is None and final_state["child_pid"] is None and final_state["reason"]:
                 reason = final_state["reason"]
@@ -361,13 +457,18 @@ def run_worker(state_dir, run_id):
             parsed["exit_code"] = exit_code
             parsed["reason"] = reason
             parsed["validated_success"] = bool(
-                parsed.get("validated_success") and exit_code == 0 and reason is None
+                parsed.get("validated_success")
+                and exit_code == 0
+                and reason is None
+                and not uncertain
             )
             write_json(directory / "result.json", parsed)
             result_sha256 = hashlib.sha256((directory / "result.json").read_bytes()).hexdigest()
             (directory / "response.txt").write_text(parsed["response"])
-            status = "cancelled" if reason == "cancel_requested" else "failed"
-            if parsed["validated_success"]:
+            status = "unknown" if uncertain else (
+                "cancelled" if reason == "cancel_requested" else "failed"
+            )
+            if parsed["validated_success"] and not uncertain:
                 status = "completed"
             divergent = any(s != row["backend_id"] for s in parsed["observed_session_ids"])
             finished_at = time.time()
@@ -414,7 +515,7 @@ def run_worker(state_dir, run_id):
                     db.execute("UPDATE sessions SET blocked=1 WHERE id=?", (session["id"],))
         except BaseException as exc:
             cleaned = False
-            if proc is not None:
+            if proc is not None and os.name != "nt":
                 try:
                     kill_group(proc)
                     cleaned = True
@@ -431,7 +532,16 @@ def run_worker(state_dir, run_id):
                         exc.code
                         if isinstance(exc, ControlError)
                         and exc.code
-                        in ("effort_unsupported", "effort_probe_failed", "session_incompatible")
+                        in (
+                            "effort_unsupported",
+                            "effort_probe_failed",
+                            "session_incompatible",
+                            "migration_required",
+                            "helper_missing",
+                            "helper_hash",
+                            "helper_arch",
+                            "helper_manifest",
+                        )
                         and proc is None
                         else f"worker_error:{type(exc).__name__}:{exc}"[:2000],
                         run_id,

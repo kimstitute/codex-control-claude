@@ -58,6 +58,21 @@ class CapabilityTests(unittest.TestCase):
             self.assertFalse(report["capabilities"][name]["supported"])
             self.assertTrue(report["capabilities"][name]["reason"])
 
+    def test_native_windows_enables_sessions_only_for_a_verified_helper(self):
+        report = capability_report(
+            "nt",
+            "win32",
+            lambda _name: False,
+            lambda _name: None,
+            {},
+            helper_probe=lambda _env: (True, "windows-job-object", None, object()),
+        )
+
+        self.assertTrue(report["capabilities"]["session_control"]["supported"])
+        self.assertEqual(
+            report["capabilities"]["session_control"]["backend"], "windows-job-object"
+        )
+
 
 class DefaultPathTests(unittest.TestCase):
     def test_posix_preserves_xdg_and_home_fallbacks(self):

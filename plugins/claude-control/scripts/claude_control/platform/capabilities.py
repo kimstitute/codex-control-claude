@@ -50,15 +50,20 @@ def _linux_report(has_module, which, environ):
     }
 
 
-def _windows_report():
+def _windows_report(environ, helper_probe):
+    helper_supported, helper_backend, helper_reason, _ = helper_probe(environ)
     reasons = {
-        "session_control": "The Windows Job Object backend is not implemented yet",
         "workspace": "The WSL2 Bubblewrap workspace bridge is not implemented yet",
         "sandbox": "The WSL2 Bubblewrap sandbox bridge is not implemented yet",
     }
     capabilities = {
         "provider_usage": _capability(True, backend="windows-local"),
         "tui": _capability(True, backend="windows-ansi-vt"),
+        "session_control": _capability(
+            helper_supported,
+            backend=helper_backend,
+            reason=helper_reason,
+        ),
         **{
             name: _capability(False, reason=reason)
             for name, reason in reasons.items()
@@ -84,11 +89,22 @@ def _unsupported_report(sys_platform):
     }
 
 
-def capability_report(os_name, sys_platform, has_module, which, environ=None):
+def capability_report(
+    os_name,
+    sys_platform,
+    has_module,
+    which,
+    environ=None,
+    helper_probe=None,
+):
     """Return current feature support from caller-supplied platform facts."""
     environ = {} if environ is None else environ
     if sys_platform.startswith("linux"):
         return _linux_report(has_module, which, environ)
     if os_name == "nt":
-        return _windows_report()
+        if helper_probe is None:
+            from ..windows_process import helper_capability
+
+            helper_probe = helper_capability
+        return _windows_report(environ, helper_probe)
     return _unsupported_report(sys_platform)
