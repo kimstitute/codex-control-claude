@@ -452,6 +452,7 @@ def submit_in(store, db, task_id, revision, operation_id, *, retry=False, worksp
             contract.EXECUTION_CONTRACT,
             contract.MESSAGE_CONTRACT,
             contract.WORKFLOW_CONTRACT,
+            contract.LEGACY_WORKSPACE_CONTRACT,
             contract.WORKSPACE_CONTRACT,
         ):
             db.execute(
@@ -482,15 +483,143 @@ def submit_in(store, db, task_id, revision, operation_id, *, retry=False, worksp
 
 def _evidence(evidence, criteria):
     required = {str(i + 1) for i in range(len(criteria))}
-    if (
-        not isinstance(evidence, dict)
-        or set(evidence) != required
-        or any(not isinstance(v, str) or not v.strip() for v in evidence.values())
-        or len(contract.canonical(evidence).encode()) > MAX_BYTES
-    ):
+    if not isinstance(evidence, dict) or set(evidence) != required:
         raise ControlError(
-            "invalid_evidence", "Supply nonempty evidence for every 1-based criterion ID."
+            "invalid_evidence", "Supply evidence for every 1-based criterion ID."
         )
+    normalized = {}
+    for criterion_id, supplied in evidence.items():
+        items = supplied if isinstance(supplied, list) else [supplied]
+        if not items:
+            raise ControlError("invalid_evidence", "Each criterion needs at least one evidence item.")
+        normalized[criterion_id] = []
+        for item in items:
+            if isinstance(item, str):
+                item = {"type": "free_text", "text": item}
+            if not isinstance(item, dict) or not isinstance(item.get("type"), str):
+                raise ControlError("invalid_evidence", "Evidence items must be typed objects.")
+            expected = {
+                "free_text": {"type", "text"},
+                "check_receipt": {"type", "run_id", "seq", "receipt_sha256"},
+                "diff_hunk": {
+                    "type",
+                    "workspace_id",
+                    "manifest_sha256",
+                    "path",
+                    "before_sha256",
+                    "after_sha256",
+                },
+                "review_result": {
+                    "type",
+                    "task_id",
+                    "revision",
+                    "run_id",
+                    "result_sha256",
+                    "recommendation",
+                },
+            }.get(item["type"])
+            if expected is None or set(item) != expected:
+                raise ControlError("invalid_evidence", "Unknown evidence type or fields.")
+            normalized[criterion_id].append(dict(item))
+    if len(contract.canonical(normalized).encode()) > MAX_BYTES:
+        raise ControlError("invalid_evidence", "Acceptance evidence exceeds 1 MiB.")
+    return normalized
+
+
+def _digest(value):
+    return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
+
+
+def _verify_evidence(store, db, evidence):
+    for items in evidence.values():
+        for item in items:
+            kind = item["type"]
+            if kind == "free_text":
+                if not isinstance(item["text"], str) or not item["text"].strip():
+                    raise ControlError("invalid_evidence", "Free-text evidence must be nonempty.")
+                continue
+            if kind == "check_receipt":
+                if (
+                    not isinstance(item["run_id"], str)
+                    or not item["run_id"]
+                    or type(item["seq"]) is not int
+                    or item["seq"] < 0
+                    or not _digest(item["receipt_sha256"])
+                ):
+                    raise ControlError("invalid_evidence", "Invalid check receipt identity.")
+                row = db.execute(
+                    "SELECT q.action,r.result FROM workspace_requests q "
+                    "JOIN workspace_receipts r USING(run_id,seq) WHERE q.run_id=? AND q.seq=?",
+                    (item["run_id"], item["seq"]),
+                ).fetchone()
+                if not row or json.loads(row["action"]).get("op") != "run_check" or contract.digest(
+                    row["result"]
+                ) != item["receipt_sha256"]:
+                    raise ControlError("invalid_evidence", "Check receipt is missing or changed.")
+                continue
+            if kind == "diff_hunk":
+                if (
+                    not isinstance(item["workspace_id"], str)
+                    or not item["workspace_id"]
+                    or not isinstance(item["path"], str)
+                    or not item["path"]
+                    or not _digest(item["manifest_sha256"])
+                    or any(
+                        value is not None and not _digest(value)
+                        for value in (item["before_sha256"], item["after_sha256"])
+                    )
+                ):
+                    raise ControlError("invalid_evidence", "Invalid diff evidence digest.")
+                saved = db.execute(
+                    "SELECT * FROM workspace_exports WHERE workspace_id=?",
+                    (item["workspace_id"],),
+                ).fetchone()
+                if not saved or saved["manifest_sha256"] != item["manifest_sha256"]:
+                    raise ControlError("invalid_evidence", "Frozen diff evidence is missing.")
+                from . import workspace
+                from . import workspace_files
+
+                workspace_row = workspace._get(db, item["workspace_id"])
+                manifest = workspace_files.verify_frozen(
+                    workspace.directory(store, item["workspace_id"]) / "frozen",
+                    json.loads(workspace_row["policy"]),
+                    saved["manifest_sha256"],
+                )
+                expected = {
+                    "path": item["path"],
+                    "before_sha256": item["before_sha256"],
+                    "after_sha256": item["after_sha256"],
+                }
+                if expected not in manifest["changes"]:
+                    raise ControlError("invalid_evidence", "Frozen diff entry is missing or changed.")
+                continue
+            if (
+                not isinstance(item["task_id"], str)
+                or not item["task_id"]
+                or not isinstance(item["run_id"], str)
+                or not item["run_id"]
+                or type(item["revision"]) is not int
+                or item["revision"] < 1
+                or not _digest(item["result_sha256"])
+                or item["recommendation"] not in ("approve", "revise", "blocked")
+            ):
+                raise ControlError("invalid_evidence", "Invalid review result identity.")
+            reviewed_run = db.execute(
+                "SELECT r.* FROM runs r JOIN task_runs t ON t.run_id=r.id "
+                "WHERE r.id=? AND t.task_id=? AND t.revision=? AND r.result_sha256=?",
+                (
+                    item["run_id"],
+                    item["task_id"],
+                    item["revision"],
+                    item["result_sha256"],
+                ),
+            ).fetchone()
+            if not reviewed_run:
+                raise ControlError("invalid_evidence", "Review result is missing.")
+            checked = contract.inspect_run(store, db, reviewed_run)
+            review = checked["report"].get("review") if checked["report"] else None
+            if not review or review.get("recommendation") != item["recommendation"]:
+                raise ControlError("invalid_evidence", "Review recommendation is missing or changed.")
 
 
 def _decision(
@@ -544,6 +673,10 @@ def _decision_in(
         raise ControlError("invalid_review", "Select approve, revise or blocked.")
     if not isinstance(result_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", result_sha256):
         raise ControlError("invalid_digest", "Use the exact SHA-256 from the completed run.")
+    version = _revision(db, task_id, revision)
+    snapshot = contract.read(version["prompt"])
+    supplied_evidence = evidence
+    evidence = _evidence(evidence, snapshot["assignment"]["acceptance_criteria"])
     fingerprint, prior = _operation(
         db,
         operation_id,
@@ -553,7 +686,7 @@ def _decision_in(
             revision=revision,
             run=run_id,
             digest=result_sha256,
-            evidence=evidence,
+            evidence=supplied_evidence,
             reviewer=reviewer,
             recommendation=recommendation,
         ),
@@ -561,9 +694,7 @@ def _decision_in(
     if prior:
         return {**prior, "deduplicated": True}
     task = _task(db, task_id, revision if kind == "accept" else None)
-    version = _revision(db, task_id, revision)
-    snapshot = contract.read(version["prompt"])
-    _evidence(evidence, snapshot["assignment"]["acceptance_criteria"])
+    _verify_evidence(store, db, evidence)
     row = db.execute(
         "SELECT r.* FROM runs r JOIN task_runs t ON t.run_id=r.id "
         "WHERE r.id=? AND t.task_id=? AND t.revision=?",

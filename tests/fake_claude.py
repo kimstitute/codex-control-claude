@@ -12,7 +12,7 @@ from pathlib import Path
 
 ASSIGNMENT_PROTOCOL = "claude-control.assignment.v1"
 WORKFLOW_PROTOCOL = "claude-control.task.v5"
-WORKSPACE_PROTOCOL = "claude-control.task.v6"
+WORKSPACE_PROTOCOLS = {"claude-control.task.v6", "claude-control.task.v7"}
 
 
 def _print_json(value: object) -> None:
@@ -74,7 +74,7 @@ def _assignment_fixture(context: object) -> dict[str, object]:
     if not isinstance(context, str):
         return {}
     try:
-        value = json.loads(context)
+        value, _ = json.JSONDecoder().raw_decode(context.lstrip())
     except json.JSONDecodeError:
         return {}
     if not isinstance(value, dict):
@@ -84,14 +84,14 @@ def _assignment_fixture(context: object) -> dict[str, object]:
 
 
 def _assignment_text(prompt: dict[str, object]) -> tuple[str, dict[str, object]] | None:
-    if prompt.get("protocol") not in (
+    if prompt.get("protocol") not in {
         ASSIGNMENT_PROTOCOL,
         "claude-control.task.v2",
         "claude-control.task.v3",
         "claude-control.task.v4",
         WORKFLOW_PROTOCOL,
-        WORKSPACE_PROTOCOL,
-    ):
+        *WORKSPACE_PROTOCOLS,
+    }:
         return None
     assignment = prompt.get("assignment")
     role = prompt.get("role")
@@ -112,16 +112,16 @@ def _assignment_text(prompt: dict[str, object]) -> tuple[str, dict[str, object]]
         "limitations": ["Fixture supplies no external evidence."],
         "handoff": "",
     }
-    if prompt.get("protocol") in (
+    if prompt.get("protocol") in {
         "claude-control.task.v2",
         "claude-control.task.v3",
         "claude-control.task.v4",
         WORKFLOW_PROTOCOL,
-        WORKSPACE_PROTOCOL,
-    ):
+        *WORKSPACE_PROTOCOLS,
+    }:
         report["task_id"] = prompt["task"]["id"]
         report["revision"] = prompt["task"]["revision"]
-    if prompt.get("protocol") == WORKSPACE_PROTOCOL:
+    if prompt.get("protocol") in WORKSPACE_PROTOCOLS:
         rounds = fixture.get("workspace_operations", [])
         revision = prompt["task"]["revision"]
         operations: object = []
@@ -183,7 +183,42 @@ def _assignment_text(prompt: dict[str, object]) -> tuple[str, dict[str, object]]
             if isinstance(override, dict):
                 review.update(override)
         report["review"] = review
+    workspace_envelope = prompt.get("workspace")
+    if (
+        prompt.get("protocol") in WORKSPACE_PROTOCOLS
+        and isinstance(workspace_envelope, dict)
+        and isinstance(workspace_envelope.get("review"), dict)
+    ):
+        review_envelope = workspace_envelope["review"]
+        recommendation = fixture.get("workspace_recommendation", "approve")
+        criteria = {
+            key: {"verdict": "pass", "evidence": f"Fixture checked criterion {key}."}
+            for key in review_envelope["criteria"]
+        }
+        unverified = []
+        instructions = ""
+        if recommendation == "revise":
+            first = next(iter(criteria))
+            criteria[first] = {"verdict": "fail", "evidence": "Fixture found a defect."}
+            instructions = "Correct the failed criterion."
+        elif recommendation == "blocked":
+            first = next(iter(criteria))
+            criteria[first] = {"verdict": "unknown", "evidence": "Fixture lacks evidence."}
+            unverified = ["Required evidence is unavailable."]
+        report["review"] = {
+            "target": review_envelope["target"],
+            "recommendation": recommendation,
+            "criteria": criteria,
+            "unverified": unverified,
+            "revision_instructions": instructions,
+        }
     override = fixture.get("report")
+    reports = fixture.get("reports")
+    if isinstance(reports, list) and reports:
+        revision = prompt.get("task", {}).get("revision", 1)
+        candidate = reports[min(max(int(revision) - 1, 0), len(reports) - 1)]
+        if isinstance(candidate, dict):
+            override = candidate
     if isinstance(override, dict):
         report.update(override)
     response = fixture.get("response")
@@ -215,7 +250,7 @@ def _run(arguments: list[str]) -> int:
             "fake Claude CLI: --model --effort --safe-mode --setting-sources "
             "--strict-mcp-config --session-id --resume --tools "
             "--permission-prompts --output-format --disable-slash-commands "
-            "--mcp-config --permission-mode --verbose -p"
+            "--mcp-config --permission-mode --json-schema --verbose -p"
         )
         return 0
     if arguments[:2] == ["auth", "status"]:
@@ -290,8 +325,7 @@ def _run(arguments: list[str]) -> int:
         return 0
 
     is_error = behavior == "error"
-    _print_json(
-        {
+    result = {
             "type": "result",
             "subtype": "error" if is_error else "success",
             "session_id": response_session,
@@ -299,7 +333,13 @@ def _run(arguments: list[str]) -> int:
             "result": "fixture error" if is_error else text,
             "usage": {"input_tokens": 4, "output_tokens": 2},
         }
-    )
+    if not is_error and _option(arguments, "--json-schema") is not None:
+        try:
+            result["structured_output"] = json.loads(text)
+            result["result"] = ""
+        except json.JSONDecodeError:
+            pass
+    _print_json(result)
     return 1 if is_error else 0
 
 

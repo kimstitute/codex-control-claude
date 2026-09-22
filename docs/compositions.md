@@ -52,10 +52,14 @@ assignment before creating the editor workspace.
 
 When the editor freezes a final export, the next composition step automatically
 creates a separate reviewer workspace from that frozen tree. It never reads the
-live repository or a mutable editor tree. The reviewer result is evidence for
-Codex and cannot accept or change the editor result.
+live repository or a mutable editor tree. The reviewer returns a structured
+verdict for every editor criterion plus an `approve`, `revise`, or `blocked`
+recommendation. It cannot accept or change the editor result, but `revise` and
+`blocked` veto editor acceptance.
 
-After both exports exist, status reports `awaiting_codex/final_review_ready`.
+After both exports exist, an approval reports
+`awaiting_codex/final_review_ready`. Other recommendations report
+`final_review_revise` or `final_review_blocked` and keep the acceptance gate closed.
 Inspect the plan, editor export and reviewer export, then use `task accept` on the
 exact editor task revision, run and result digest. Composition status derives
 `accepted` only from that exact ledger record and intact frozen evidence.

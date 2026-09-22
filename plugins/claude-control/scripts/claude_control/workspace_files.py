@@ -473,6 +473,39 @@ def write_text(directory, relative, content, policy):
     }
 
 
+def apply_patch(directory, relative, base_sha256, hunks, policy):
+    """Apply validated line hunks to an existing UTF-8 file with an exact base hash."""
+    current = read_text(directory, relative, policy)
+    if current["sha256"] != base_sha256:
+        _error("workspace_conflict", "Patch base SHA-256 does not match the current file.")
+    source = current["content"].splitlines(keepends=True)
+    output = []
+    source_index = 0
+    for hunk in hunks:
+        start = hunk["old_start"] - 1
+        if start < source_index or start > len(source):
+            _error("workspace_conflict", "Patch hunk is outside the current file.")
+        output.extend(source[source_index:start])
+        if hunk["new_start"] != len(output) + 1:
+            _error("workspace_conflict", "Patch new_start does not match the result position.")
+        cursor = start
+        for line in hunk["lines"]:
+            marker, payload = line[0], line[1:]
+            if marker in " -":
+                if cursor >= len(source) or source[cursor] != payload:
+                    _error("workspace_conflict", "Patch context differs from the current file.")
+                cursor += 1
+            if marker in " +":
+                output.append(payload)
+        if cursor - start != hunk["old_count"]:
+            _error("workspace_conflict", "Patch consumed an unexpected source range.")
+        source_index = cursor
+    output.extend(source[source_index:])
+    result = write_text(directory, relative, "".join(output), policy)
+    result["hunks"] = len(hunks)
+    return result
+
+
 def _diff(path: str, before: bytes | None, after: bytes | None) -> str:
     before_text = "" if before is None else _text(before)
     after_text = "" if after is None else _text(after)

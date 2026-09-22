@@ -112,10 +112,17 @@ blocked, budget-exhausted, or unknown execution is not automatically retried.
 
 An intermediate Claude report has `status: "blocked"` and 0–8 requested
 operations. `read` names a readable file, `write` replaces the full UTF-8
-contents of one exactly writable file (at most 128 KiB), and `run_check` names
+contents of one exactly writable file (at most 128 KiB), `patch` applies ordered
+line hunks only when `base_sha256` matches the current file, and `run_check` names
 one policy check. The controller records every request and result receipt; it
 will not claim an operation succeeded without a returned receipt. A final report
 has `operations: []` and model status `complete`.
+
+Structured task turns pass the frozen report schema to Claude Code with
+`--json-schema`; raw `start` and `followup` calls keep their existing unstructured
+behavior. If a completed workspace call has an invalid report, no requests or
+receipts, an unchanged tree, and remaining call budget, the controller creates
+one same-session format-repair revision. A malformed repair is never retried.
 
 ## Export and accept the completed result
 

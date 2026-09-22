@@ -124,6 +124,20 @@ def checked_effort(store, row, session, *, probe=True):
     return effort
 
 
+def structured_report_schema(store, row):
+    """Load a task run's frozen prompt and derive its CLI output schema."""
+    if store.config["schema"] < 4:
+        return None
+    from . import task_contracts
+
+    with store.db() as db:
+        linked = db.execute("SELECT 1 FROM task_runs WHERE run_id=?", (row["id"],)).fetchone()
+    if not linked:
+        return None
+    prompt = (store.run_dir(row["id"]) / "prompt.txt").read_text(encoding="utf-8")
+    return task_contracts.report_schema(task_contracts.read(prompt))
+
+
 def exec_claude(state_dir, run_id):
     """Persist exec identity before model launch; a late wrapper cannot escape quarantine."""
     store = Store(state_dir)
@@ -139,12 +153,14 @@ def exec_claude(state_dir, run_id):
                 (exc.code, run_id),
             )
         raise
+    json_schema = structured_report_schema(store, row)
     argv = build_argv(
         store.config["claude_bin"],
         session["model"],
         row["backend_id"],
         bool(row["resume"]),
         effort=effort,
+        json_schema=json_schema,
     )
     argv[1:1] = ["--setting-sources", ""]
     identity = proc_identity(os.getpid())
@@ -165,7 +181,10 @@ def exec_claude(state_dir, run_id):
         if not changed:
             return
     os.chdir(project)
-    os.execve(argv[0], argv, child_environment())
+    environment = child_environment()
+    if json_schema is not None:
+        environment["MAX_STRUCTURED_OUTPUT_RETRIES"] = "0"
+    os.execve(argv[0], argv, environment)
 
 
 def kill_group(proc, graceful=True):
@@ -227,12 +246,14 @@ def run_worker(state_dir, run_id):
             session = store.session(row["session_id"])
             project = store.project(session["project"])
             effort = checked_effort(store, row, session)
+            json_schema = structured_report_schema(store, row)
             argv = build_argv(
                 store.config["claude_bin"],
                 session["model"],
                 row["backend_id"],
                 bool(row["resume"]),
                 effort=effort,
+                json_schema=json_schema,
             )
             # Safe mode disables hooks/plugins; empty sources further excludes project settings.
             argv[1:1] = ["--setting-sources", ""]
@@ -327,7 +348,10 @@ def run_worker(state_dir, run_id):
                 reason = "cancel_requested"
             try:
                 parsed = parse_stream(
-                    directory / "events.jsonl", session["model"], row["backend_id"]
+                    directory / "events.jsonl",
+                    session["model"],
+                    row["backend_id"],
+                    expect_structured_output=json_schema is not None,
                 )
             except (ValueError, OSError) as exc:
                 parsed = dict(

@@ -52,11 +52,14 @@ composition run)은 그 검증된 계획 보고서와 출처(provenance)를 편�
 
 편집자가 최종 익스포트를 고정(freeze)하면, 다음 구성 단계는 그 고정된 트리로부터
 별도의 검토자 워크스페이스를 자동으로 생성합니다. 이는 라이브 저장소나 변경 가능한
-편집자 트리를 절대 읽지 않습니다. 검토자 결과는 Codex를 위한 증거일 뿐이며
-편집자 결과를 수락하거나 변경할 수 없습니다.
+편집자 트리를 절대 읽지 않습니다. 검토자는 편집자의 각 기준에 대한 구조화
+verdict와 `approve`, `revise`, `blocked` 권고를 반환합니다. 편집자 결과를 직접
+승인하거나 변경할 수는 없지만, `revise`와 `blocked`는 편집자 승인을 거부합니다.
 
-두 익스포트가 모두 존재하면, 상태는 `awaiting_codex/final_review_ready`를
-보고합니다. 계획, 편집자 익스포트, 검토자 익스포트를 확인한 뒤, 정확한 편집자
+두 익스포트가 모두 존재하고 권고가 approve이면 상태는
+`awaiting_codex/final_review_ready`를 보고합니다. 다른 권고는
+`final_review_revise` 또는 `final_review_blocked`로 표시되며 승인 gate가 닫힙니다.
+계획, 편집자 익스포트, 검토자 익스포트를 확인한 뒤, 정확한 편집자
 작업 리비전, 실행, 결과 digest에 대해 `task accept`를 사용하세요. 구성 상태는
 그 정확한 원장(ledger) 기록과 온전한 고정 증거로부터만 `accepted`를 도출합니다.
 

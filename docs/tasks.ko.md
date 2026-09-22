@@ -66,16 +66,21 @@ claude_control report --run <RUN_ID>
 
 ### 4. 검토
 
-run이 끝나면 reviewer는 각 acceptance criterion에 대한 검토 결과를 evidence 파일에 기록합니다. evidence는 1부터 시작하는 각 criterion id를 비어 있지 않은 메모에 매핑하는 평평한 JSON 객체입니다. 예: `/srv/project/evidence/refactor-auth-run1.json`.
+run이 끝나면 reviewer는 각 acceptance criterion에 대한 검토 결과를 evidence 파일에 기록합니다. evidence는 1부터 시작하는 모든 criterion id를 하나 이상의 타입 객체에 매핑합니다. 예: `/srv/project/evidence/refactor-auth-run1.json`.
 
 ```json
 {
-  "1": "Compared the proposed text against the supplied requirements.",
-  "2": "Checked the stated limitations against the supplied context."
+  "1": [{"type": "free_text", "text": "결과를 요구사항과 대조했습니다."}],
+  "2": [{
+    "type": "check_receipt",
+    "run_id": "<workspace-run-uuid>",
+    "seq": 0,
+    "receipt_sha256": "<canonical-receipt-sha256>"
+  }]
 }
 ```
 
-파일은 최대 1MiB여야 하며, `accept`의 경우 개정이 요구하는 모든 criterion을 다루어야 합니다. 잘못된 형식의 JSON, 중복 키, 문자열이 아니거나 비어 있는 값, 숫자가 아닌 키는 모두 `invalid_evidence`로 거부됩니다.
+파일은 최대 1MiB여야 하며, `accept`의 경우 개정이 요구하는 모든 criterion을 다루어야 합니다. 지원 타입은 `free_text`, `check_receipt`, `diff_hunk`, `review_result`입니다. 뒤의 세 타입은 불변 workspace receipt, 동결 manifest, 구조화 review run과 대조됩니다. 기존 문자열 입력은 저장할 때 `free_text`로 정규화됩니다. 알 수 없는 필드, 빈 항목, 일치하지 않는 digest, 숫자가 아닌 criterion 키는 `invalid_evidence`로 거부됩니다.
 
 ```shell
 claude_control task review \

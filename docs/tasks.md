@@ -108,20 +108,28 @@ for any run, including task runs, and recognizes the v2 task turn report shape.
 ### 4. Review
 
 Once a run finishes, a reviewer records findings against each acceptance
-criterion in an evidence file. Evidence is a flat JSON object mapping each
-1-based criterion id to a non-empty note, for example
+criterion in an evidence file. Evidence maps every 1-based criterion id to one
+or more typed items, for example
 `/srv/project/evidence/refactor-auth-run1.json`:
 
 ```json
 {
-  "1": "Compared the proposed text against the supplied requirements.",
-  "2": "Checked the stated limitations against the supplied context."
+  "1": [{"type": "free_text", "text": "Compared the result with the requirements."}],
+  "2": [{
+    "type": "check_receipt",
+    "run_id": "<workspace-run-uuid>",
+    "seq": 0,
+    "receipt_sha256": "<sha256-of-the-canonical-receipt>"
+  }]
 }
 ```
 
 The file must be at most 1 MiB and, for `accept`, must cover every criterion
-required by the revision. Malformed JSON, duplicate keys, non-string or empty
-values, and non-numeric keys are all rejected as `invalid_evidence`.
+required by the revision. Supported types are `free_text`, `check_receipt`,
+`diff_hunk`, and `review_result`. The last three are checked against immutable
+workspace receipts, frozen manifests, or structured review runs. A legacy string
+is normalized to a `free_text` item when recorded. Unknown fields, empty items,
+changed digests, and non-numeric criterion keys are rejected as `invalid_evidence`.
 
 ```shell
 claude_control task review \

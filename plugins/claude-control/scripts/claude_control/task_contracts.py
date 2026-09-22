@@ -12,12 +12,258 @@ from .assignments import validate_report as validate_legacy_report
 from .store import ControlError
 from .workflow_contracts import PROTOCOL as WORKFLOW_CONTRACT
 from .workflow_contracts import validate_review
-from .workspace_contracts import OPERATIONS, validate_envelope, validate_operations
+from .workspace_contracts import LEGACY_PROTOCOL as LEGACY_WORKSPACE_CONTRACT
+from .workspace_contracts import operation_contract, review_contract as workspace_review_contract
+from .workspace_contracts import validate_envelope, validate_operations
+from .workspace_contracts import validate_review as validate_workspace_review
 from .workspace_contracts import PROTOCOL as WORKSPACE_CONTRACT
 
 CONTRACT = "claude-control.task.v2"
 EXECUTION_CONTRACT = "claude-control.task.v3"
 MESSAGE_CONTRACT = "claude-control.task.v4"
+WORKSPACE_CONTRACTS = (LEGACY_WORKSPACE_CONTRACT, WORKSPACE_CONTRACT)
+
+
+def _nonempty_string():
+    return {"type": "string", "minLength": 1}
+
+
+def report_schema(snapshot):
+    """Return the exact Claude CLI structured-output schema for a frozen task prompt."""
+    properties = {
+        "task_id": {"type": "string", "const": snapshot["task"]["id"]},
+        "revision": {"type": "integer", "const": snapshot["task"]["revision"]},
+        "role": {"type": "string", "const": snapshot["assignment"]["role"]},
+        "status": {"type": "string", "enum": ["complete", "blocked"]},
+        "summary": _nonempty_string(),
+        "deliverable": _nonempty_string(),
+        "evidence": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["claim", "basis", "reference"],
+                "properties": {
+                    "claim": _nonempty_string(),
+                    "basis": {
+                        "type": "string",
+                        "enum": ["supplied_context", "reasoning"],
+                    },
+                    "reference": _nonempty_string(),
+                },
+            },
+        },
+        "limitations": {"type": "array", "items": _nonempty_string()},
+        "handoff": {"type": "string"},
+    }
+    required = list(properties)
+    if snapshot["protocol"] == WORKFLOW_CONTRACT and snapshot["workflow"]["phase"] == "review":
+        source = snapshot["workflow"]["source"]
+        criterion_ids = sorted(snapshot["workflow"]["criteria"])
+        properties["review"] = {
+            "type": "object",
+            "additionalProperties": False,
+            "required": [
+                "target",
+                "recommendation",
+                "criteria",
+                "unverified",
+                "revision_instructions",
+            ],
+            "properties": {
+                "target": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["task_id", "revision", "run_id", "result_sha256"],
+                    "properties": {
+                        "task_id": {"type": "string", "const": source["task_id"]},
+                        "revision": {"type": "integer", "const": source["revision"]},
+                        "run_id": {"type": "string", "const": source["run_id"]},
+                        "result_sha256": {
+                            "type": "string",
+                            "const": source["result_sha256"],
+                        },
+                    },
+                },
+                "recommendation": {
+                    "type": "string",
+                    "enum": ["approve", "revise", "blocked"],
+                },
+                "criteria": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": criterion_ids,
+                    "properties": {
+                        key: {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "required": ["verdict", "evidence"],
+                            "properties": {
+                                "verdict": {
+                                    "type": "string",
+                                    "enum": ["pass", "fail", "unknown"],
+                                },
+                                "evidence": _nonempty_string(),
+                            },
+                        }
+                        for key in criterion_ids
+                    },
+                },
+                "unverified": {"type": "array", "items": _nonempty_string()},
+                "revision_instructions": {"type": "string"},
+            },
+        }
+        required.append("review")
+    if snapshot["protocol"] in WORKSPACE_CONTRACTS:
+        policy = snapshot["workspace"]["policy"]
+        variants = []
+        if policy["read_paths"]:
+            variants.append(
+                {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["op", "path"],
+                    "properties": {
+                        "op": {"type": "string", "const": "read"},
+                        "path": {"type": "string", "enum": policy["read_paths"]},
+                    },
+                }
+            )
+        if policy["write_paths"]:
+            variants.append(
+                {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["op", "path", "content"],
+                    "properties": {
+                        "op": {"type": "string", "const": "write"},
+                        "path": {"type": "string", "enum": policy["write_paths"]},
+                        "content": {"type": "string", "maxLength": 131072},
+                    },
+                }
+            )
+            if snapshot["protocol"] == WORKSPACE_CONTRACT:
+                hunk = {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": [
+                        "old_start",
+                        "old_count",
+                        "new_start",
+                        "new_count",
+                        "lines",
+                    ],
+                    "properties": {
+                        "old_start": {"type": "integer", "minimum": 1},
+                        "old_count": {"type": "integer", "minimum": 0},
+                        "new_start": {"type": "integer", "minimum": 1},
+                        "new_count": {"type": "integer", "minimum": 0},
+                        "lines": {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": 4096,
+                            "items": {"type": "string", "minLength": 1},
+                        },
+                    },
+                }
+                variants.append(
+                    {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["op", "path", "base_sha256", "hunks"],
+                        "properties": {
+                            "op": {"type": "string", "const": "patch"},
+                            "path": {"type": "string", "enum": policy["write_paths"]},
+                            "base_sha256": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$",
+                            },
+                            "hunks": {
+                                "type": "array",
+                                "minItems": 1,
+                                "maxItems": 64,
+                                "items": hunk,
+                            },
+                        },
+                    }
+                )
+        if policy["checks"]:
+            variants.append(
+                {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["op", "name"],
+                    "properties": {
+                        "op": {"type": "string", "const": "run_check"},
+                        "name": {"type": "string", "enum": sorted(policy["checks"])},
+                    },
+                }
+            )
+        properties["operations"] = {
+            "type": "array",
+            "maxItems": 8,
+            **({"items": {"oneOf": variants}} if variants else {"maxItems": 0}),
+        }
+        required.append("operations")
+        review = snapshot["workspace"].get("review")
+        if review is not None:
+            criterion_ids = sorted(review["criteria"])
+            target = review["target"]
+            properties["review"] = {
+                "type": "object",
+                "additionalProperties": False,
+                "required": [
+                    "target",
+                    "recommendation",
+                    "criteria",
+                    "unverified",
+                    "revision_instructions",
+                ],
+                "properties": {
+                    "target": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": list(target),
+                        "properties": {
+                            key: {"type": "string", "const": value}
+                            for key, value in target.items()
+                        },
+                    },
+                    "recommendation": {
+                        "type": "string",
+                        "enum": ["approve", "revise", "blocked"],
+                    },
+                    "criteria": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": criterion_ids,
+                        "properties": {
+                            key: {
+                                "type": "object",
+                                "additionalProperties": False,
+                                "required": ["verdict", "evidence"],
+                                "properties": {
+                                    "verdict": {
+                                        "type": "string",
+                                        "enum": ["pass", "fail", "unknown"],
+                                    },
+                                    "evidence": _nonempty_string(),
+                                },
+                            }
+                            for key in criterion_ids
+                        },
+                    },
+                    "unverified": {"type": "array", "items": _nonempty_string()},
+                    "revision_instructions": {"type": "string"},
+                },
+            }
+            required.append("review")
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": required,
+        "properties": properties,
+    }
 
 
 def canonical(value):
@@ -57,6 +303,7 @@ def read(prompt):
         EXECUTION_CONTRACT,
         MESSAGE_CONTRACT,
         WORKFLOW_CONTRACT,
+        LEGACY_WORKSPACE_CONTRACT,
         WORKSPACE_CONTRACT,
     ):
         raise ControlError("invalid_snapshot", "Expected an explicit task contract.")
@@ -73,12 +320,21 @@ def read(prompt):
                 "report",
             }:
                 raise ControlError("invalid_snapshot", "Invalid execution dependency.")
-    if data["protocol"] == WORKSPACE_CONTRACT:
-        validate_envelope(data.get("workspace"))
-        if data.get("report_contract", {}).get("operations") != OPERATIONS:
+    if data["protocol"] in WORKSPACE_CONTRACTS:
+        validate_envelope(data.get("workspace"), protocol=data["protocol"])
+        if data.get("report_contract", {}).get("operations") != operation_contract(
+            data["protocol"]
+        ):
             raise ControlError("invalid_snapshot", "Workspace operation contract changed.")
+        review = data["workspace"].get("review")
+        if review is not None and data.get("report_contract", {}).get(
+            "review"
+        ) != workspace_review_contract(review):
+            raise ControlError("invalid_snapshot", "Workspace review contract changed.")
+        if review is None and "review" in data.get("report_contract", {}):
+            raise ControlError("invalid_snapshot", "Unexpected workspace review contract.")
     elif "workspace" in data:
-        raise ControlError("invalid_snapshot", "Workspace input requires task contract v6.")
+        raise ControlError("invalid_snapshot", "Workspace input requires a workspace contract.")
     if data["protocol"] == WORKFLOW_CONTRACT:
         flow = data.get("workflow")
         if not isinstance(flow, dict) or set(flow) != {
@@ -170,14 +426,22 @@ def validate_report(text, snapshot):
     review_phase = (
         snapshot["protocol"] == WORKFLOW_CONTRACT and snapshot["workflow"]["phase"] == "review"
     )
+    workspace_review = (
+        snapshot["protocol"] in WORKSPACE_CONTRACTS
+        and snapshot["workspace"].get("review") is not None
+    )
     if review_phase:
         validate_review(data.get("review"), snapshot["workflow"])
+    elif workspace_review:
+        validate_workspace_review(data.get("review"), snapshot["workspace"]["review"])
     elif "review" in data:
         raise ControlError(
             "invalid_report", "Review extension is only valid for workflow review turns."
         )
-    if snapshot["protocol"] == WORKSPACE_CONTRACT:
-        validate_operations(data, snapshot["workspace"]["policy"])
+    if snapshot["protocol"] in WORKSPACE_CONTRACTS:
+        validate_operations(
+            data, snapshot["workspace"]["policy"], protocol=snapshot["protocol"]
+        )
     elif "operations" in data:
         raise ControlError("invalid_report", "Operations require an explicit workspace contract.")
     legacy_report = {k: v for k, v in data.items() if k not in ("revision", "review", "operations")}
@@ -203,6 +467,7 @@ def inspect_run(store, db, row):
         EXECUTION_CONTRACT,
         MESSAGE_CONTRACT,
         WORKFLOW_CONTRACT,
+        LEGACY_WORKSPACE_CONTRACT,
         WORKSPACE_CONTRACT,
     ):
         execution = db.execute(
@@ -220,9 +485,11 @@ def inspect_run(store, db, row):
             base["report_contract"] = {
                 k: v for k, v in base["report_contract"].items() if k != "review"
             }
-        if snapshot["protocol"] == WORKSPACE_CONTRACT:
+        if snapshot["protocol"] in WORKSPACE_CONTRACTS:
             base["report_contract"] = {
-                k: v for k, v in base["report_contract"].items() if k != "operations"
+                k: v
+                for k, v in base["report_contract"].items()
+                if k not in ("operations", "review")
             }
         base["protocol"] = CONTRACT
         if canonical(base) != prompt or execution["prompt_sha256"] != link["prompt_sha256"]:
@@ -238,6 +505,7 @@ def inspect_run(store, db, row):
             EXECUTION_CONTRACT,
             MESSAGE_CONTRACT,
             WORKFLOW_CONTRACT,
+            LEGACY_WORKSPACE_CONTRACT,
             WORKSPACE_CONTRACT,
         )
     ):
@@ -249,7 +517,7 @@ def inspect_run(store, db, row):
         from .workflow import inspect_binding
 
         inspect_binding(db, snapshot, row["id"])
-    if link["contract"] == WORKSPACE_CONTRACT:
+    if link["contract"] in WORKSPACE_CONTRACTS:
         from .workspace import inspect_binding
 
         inspect_binding(store, db, snapshot, row["id"])

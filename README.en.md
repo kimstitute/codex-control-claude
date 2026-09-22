@@ -25,6 +25,10 @@ accept** composition. It connects the existing bounded planning workflow to a
 private controlled workspace without adding automatic acceptance, retry, merge,
 push or cross-host delivery.
 
+Version 0.10 adds Claude Code `--json-schema` for structured tasks, base-hashed
+hunk patches, one side-effect-free format repair, final-reviewer vetoes, and
+ledger-verified acceptance evidence.
+
 ## Choose the right workflow
 
 | Goal | Use | What it adds |
@@ -431,8 +435,8 @@ every 1-based plan criterion:
 
 ```json
 {
-  "1": "Codex verified the exact file and behavior boundaries.",
-  "2": "Codex verified the proposed regression test and named check."
+  "1": [{"type": "free_text", "text": "Codex verified the exact file and behavior boundaries."}],
+  "2": [{"type": "free_text", "text": "Codex verified the proposed regression test and named check."}]
 }
 ```
 
@@ -490,9 +494,9 @@ criteria:
 
 ```json
 {
-  "1": "Codex inspected the frozen implementation against the accepted plan.",
-  "2": "Codex inspected the frozen regression test.",
-  "3": "Codex verified the recorded named-check receipt and reviewer evidence."
+  "1": [{"type": "free_text", "text": "Codex inspected the frozen implementation against the accepted plan."}],
+  "2": [{"type": "free_text", "text": "Codex inspected the frozen regression test."}],
+  "3": [{"type": "free_text", "text": "Codex verified the recorded named-check receipt and reviewer evidence."}]
 }
 ```
 
@@ -519,6 +523,8 @@ source repository remains a separate Codex/user action.
 | `active` | The named coordinator may have work to advance | Run one bounded coordinator pass |
 | `awaiting_codex/plan_acceptance_required` | Reviewed plan is ready | Inspect and explicitly accept the exact plan |
 | `awaiting_codex/final_review_ready` | Editor and frozen reviewer completed | Inspect both exports and accept the exact editor result |
+| `awaiting_codex/final_review_revise` | Reviewer found a failed criterion | Inspect revision instructions and decide on another edit |
+| `awaiting_codex/final_review_blocked` | Reviewer lacks required evidence | Supply evidence before attempting acceptance |
 | `awaiting_codex/<failure>` | A failure, malformed report, budget limit or uncertainty stopped automation | Inspect the named child; do not create an automatic replacement |
 | `accepted` | Exact editor acceptance exists and evidence is intact | Decide separately whether to integrate the frozen result |
 | `stopping` | Owned children are being drained | Re-run `stop` or `run` to finish cleanup, then inspect |
@@ -679,7 +685,7 @@ are opt-in and use your own Claude account; see [docs/testing.md](docs/testing.m
 
 ## Current scope
 
-Version 0.9 supports Linux, supplied-text delegation, persistent sessions,
+Version 0.10 supports Linux, supplied-text delegation, persistent sessions,
 review-gated task revisions, finite queues/workflows, controller-mediated
 workspace edits and explicit plan/edit/review compositions. Native Claude
 file/shell tools, arbitrary existing-session adoption, conversation forks,

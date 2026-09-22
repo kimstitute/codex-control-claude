@@ -72,14 +72,22 @@ class CompositionTests(ControllerTestCase):
             "max_calls": 4,
         }
 
-    def create(self, label: str, *, plan_fixture: dict | None = None) -> dict:
+    def create(
+        self,
+        label: str,
+        *,
+        plan_fixture: dict | None = None,
+        reviewer_fixture: dict | None = None,
+    ) -> dict:
         self.sequence += 1
         return composition.create(
             Store(self.state),
             self.assignment(label + "-plan", role="planner", model="fable", fixture=plan_fixture),
             self.assignment(label + "-edit", role="executor", model="sonnet"),
             self.editor_policy(),
-            self.assignment(label + "-review", role="verifier", model="fable"),
+            self.assignment(
+                label + "-review", role="verifier", model="fable", fixture=reviewer_fixture
+            ),
             f"composition-create-{self.sequence}",
             repo=str(self.repo),
             reviewer_effort="high",
@@ -419,6 +427,25 @@ class CompositionTests(ControllerTestCase):
 
         self.assertEqual((accepted["state"], accepted["reason"]), ("accepted", "codex_accepted"))
         self.assertEqual(accepted["acceptance_decision_id"], decision["id"])
+
+    def test_final_reviewer_revise_verdict_vetoes_editor_acceptance(self) -> None:
+        created = self.create(
+            "final-veto", reviewer_fixture={"workspace_recommendation": "revise"}
+        )
+        self.accept_plan(created["id"])
+        vetoed = self.advance_until(
+            created["id"],
+            lambda value: value["reason"] == "final_review_revise",
+        )
+        editor_task = vetoed["members"]["editor"]["task_id"]
+
+        self.assertEqual(vetoed["state"], "awaiting_codex")
+        self.assert_error(
+            "composition_review_veto",
+            self.accept_task,
+            editor_task,
+            "accept-vetoed-editor",
+        )
 
     def test_stop_after_final_review_revokes_editor_acceptance_gate(self) -> None:
         created = self.create("stop-final-review")

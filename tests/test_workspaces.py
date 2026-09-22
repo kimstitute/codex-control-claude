@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import subprocess
 import sys
@@ -14,7 +15,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "plugins/claude-control/scripts"))
 
-from claude_control import messages, scheduler, tasks, workspace  # noqa: E402
+from claude_control import messages, scheduler, task_contracts, tasks, workspace  # noqa: E402
 from claude_control.store import ControlError, Store  # noqa: E402
 from test_controller import ControllerTestCase  # noqa: E402
 
@@ -297,6 +298,44 @@ class WorkspaceTests(ControllerTestCase):
         self.assertEqual((self.repo / "README.md").read_text(encoding="utf-8"), "base\n")
         self.assertEqual(result["task"]["id"], bound["task_id"])
 
+    def test_base_hashed_hunk_patch_is_applied_and_receipted(self) -> None:
+        base = hashlib.sha256(b"base\n").hexdigest()
+        fixture = {
+            "workspace_operations": [
+                [
+                    {
+                        "op": "patch",
+                        "path": "README.md",
+                        "base_sha256": base,
+                        "hunks": [
+                            {
+                                "old_start": 1,
+                                "old_count": 1,
+                                "new_start": 1,
+                                "new_count": 1,
+                                "lines": ["-base\n", "+patched\n"],
+                            }
+                        ],
+                    }
+                ],
+                [],
+            ]
+        }
+        created = self.create(policy=self.policy(write=["README.md"]))
+        self.bind(created, self.assignment("patch-finish", fixture=fixture))
+
+        result = self.run_workspace(created["id"])
+        exported = workspace.export(Store(self.state), created["id"])
+        receipt = result["receipts"][0]["result"]
+
+        self.assertEqual(result["state"], "finished")
+        self.assertEqual(receipt["before_sha256"], base)
+        self.assertEqual(receipt["hunks"], 1)
+        self.assertEqual(
+            (Path(exported["directory"]) / "tree/README.md").read_text(encoding="utf-8"),
+            "patched\n",
+        )
+
     def test_accept_requires_intact_frozen_export(self) -> None:
         created = self.create()
         bound = self.bind(created, self.assignment("accept-frozen"))
@@ -453,10 +492,83 @@ class WorkspaceTests(ControllerTestCase):
         self.assertEqual(result["actions_used"], 1)
         execute.assert_called_once()
 
+    def test_typed_check_receipt_evidence_is_verified_against_the_ledger(self) -> None:
+        fixture = {"workspace_operations": [[{"op": "run_check", "name": "unit"}], []]}
+        policy = self.policy(checks={"unit": {"argv": ["/usr/bin/true"], "timeout": 2}})
+        created = self.create(policy=policy)
+        bound = self.bind(created, self.assignment("typed-check-evidence", fixture=fixture))
+        receipt = {
+            "outcome": "ok",
+            "exit_code": 0,
+            "duration": 0.01,
+            "truncated": False,
+            "stdout": "",
+            "stderr": "",
+            "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        }
+        with (
+            mock.patch.object(workspace.sandbox, "require"),
+            mock.patch.object(workspace.sandbox, "execute", return_value=receipt),
+        ):
+            result = workspace.run(Store(self.state), created["id"], max_seconds=8)
+        final_run = result["task"]["runs"][-1]
+        recorded = result["receipts"][0]
+        evidence = {
+            "1": [
+                {
+                    "type": "check_receipt",
+                    "run_id": recorded["run_id"],
+                    "seq": recorded["seq"],
+                    "receipt_sha256": task_contracts.digest(
+                        task_contracts.canonical(recorded["result"])
+                    ),
+                }
+            ]
+        }
+
+        decision = tasks.accept(
+            Store(self.state),
+            bound["task_id"],
+            result["task"]["current_revision"],
+            final_run["id"],
+            final_run["result_sha256"],
+            evidence,
+            "accept-typed-check-evidence",
+        )
+
+        self.assertEqual(decision["evidence"], evidence)
+
     def test_malformed_workspace_report_halts_without_operation(self) -> None:
         fixture = {"report": {"operations": "not-a-list"}}
         created = self.create()
         self.bind(created, self.assignment("malformed-report", fixture=fixture))
+
+        result = self.run_workspace(created["id"])
+
+        self.assertEqual((result["state"], result["reason"]), ("awaiting_codex", "invalid_report"))
+        self.assertEqual((result["calls_used"], result["actions_used"]), (2, 0))
+        self.assertEqual(len({run["session_id"] for run in result["task"]["runs"]}), 1)
+
+    def test_side_effect_free_invalid_report_gets_one_bounded_repair(self) -> None:
+        fixture = {"reports": [{"operations": "not-a-list"}, {"operations": []}]}
+        created = self.create()
+        self.bind(created, self.assignment("repaired-report", fixture=fixture))
+
+        result = self.run_workspace(created["id"])
+
+        self.assertEqual(result["state"], "finished")
+        self.assertEqual((result["calls_used"], result["actions_used"]), (2, 0))
+        self.assertEqual(len({run["session_id"] for run in result["task"]["runs"]}), 1)
+        self.assertIn(
+            workspace.FORMAT_REPAIR_SCOPE,
+            result["task"]["revisions"][1]["prompt"],
+        )
+
+    def test_invalid_report_is_not_repaired_without_call_budget(self) -> None:
+        fixture = {"report": {"operations": "not-a-list"}}
+        created = self.create(policy=self.policy(max_calls=1))
+        self.bind(created, self.assignment("repair-budget", fixture=fixture))
 
         result = self.run_workspace(created["id"])
 

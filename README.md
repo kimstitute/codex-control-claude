@@ -24,6 +24,10 @@ Sonnet, 중요한 계획과 검토는 Fable에 맡기면서 각 대화의 정확
 최종 승인** 흐름을 제공합니다. 계획과 편집 단계를 연결하지만 자동 승인,
 자동 재시도, 원본 반영, merge, push, 서버 간 전달은 수행하지 않습니다.
 
+0.10 버전은 구조화 task에 Claude Code `--json-schema`를 적용하고,
+base hash 기반 hunk patch, 부작용 없는 형식 오류의 1회 보정, 최종 reviewer
+거부권, 원장 검증형 acceptance evidence를 추가합니다.
+
 ## 어떤 명령을 선택해야 하나요?
 
 | 원하는 일 | 사용할 기능 | 추가되는 보장 |
@@ -430,8 +434,8 @@ claude_control result --run <plan-run-uuid>
 
 ```json
 {
-  "1": "Codex verified the exact file and behavior boundaries.",
-  "2": "Codex verified the proposed regression test and named check."
+  "1": [{"type": "free_text", "text": "Codex verified the exact file and behavior boundaries."}],
+  "2": [{"type": "free_text", "text": "Codex verified the proposed regression test and named check."}]
 }
 ```
 
@@ -489,9 +493,9 @@ claude_control report --run <reviewer-run-uuid>
 
 ```json
 {
-  "1": "Codex inspected the frozen implementation against the accepted plan.",
-  "2": "Codex inspected the frozen regression test.",
-  "3": "Codex verified the recorded named-check receipt and reviewer evidence."
+  "1": [{"type": "free_text", "text": "Codex inspected the frozen implementation against the accepted plan."}],
+  "2": [{"type": "free_text", "text": "Codex inspected the frozen regression test."}],
+  "3": [{"type": "free_text", "text": "Codex verified the recorded named-check receipt and reviewer evidence."}]
 }
 ```
 
@@ -518,6 +522,8 @@ editor/reviewer export에서 파생됩니다. 동결 patch나 파일을 원본�
 | `active` | 명시적으로 진행할 단계가 남아 있음 | bounded `composition run` 한 번 실행 |
 | `awaiting_codex/plan_acceptance_required` | 검토된 계획이 준비됨 | 정확한 계획 결과를 확인하고 명시적으로 승인 |
 | `awaiting_codex/final_review_ready` | 편집과 동결본 검토가 완료됨 | 두 export를 확인하고 정확한 편집 결과 승인 |
+| `awaiting_codex/final_review_revise` | reviewer가 기준 실패를 확인함 | revision 지시를 확인하고 새 편집 작업 결정 |
+| `awaiting_codex/final_review_blocked` | reviewer에게 필수 근거가 부족함 | 누락된 근거를 보강하기 전에는 승인하지 않음 |
 | `awaiting_codex/<failure>` | 실패·잘못된 보고서·예산·불확실성으로 자동화가 멈춤 | 해당 child를 조사하고 자동 대체 작업을 만들지 않음 |
 | `accepted` | 정확한 편집 승인과 온전한 증거가 존재함 | 원본 반영 여부를 별도로 결정 |
 | `stopping` | 소유한 실행과 명령을 정리하는 중 | `stop` 또는 `run`으로 정리를 계속한 뒤 확인 |
@@ -679,7 +685,7 @@ ruff format --check .
 
 ## 현재 범위
 
-0.9 버전은 Linux, 텍스트 위임, 영속 세션, 검토·승인 가능한 task 개정,
+0.10 버전은 Linux, 텍스트 위임, 영속 세션, 검토·승인 가능한 task 개정,
 유한 대기열과 workflow, 컨트롤러 매개 workspace 편집, 명시적
 계획·편집·검토 composition을 지원합니다. Claude의 직접 파일·shell 도구,
 임의 기존 세션 인수, 대화 fork, Windows/macOS, MCP adapter, 서버 간 전달,

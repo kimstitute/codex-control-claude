@@ -454,6 +454,12 @@ def _advance(store, composition_id):
                 exported,
             )
         else:
+            recommendation = source["report"]["review"]["recommendation"]
+            reason = {
+                "approve": "final_review_ready",
+                "revise": "final_review_revise",
+                "blocked": "final_review_blocked",
+            }[recommendation]
             with store.db(write=True) as db:
                 _record_result(
                     db,
@@ -465,9 +471,9 @@ def _advance(store, composition_id):
                 )
                 db.execute(
                     "UPDATE compositions SET state='awaiting_codex',"
-                    "reason='final_review_ready' WHERE id=? "
+                    "reason=? WHERE id=? "
                     "AND state='active' AND phase='reviewer'",
-                    (composition_id,),
+                    (reason, composition_id),
                 )
         return []
     if row["state"] == "awaiting_codex":
@@ -513,6 +519,11 @@ def accept_guard(store, db, task_id, run_id):
     ).fetchone()
     if not member:
         return
+    if member["owner_reason"] in ("final_review_revise", "final_review_blocked"):
+        raise ControlError(
+            "composition_review_veto",
+            "The independent reviewer vetoed acceptance; inspect its criterion verdicts.",
+        )
     if member["owner_state"] != "awaiting_codex" or member["owner_reason"] != "final_review_ready":
         raise ControlError(
             "composition_final_review_not_ready",
@@ -524,6 +535,15 @@ def accept_guard(store, db, task_id, run_id):
         raise ControlError(
             "composition_review_required",
             "Accept the exact editor result only after its independent frozen-snapshot review.",
+        )
+    reviewer_run = db.execute(
+        "SELECT * FROM runs WHERE id=?", (reviewer["run_id"],)
+    ).fetchone()
+    checked = contract.inspect_run(store, db, reviewer_run)
+    if checked["report"]["review"]["recommendation"] != "approve":
+        raise ControlError(
+            "composition_review_veto",
+            "The independent reviewer did not recommend approval.",
         )
     saved = db.execute(
         "SELECT * FROM workspace_exports WHERE workspace_id=? AND run_id=?",

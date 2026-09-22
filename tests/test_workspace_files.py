@@ -283,6 +283,39 @@ class WorkspaceFilesTests(unittest.TestCase):
             escape_policy,
         )
 
+    def test_hunk_patch_requires_exact_base_and_context(self) -> None:
+        tree = self.root / "patch-tree"
+        tree.mkdir()
+        target = tree / "file.txt"
+        target.write_text("one\ntwo\nthree\n", encoding="utf-8")
+        target.chmod(0o644)
+        policy = self.policy(read=["file.txt"], write=["file.txt"])
+        base = workspace_files.read_text(tree, "file.txt", policy)["sha256"]
+        hunks = [
+            {
+                "old_start": 2,
+                "old_count": 1,
+                "new_start": 2,
+                "new_count": 2,
+                "lines": ["-two\n", "+second\n", "+2.5\n"],
+            }
+        ]
+
+        receipt = workspace_files.apply_patch(tree, "file.txt", base, hunks, policy)
+
+        self.assertEqual(target.read_text(encoding="utf-8"), "one\nsecond\n2.5\nthree\n")
+        self.assertEqual(receipt["before_sha256"], base)
+        self.assertEqual(receipt["hunks"], 1)
+        self.assert_error(
+            "workspace_conflict",
+            workspace_files.apply_patch,
+            tree,
+            "file.txt",
+            base,
+            hunks,
+            policy,
+        )
+
     def test_freeze_records_only_authorized_text_changes_and_verifies_receipts(self) -> None:
         baseline = self.root / "baseline"
         working = self.root / "working"

@@ -17,7 +17,13 @@ _ALIAS_TO_PREFIX = {"sonnet": "claude-sonnet-", "fable": "claude-fable-"}
 
 
 def build_argv(
-    binary: str, model: str, session_id: str, resume: bool = False, *, effort: str | None = None
+    binary: str,
+    model: str,
+    session_id: str,
+    resume: bool = False,
+    *,
+    effort: str | None = None,
+    json_schema: dict | None = None,
 ) -> list[str]:
     """Build argv for a locked-down, non-interactive Claude CLI session invocation."""
     if model not in ("sonnet", "fable"):
@@ -29,6 +35,13 @@ def build_argv(
 
     effort = validate_effort(effort)
     session_flag = ["--resume", session_id] if resume else ["--session-id", session_id]
+
+    schema_args = []
+    if json_schema is not None:
+        schema_args = [
+            "--json-schema",
+            json.dumps(json_schema, sort_keys=True, separators=(",", ":"), ensure_ascii=True),
+        ]
 
     return [
         binary,
@@ -49,6 +62,7 @@ def build_argv(
         *session_flag,
         "--output-format",
         "stream-json",
+        *schema_args,
         "--verbose",
         "-p",
     ]
@@ -70,7 +84,13 @@ def _collect_text(content: list, errors: list[str], lineno: int) -> tuple[str, i
     return "".join(text_parts), tool_uses
 
 
-def parse_stream(path: str | Path, expected_model: str, expected_session: str) -> dict:
+def parse_stream(
+    path: str | Path,
+    expected_model: str,
+    expected_session: str,
+    *,
+    expect_structured_output: bool = False,
+) -> dict:
     """Parse a bounded stream-json transcript produced by one finished CLI run."""
     with Path(path).open("rb") as handle:
         data = handle.read(MAX_STREAM_BYTES + 1)
@@ -92,6 +112,7 @@ def parse_stream(path: str | Path, expected_model: str, expected_session: str) -
     has_result = False
     result_is_error = False
     result_text = None
+    structured_output = None
     usage: dict = {}
 
     for lineno, raw in enumerate(data.decode("utf-8", errors="replace").splitlines(), start=1):
@@ -157,8 +178,14 @@ def parse_stream(path: str | Path, expected_model: str, expected_session: str) -
             result_field = event.get("result")
             if isinstance(result_field, str):
                 result_text = result_field
-            else:
+            elif not expect_structured_output:
                 errors.append(f"line {lineno}: terminal result must contain a string result")
+            if expect_structured_output:
+                value = event.get("structured_output")
+                if isinstance(value, dict):
+                    structured_output = value
+                else:
+                    errors.append(f"line {lineno}: terminal result missing structured_output object")
             result_usage = event.get("usage")
             if isinstance(result_usage, dict):
                 usage = result_usage
@@ -181,7 +208,12 @@ def parse_stream(path: str | Path, expected_model: str, expected_session: str) -
     if expected_session not in observed_sessions:
         errors.append(f"expected session_id {expected_session!r} not observed")
 
-    response = result_text if result_text is not None else "".join(assistant_texts)
+    if structured_output is not None:
+        response = json.dumps(
+            structured_output, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+        )
+    else:
+        response = result_text if result_text is not None else "".join(assistant_texts)
 
     return {
         "response": response,
@@ -190,6 +222,7 @@ def parse_stream(path: str | Path, expected_model: str, expected_session: str) -
         "tool_use_count": tool_use_count,
         "has_result": has_result,
         "result_is_error": result_is_error,
+        "structured_output": structured_output,
         "errors": errors,
         "usage": usage,
         "validated_success": not errors,

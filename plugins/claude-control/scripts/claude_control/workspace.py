@@ -17,8 +17,13 @@ from . import workspace_sandbox as sandbox
 from .assignments import MAX_BYTES
 from .runner import launch_worker
 from .store import ACTIVE, ControlError, alive, boot_id, pid_namespace, proc_identity
-from .workspace_contracts import OPERATIONS, PROTOCOL, validate_operations
+from .workspace_contracts import OPERATIONS, PROTOCOL, review_contract, validate_operations
 from .workspace_policy import normalize_policy
+
+FORMAT_REPAIR_SCOPE = (
+    "This is the single controller-authorized repair for the preceding malformed report. "
+    "Return exactly one object matching report_contract; do not repeat the malformed format."
+)
 
 
 def _require(store):
@@ -258,6 +263,33 @@ def materialize(store, db, task_id, revision, prompt, workspace_id=None):
         raise ControlError("workspace_owned", "Workspace tasks use their own fixed coordinator.")
     parent = data["task"]["parent_run_id"]
     data["protocol"] = PROTOCOL
+    review = None
+    if row["source_workspace"] is not None and policy["role"] != "executor":
+        source = _get(db, row["source_workspace"])
+        saved = db.execute(
+            "SELECT * FROM workspace_exports WHERE workspace_id=?",
+            (source["id"],),
+        ).fetchone()
+        if not saved:
+            raise ControlError("workspace_unfrozen", "Review source has no frozen export.")
+        manifest = files.verify_frozen(
+            directory(store, source["id"]) / "frozen",
+            json.loads(source["policy"]),
+            saved["manifest_sha256"],
+        )
+        review = {
+            "target": {
+                "workspace_id": source["id"],
+                "run_id": saved["run_id"],
+                "result_sha256": saved["result_sha256"],
+                "manifest_sha256": saved["manifest_sha256"],
+                "tree_sha256": manifest["tree_sha256"],
+            },
+            "criteria": {
+                str(index + 1): criterion
+                for index, criterion in enumerate(data["assignment"]["acceptance_criteria"])
+            },
+        }
     data["workspace"] = dict(
         id=row["id"],
         base_commit=row["base_commit"],
@@ -267,8 +299,11 @@ def materialize(store, db, task_id, revision, prompt, workspace_id=None):
         receipts=_receipts(db, row["id"], parent) if parent else [],
         calls_remaining=policy["max_calls"] - _calls(db, row["id"]) - 1,
         actions_remaining=policy["max_actions"] - _actions(db, row["id"]),
+        review=review,
     )
     data["report_contract"]["operations"] = OPERATIONS
+    if review is not None:
+        data["report_contract"]["review"] = review_contract(review)
     rendered = contract.canonical(data)
     if len(rendered.encode()) > MAX_BYTES:
         raise ControlError(
@@ -398,6 +433,17 @@ def _perform(store, row, run_id, operations):
                     outcome="ok",
                     **files.write_text(root / "tree", action["path"], action["content"], policy),
                 )
+            elif action["op"] == "patch":
+                result = dict(
+                    outcome="ok",
+                    **files.apply_patch(
+                        root / "tree",
+                        action["path"],
+                        action["base_sha256"],
+                        action["hunks"],
+                        policy,
+                    ),
+                )
             else:
                 result = _check_command(store, row, run_id, seq, action)
             result["tree_sha256"] = _tree(store, row)["sha256"]
@@ -493,6 +539,37 @@ def _advance(store, workspace_id):
             )
         checked = contract.inspect_run(store, db, run)
         if checked["format_status"] != "valid":
+            call = db.execute(
+                "SELECT * FROM workspace_calls WHERE run_id=?", (run["id"],)
+            ).fetchone()
+            side_effects = db.execute(
+                "SELECT (SELECT count(*) FROM workspace_requests WHERE run_id=?) + "
+                "(SELECT count(*) FROM workspace_receipts WHERE run_id=?)",
+                (run["id"], run["id"]),
+            ).fetchone()[0]
+            scope = checked["snapshot"]["assignment"]["scope"]
+            can_repair = (
+                checked["format_status"] == "invalid"
+                and not side_effects
+                and tree["sha256"] == call["tree_sha256"]
+                and FORMAT_REPAIR_SCOPE not in scope
+                and _calls(db, workspace_id) < policy["max_calls"]
+            )
+            if can_repair:
+                assignment = dict(json.loads(binding["assignment"]))
+                assignment["scope"] = [*assignment["scope"], FORMAT_REPAIR_SCOPE]
+                tasks.revise_in(
+                    store,
+                    db,
+                    task["id"],
+                    task["current_revision"],
+                    assignment,
+                    f"workspace:{workspace_id}:format-repair:{run['id']}",
+                    parent_run_id=run["id"],
+                    acknowledge_context=True,
+                    workspace_id=workspace_id,
+                )
+                return None
             raise ControlError("invalid_report", "Workspace needs a valid operation report.")
         call = db.execute("SELECT * FROM workspace_calls WHERE run_id=?", (run["id"],)).fetchone()
         if tree["sha256"] != call["tree_sha256"]:

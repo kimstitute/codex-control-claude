@@ -87,6 +87,15 @@ class BuildArgvTests(unittest.TestCase):
         self.assertEqual(argv[argv.index("--resume") + 1], SESSION_ID)
         self.assertNotIn("--session-id", argv)
 
+    def test_structured_schema_is_canonical_and_explicit(self) -> None:
+        schema = {"required": ["status"], "type": "object"}
+        argv = build_argv("claude", "sonnet", SESSION_ID, json_schema=schema)
+
+        self.assertEqual(
+            argv[argv.index("--json-schema") + 1],
+            '{"required":["status"],"type":"object"}',
+        )
+
     def test_rejects_unknown_model_alias(self) -> None:
         with self.assertRaises(ValueError):
             build_argv("claude", "opus", SESSION_ID)
@@ -112,6 +121,30 @@ class ParseStreamTests(unittest.TestCase):
         self.assertEqual(parsed["errors"], [])
         self.assertEqual(parsed["usage"], {"input_tokens": 2, "output_tokens": 1})
         self.assertIs(parsed["validated_success"], True)
+
+    def test_structured_output_becomes_canonical_response(self) -> None:
+        events = _success_events()
+        events[-1]["result"] = ""
+        events[-1]["structured_output"] = {"status": "complete", "revision": 1}
+        with tempfile.TemporaryDirectory() as temp:
+            path = _write_events(Path(temp), events)
+            parsed = parse_stream(
+                path, "sonnet", SESSION_ID, expect_structured_output=True
+            )
+
+        self.assertEqual(parsed["response"], '{"revision":1,"status":"complete"}')
+        self.assertEqual(parsed["structured_output"], {"status": "complete", "revision": 1})
+        self.assertEqual(parsed["errors"], [])
+
+    def test_structured_run_rejects_missing_structured_output(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = _write_events(Path(temp), _success_events())
+            parsed = parse_stream(
+                path, "sonnet", SESSION_ID, expect_structured_output=True
+            )
+
+        self.assertIn("terminal result missing structured_output object", parsed["errors"][0])
+        self.assertIs(parsed["validated_success"], False)
 
     def test_ignores_init_and_auxiliary_models_as_model_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
