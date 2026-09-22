@@ -1,6 +1,7 @@
 """JSON command interface; no remote routing or implicit model selection."""
 
 import argparse
+import importlib.util
 import json
 import os
 import shutil
@@ -23,6 +24,7 @@ from . import (
 from .assignments import CONTRACT, ROLE_PRESETS, load_assignment, render_assignment
 from .execution_settings import EFFORTS
 from .orchestration import observe, report
+from .platform import capability_report, default_state_dir
 from .runner import child_environment, exec_claude, launch_worker, run_worker
 from .store import ACTIVE, ControlError, Store
 
@@ -32,8 +34,7 @@ def parser():
     p.add_argument(
         "--state-dir",
         type=Path,
-        default=Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state")))
-        / "claude-control",
+        default=default_state_dir(),
     )
     p.add_argument("--version", action="version", version=__version__)
     commands = p.add_subparsers(dest="command", required=True)
@@ -45,6 +46,12 @@ def parser():
     doctor = commands.add_parser("doctor")
     doctor.add_argument(
         "--auth", action="store_true", help="Check login, excluding account identifiers."
+    )
+    doctor.add_argument(
+        "--platform", action="store_true", help="Include platform capability details."
+    )
+    doctor.add_argument(
+        "--json", action="store_true", help="Explicitly request the existing JSON output."
     )
     commands.add_parser("list")
     commands.add_parser("roles")
@@ -99,7 +106,14 @@ def parser():
     return p
 
 
-def doctor(store, check_auth):
+def _has_module(name):
+    try:
+        return importlib.util.find_spec(name) is not None
+    except (ImportError, ValueError):
+        return False
+
+
+def doctor(store, check_auth, check_platform=False):
     binary = store.config["claude_bin"]
 
     def call(args):
@@ -154,6 +168,14 @@ def doctor(store, check_auth):
             k: data.get(k) for k in ("loggedIn", "authMethod", "apiProvider", "subscriptionType")
         }
         result["ready"] = result["ready"] and auth.returncode == 0 and data.get("loggedIn") is True
+    if check_platform:
+        result["platform"] = capability_report(
+            os.name,
+            sys.platform,
+            _has_module,
+            shutil.which,
+            os.environ,
+        )
     return result
 
 
@@ -189,7 +211,7 @@ def execute(args):
         return None
     store = Store(args.state_dir)
     if args.command == "doctor":
-        return doctor(store, args.auth)
+        return doctor(store, args.auth, args.platform)
     if args.command == "list":
         return store.list_all()
     if args.command == "delegate":

@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-import curses
 import json
 import math
 import os
 import threading
 import time
 from pathlib import Path
+
+try:
+    import curses
+except ImportError:  # pragma: no cover - exercised on Windows
+    curses = None
 
 from . import provider_usage
 from .store import ACTIVE, ControlError
@@ -762,6 +766,8 @@ class _UsagePoller:
 
 
 def run_tui(store, *, refresh_seconds=0.5, history=100, limits_refresh_seconds=60.0):
+    if curses is None:
+        raise ControlError("tui_unavailable", "The curses TUI is unavailable on this platform.")
     if not math.isfinite(refresh_seconds) or not 0.1 <= refresh_seconds <= 60:
         raise ControlError("invalid_limit", "Monitor refresh must be finite, 0.1–60 seconds.")
     if not math.isfinite(limits_refresh_seconds) or not 30 <= limits_refresh_seconds <= 3600:
