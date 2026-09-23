@@ -20,10 +20,17 @@ class WindowsConsoleTests(unittest.TestCase):
             "a": windows_console.KEY_ACTIVE,
             "j": windows_console.ARROW_DOWN,
             "k": windows_console.ARROW_UP,
+            "[": windows_console.STEP_BACK,
+            "]": windows_console.STEP_FORWARD,
+            "5": "5",
             "\xe0H": windows_console.ARROW_UP,
             "\xe0P": windows_console.ARROW_DOWN,
+            "\xe0K": windows_console.ARROW_LEFT,
+            "\xe0M": windows_console.ARROW_RIGHT,
             "\xe0I": windows_console.PAGE_UP,
             "\xe0Q": windows_console.PAGE_DOWN,
+            "\xe0G": windows_console.HOME,
+            "\xe0O": windows_console.END,
         }
         for sequence, key in expected.items():
             with self.subTest(sequence=sequence):

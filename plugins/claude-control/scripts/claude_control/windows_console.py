@@ -11,14 +11,29 @@ STD_OUTPUT_HANDLE = -11
 
 ARROW_UP = "arrow_up"
 ARROW_DOWN = "arrow_down"
+ARROW_LEFT = "arrow_left"
+ARROW_RIGHT = "arrow_right"
 PAGE_UP = "page_up"
 PAGE_DOWN = "page_down"
+HOME = "home"
+END = "end"
+STEP_BACK = "step_back"
+STEP_FORWARD = "step_forward"
 KEY_QUIT = "quit"
 KEY_TAB = "tab"
 KEY_REFRESH = "refresh"
 KEY_ACTIVE = "active"
 
-_EXTENDED_KEYS = {"H": ARROW_UP, "P": ARROW_DOWN, "I": PAGE_UP, "Q": PAGE_DOWN}
+_EXTENDED_KEYS = {
+    "H": ARROW_UP,
+    "P": ARROW_DOWN,
+    "K": ARROW_LEFT,
+    "M": ARROW_RIGHT,
+    "I": PAGE_UP,
+    "Q": PAGE_DOWN,
+    "G": HOME,
+    "O": END,
+}
 
 
 def enable_vt_processing():
@@ -62,8 +77,12 @@ def decode_key(sequence):
         return _EXTENDED_KEYS.get(sequence[1:2])
     if first == "\t":
         return KEY_TAB
-    if first in "1234":
+    if first in "12345":
         return first
+    if first == "[":
+        return STEP_BACK
+    if first == "]":
+        return STEP_FORWARD
     if first in ("q", "Q"):
         return KEY_QUIT
     if first in ("r", "R"):

@@ -14,7 +14,7 @@ try:
 except ImportError:  # pragma: no cover - exercised on Windows
     curses = None
 
-from . import provider_usage
+from . import observation_view, provider_usage
 from .store import ACTIVE, ControlError
 
 PROTOCOL = "claude-control.monitor.v1"
@@ -666,7 +666,33 @@ def _limit_lines(data):
     return lines
 
 
-def _view_lines(data, view, active_only):
+def _load_replay(store, cursor=None):
+    try:
+        return observation_view.frame(store, through=cursor)
+    except ControlError as exc:
+        return {"error": str(exc), "cursor": 0, "latest_cursor": 0, "at_latest": True}
+
+
+def _replay_lines(replay):
+    if replay.get("error"):
+        return ["Replay unavailable: " + replay["error"]], "observation replay unavailable"
+    cursor, latest = replay["cursor"], replay["latest_cursor"]
+    event = replay.get("event") or {}
+    status = "LIVE" if replay["at_latest"] else "PAUSED"
+    lines = [
+        f"CURSOR {cursor}/{latest}  {status}  fidelity {replay['fidelity']}",
+        observation_view.timeline_bar(cursor, latest, 52),
+        (
+            f"EVENT {event.get('kind', '-')} · {event.get('entity_kind', '-')} · "
+            f"{_short(event.get('entity_id'), 52)}"
+        ),
+        "",
+        *graph_lines(replay["graph"], active_only=False),
+    ]
+    return lines, "historical observation graph"
+
+
+def _view_lines(data, view, active_only, replay=None):
     if view == 0:
         return graph_lines(data, active_only=active_only), (
             "active graph" if active_only else "all graph"
@@ -675,7 +701,9 @@ def _view_lines(data, view, active_only):
         return _agent_lines(data), "managed agents"
     if view == 2:
         return _history_lines(data), "recent run history"
-    return _limit_lines(data), "provider quotas and token activity"
+    if view == 3:
+        return _limit_lines(data), "provider quotas and token activity"
+    return _replay_lines(replay or {"error": "not loaded"})
 
 
 def _safe_add(window, y, x, text, width, attribute=0):
@@ -687,7 +715,7 @@ def _safe_add(window, y, x, text, width, attribute=0):
         pass
 
 
-def _draw(window, data, view, offset, active_only):
+def _draw(window, data, view, offset, active_only, replay):
     window.erase()
     height, width = window.getmaxyx()
     summary = data["summary"]
@@ -699,21 +727,21 @@ def _draw(window, data, view, offset, active_only):
         f"tokens {_tokens(totals['output_tokens'])} out "
     )
     _safe_add(window, 0, 0, title.ljust(width), width, curses.A_REVERSE)
-    tabs = ["1 Graph", "2 Agents", "3 History", "4 Limits"]
+    tabs = ["1 Graph", "2 Agents", "3 History", "4 Limits", "5 Replay"]
     tab_line = "   ".join(f"[{tab}]" if index == view else tab for index, tab in enumerate(tabs))
     _safe_add(window, 1, 0, tab_line, width, curses.A_BOLD)
     _safe_add(
         window,
         2,
         0,
-        "q quit · 1/2/3/4 view · ↑↓/jk scroll · PgUp/PgDn · r refresh · a active graph",
+        "q quit · 1-5 view · ↑↓ scroll · ←→ cursor · Home/End · [/] ±10 · r refresh",
         width,
     )
     if height < 8 or width < 50:
         _safe_add(window, 4, 0, "Terminal is too small (minimum 50×8).", width, curses.A_BOLD)
         window.refresh()
         return 0
-    lines, mode = _view_lines(data, view, active_only)
+    lines, mode = _view_lines(data, view, active_only, replay)
     visible = max(1, height - 5)
     offset = max(0, min(offset, max(0, len(lines) - visible)))
     _safe_add(
@@ -725,7 +753,7 @@ def _draw(window, data, view, offset, active_only):
         curses.A_DIM,
     )
     for row, line in enumerate(lines[offset : offset + visible], start=4):
-        attribute = curses.A_BOLD if row == 4 and view in (1, 2, 3) and offset == 0 else 0
+        attribute = curses.A_BOLD if row == 4 and view in (1, 2, 3, 4) and offset == 0 else 0
         _safe_add(window, row, 0, line, width, attribute)
     captured = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(data["captured_at"]))
     _safe_add(window, height - 1, 0, f"updated {captured}".ljust(width), width, curses.A_REVERSE)
@@ -798,19 +826,21 @@ def run_tui(store, *, refresh_seconds=0.5, history=100, limits_refresh_seconds=6
         window.keypad(True)
         window.timeout(max(100, int(refresh_seconds * 1000)))
         view = 0
-        offsets = [0, 0, 0, 0]
+        offsets = [0, 0, 0, 0, 0]
         active_only = True
         data = _attach_provider_usage(snapshot(store, history=history), poller.get())
+        replay = _load_replay(store)
+        replay_live = True
         while True:
             data = _attach_provider_usage(data, poller.get())
-            offsets[view] = _draw(window, data, view, offsets[view], active_only)
+            offsets[view] = _draw(window, data, view, offsets[view], active_only, replay)
             key = window.getch()
             if key in (ord("q"), ord("Q")):
                 return
-            if key in (ord("1"), ord("2"), ord("3"), ord("4")):
+            if key in (ord("1"), ord("2"), ord("3"), ord("4"), ord("5")):
                 view = key - ord("1")
             elif key == 9:
-                view = (view + 1) % 4
+                view = (view + 1) % 5
             elif key in (curses.KEY_DOWN, ord("j")):
                 offsets[view] += 1
             elif key in (curses.KEY_UP, ord("k")):
@@ -822,8 +852,29 @@ def run_tui(store, *, refresh_seconds=0.5, history=100, limits_refresh_seconds=6
             elif key in (ord("a"), ord("A")) and view == 0:
                 active_only = not active_only
                 offsets[view] = 0
+            elif view == 4 and key in (curses.KEY_LEFT, ord("[")):
+                step = 10 if key == ord("[") else 1
+                replay_live = False
+                replay = _load_replay(store, max(1, replay["cursor"] - step))
+                offsets[view] = 0
+            elif view == 4 and key in (curses.KEY_RIGHT, ord("]")):
+                step = 10 if key == ord("]") else 1
+                target = min(replay["latest_cursor"], replay["cursor"] + step)
+                replay_live = target >= replay["latest_cursor"]
+                replay = _load_replay(store, None if replay_live else target)
+                offsets[view] = 0
+            elif view == 4 and key == curses.KEY_HOME:
+                replay_live = False
+                replay = _load_replay(store, 1)
+                offsets[view] = 0
+            elif view == 4 and key == curses.KEY_END:
+                replay_live = True
+                replay = _load_replay(store)
+                offsets[view] = 0
             if key in (-1, ord("r"), ord("R")):
                 data = snapshot(store, history=history)
+                if replay_live or key in (ord("r"), ord("R")):
+                    replay = _load_replay(store, None if replay_live else replay["cursor"])
                 if key in (ord("r"), ord("R")):
                     poller.refresh()
 
@@ -844,11 +895,11 @@ def _windows_header(data, view, mode, offset, visible, total):
         f"cost ${totals['provider_cost_usd']:.4f}  "
         f"tokens {_tokens(totals['output_tokens'])} out"
     )
-    tabs = ["1 Graph", "2 Agents", "3 History", "4 Limits"]
+    tabs = ["1 Graph", "2 Agents", "3 History", "4 Limits", "5 Replay"]
     tab_line = "   ".join(
         f"[{tab}]" if index == view else tab for index, tab in enumerate(tabs)
     )
-    help_line = "q quit · 1-4 view · arrows/jk scroll · PgUp/PgDn · r refresh · a active"
+    help_line = "q quit · 1-5 view · up/down scroll · left/right cursor · Home/End · [/] ±10"
     last = min(total, offset + visible)
     status = f"{mode} · rows {offset + 1}-{last}/{total}"
     return [title, tab_line, help_line, status]
@@ -863,13 +914,15 @@ def _run_windows_tui(store, *, refresh_seconds, history, limits_refresh_seconds)
         timeout=min(15, limits_refresh_seconds / 2),
     )
     view = 0
-    offsets = [0, 0, 0, 0]
+    offsets = [0, 0, 0, 0, 0]
     active_only = True
     data = _attach_provider_usage(snapshot(store, history=history), poller.get())
+    replay = _load_replay(store)
+    replay_live = True
     try:
         while True:
             columns, rows = windows_console.terminal_size()
-            lines, mode = _view_lines(data, view, active_only)
+            lines, mode = _view_lines(data, view, active_only, replay)
             visible = max(1, rows - 4)
             offset = max(0, min(offsets[view], max(0, len(lines) - visible)))
             offsets[view] = offset
@@ -886,10 +939,10 @@ def _run_windows_tui(store, *, refresh_seconds, history, limits_refresh_seconds)
             data = _attach_provider_usage(data, poller.get())
             if key == windows_console.KEY_QUIT:
                 return
-            if key in ("1", "2", "3", "4"):
+            if key in ("1", "2", "3", "4", "5"):
                 view = int(key) - 1
             elif key == windows_console.KEY_TAB:
-                view = (view + 1) % 4
+                view = (view + 1) % 5
             elif key == windows_console.ARROW_DOWN:
                 offsets[view] += 1
             elif key == windows_console.ARROW_UP:
@@ -901,8 +954,32 @@ def _run_windows_tui(store, *, refresh_seconds, history, limits_refresh_seconds)
             elif key == windows_console.KEY_ACTIVE and view == 0:
                 active_only = not active_only
                 offsets[view] = 0
+            elif view == 4 and key in (windows_console.ARROW_LEFT, windows_console.STEP_BACK):
+                step = 10 if key == windows_console.STEP_BACK else 1
+                replay_live = False
+                replay = _load_replay(store, max(1, replay["cursor"] - step))
+                offsets[view] = 0
+            elif view == 4 and key in (
+                windows_console.ARROW_RIGHT,
+                windows_console.STEP_FORWARD,
+            ):
+                step = 10 if key == windows_console.STEP_FORWARD else 1
+                target = min(replay["latest_cursor"], replay["cursor"] + step)
+                replay_live = target >= replay["latest_cursor"]
+                replay = _load_replay(store, None if replay_live else target)
+                offsets[view] = 0
+            elif view == 4 and key == windows_console.HOME:
+                replay_live = False
+                replay = _load_replay(store, 1)
+                offsets[view] = 0
+            elif view == 4 and key == windows_console.END:
+                replay_live = True
+                replay = _load_replay(store)
+                offsets[view] = 0
             if key in (None, windows_console.KEY_REFRESH):
                 data = snapshot(store, history=history)
+                if replay_live or key == windows_console.KEY_REFRESH:
+                    replay = _load_replay(store, None if replay_live else replay["cursor"])
                 if key == windows_console.KEY_REFRESH:
                     poller.refresh()
     finally:

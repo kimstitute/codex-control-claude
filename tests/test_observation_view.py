@@ -7,8 +7,10 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "plugins/claude-control/scripts"))
+sys.path.insert(0, str(Path(__file__).parent))
 
 from claude_control import observation_view  # noqa: E402
+from test_observation_api import observed_store, populate  # noqa: E402
 
 
 def snapshot():
@@ -79,6 +81,21 @@ class ObservationViewTests(unittest.TestCase):
     def test_invalid_graph_shape_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "node graph"):
             observation_view.graph({})
+
+    def test_frame_reconstructs_selected_cursor_and_latest_high_water(self):
+        store = observed_store()
+        populate(store)
+
+        latest = observation_view.frame(store)
+        earlier = observation_view.frame(store, through=3)
+
+        self.assertTrue(latest["at_latest"])
+        self.assertEqual(latest["cursor"], latest["latest_cursor"])
+        self.assertEqual(earlier["cursor"], 3)
+        self.assertEqual(earlier["latest_cursor"], latest["cursor"])
+        self.assertFalse(earlier["at_latest"])
+        self.assertEqual(earlier["event"]["cursor"], 3)
+        self.assertTrue(any(node["kind"] == "agent" for node in earlier["graph"]["nodes"]))
 
 
 if __name__ == "__main__":
