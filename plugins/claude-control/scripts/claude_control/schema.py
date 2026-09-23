@@ -553,6 +553,35 @@ _REVIEW = (
     "'to_kind','task','to_id',{p}task_id,'revision',{p}revision,'decision',{p}kind,"
     "'reviewer',{p}reviewer,'recommendation',{p}recommendation,'created',{p}created)"
 )
+_TASK_RUN = (
+    "json_object('edge','task_run','from_kind','task','from_id',{p}task_id,"
+    "'from_revision',{p}revision,'to_kind','run','to_id',{p}run_id)"
+)
+_WORKFLOW_RUN = (
+    "json_object('edge','workflow_run','from_kind','workflow','from_id',{p}workflow_id,"
+    "'phase',{p}phase,'round',{p}round,'task_id',{p}task_id,'revision',{p}revision,"
+    "'to_kind','run','to_id',{p}run_id,'created',{p}created)"
+)
+_WORKSPACE_TASK = (
+    "json_object('edge','workspace_task','from_kind','workspace','from_id',{p}workspace_id,"
+    "'to_kind','task','to_id',{p}task_id)"
+)
+_WORKSPACE_RUN = (
+    "json_object('edge','workspace_run','from_kind','workspace','from_id',{p}workspace_id,"
+    "'task_id',{p}task_id,'revision',{p}revision,'to_kind','run','to_id',{p}run_id,"
+    "'created',{p}created)"
+)
+_COMPOSITION_MEMBER = (
+    "json_object('edge','composition_member','from_kind','composition',"
+    "'from_id',{p}composition_id,'phase',{p}phase,'task_id',{p}task_id,"
+    "'to_kind','workspace','to_id',{p}workspace_id,'created',{p}created)"
+)
+_COMPOSITION_RUN = (
+    "json_object('edge','composition_run','from_kind','composition',"
+    "'from_id',{p}composition_id,'phase',{p}phase,'task_id',{p}task_id,"
+    "'revision',{p}revision,'workspace_id',{p}workspace_id,'to_kind','run',"
+    "'to_id',{p}run_id,'created',{p}created)"
+)
 
 _NODES = (
     (
@@ -618,6 +647,48 @@ _EDGES = (
     ),
     ("binding", "message_bindings", _BINDING, "NEW.message_id||'>'||NEW.run_id", "NEW.created"),
     ("review", "review_decisions", _REVIEW, "NEW.id", "NEW.created"),
+    (
+        "task_run",
+        "task_runs",
+        _TASK_RUN,
+        "NEW.task_id||':'||NEW.revision||'>'||NEW.run_id",
+        _NOW,
+    ),
+    (
+        "workflow_run",
+        "workflow_runs",
+        _WORKFLOW_RUN,
+        "NEW.workflow_id||':'||NEW.phase||':'||NEW.round||'>'||NEW.run_id",
+        "NEW.created",
+    ),
+    (
+        "workspace_task",
+        "workspace_tasks",
+        _WORKSPACE_TASK,
+        "NEW.workspace_id||'>'||NEW.task_id",
+        _NOW,
+    ),
+    (
+        "workspace_run",
+        "workspace_calls",
+        _WORKSPACE_RUN,
+        "NEW.workspace_id||'>'||NEW.run_id",
+        "NEW.created",
+    ),
+    (
+        "composition_member",
+        "composition_members",
+        _COMPOSITION_MEMBER,
+        "NEW.composition_id||':'||NEW.phase||'>'||NEW.workspace_id",
+        "NEW.created",
+    ),
+    (
+        "composition_run",
+        "composition_results",
+        _COMPOSITION_RUN,
+        "NEW.composition_id||':'||NEW.phase||'>'||NEW.run_id",
+        "NEW.created",
+    ),
 )
 
 OBSERVATION_LEDGER = """

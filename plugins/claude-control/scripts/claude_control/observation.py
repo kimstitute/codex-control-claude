@@ -55,10 +55,16 @@ _SELECT = (
 # Appended edges carry their identity in the immutable row. The baseline summarises
 # edges without one, so identity is rebuilt from exactly the projected fields the
 # schema-14 triggers concatenate, in the same order.
-_EDGE_FIELDS = {
-    "dependency": ("from_id", "from_revision", "to_id", "to_revision"),
-    "binding": ("from_id", "to_id"),
-    "review": ("id",),
+_EDGE_IDENTITIES = {
+    "dependency": "{from_id}:{from_revision}>{to_id}:{to_revision}",
+    "binding": "{from_id}>{to_id}",
+    "review": "{id}",
+    "task_run": "{from_id}:{from_revision}>{to_id}",
+    "workflow_run": "{from_id}:{phase}:{round}>{to_id}",
+    "workspace_task": "{from_id}>{to_id}",
+    "workspace_run": "{from_id}>{to_id}",
+    "composition_member": "{from_id}:{phase}>{to_id}",
+    "composition_run": "{from_id}:{phase}>{to_id}",
 }
 
 
@@ -137,22 +143,18 @@ def _select(db, after, through, limit):
 
 
 def _edge_identity(kind, entry, cursor):
-    fields = _EDGE_FIELDS.get(kind)
-    if fields is None:
+    template = _EDGE_IDENTITIES.get(kind)
+    if template is None:
         raise _error("unknown_entity", cursor, f"summarises unknown edge kind {kind!r}.")
-    values = []
-    for field in fields:
+    values = {}
+    for field in [part.split("}", 1)[0] for part in template.split("{")[1:]]:
         value = entry.get(field)
         if isinstance(value, bool) or not isinstance(value, (str, int)) or value == "":
             raise _error(
                 "invalid_payload", cursor, f"summarises a {kind!r} edge without {field}."
             )
-        values.append(str(value))
-    if kind == "dependency":
-        return f"{values[0]}:{values[1]}>{values[2]}:{values[3]}"
-    if kind == "binding":
-        return f"{values[0]}>{values[1]}"
-    return values[0]
+        values[field] = str(value)
+    return template.format_map(values)
 
 
 def _seed(event, nodes, edges, telemetry):

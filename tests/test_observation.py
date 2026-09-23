@@ -138,6 +138,16 @@ def populate(store, workarea):
             (ids["flow"],),
         )
         db.execute(
+            "INSERT INTO workflow_steps(workflow_id,phase,round,task_id,revision,created)"
+            " VALUES(?,'worker',0,?,1,1.0)",
+            (ids["flow"], ids["worker"]),
+        )
+        db.execute(
+            "INSERT INTO workflow_runs(workflow_id,phase,round,task_id,revision,run_id,created)"
+            " VALUES(?,'worker',0,?,1,?,1.0)",
+            (ids["flow"], ids["worker"], run_id),
+        )
+        db.execute(
             "INSERT INTO task_operations(operation_id,fingerprint,response) VALUES(?,'fp','{}')",
             (ids["operation"],),
         )
@@ -156,6 +166,20 @@ def populate(store, workarea):
             (ids["space"],),
         )
         db.execute(
+            "INSERT INTO workspace_tasks(workspace_id,task_id,assignment) VALUES(?,?,'{}')",
+            (ids["space"], ids["worker"]),
+        )
+        db.execute(
+            "INSERT INTO workspace_calls(run_id,workspace_id,task_id,revision,tree_sha256,"
+            "receipts_sha256,envelope,created) VALUES(?,?,?,1,'tree','receipts','{}',1.0)",
+            (run_id, ids["space"], ids["worker"]),
+        )
+        db.execute(
+            "INSERT INTO workspace_exports(workspace_id,run_id,manifest_sha256,"
+            "result_sha256,created) VALUES(?,?,'manifest','result-sha',1.0)",
+            (ids["space"], run_id),
+        )
+        db.execute(
             "INSERT INTO compositions(id,name,workflow_id,policy,state,phase,created)"
             " VALUES(?,'compose-node',?,'secret-policy','active','plan',1.0)",
             (ids["composed"], ids["flow"]),
@@ -163,6 +187,17 @@ def populate(store, workarea):
         db.execute(
             "UPDATE compositions SET state='stopped',reason='secret-policy' WHERE id=?",
             (ids["composed"],),
+        )
+        db.execute(
+            "INSERT INTO composition_members(composition_id,phase,workspace_id,task_id,created)"
+            " VALUES(?,'editor',?,?,1.0)",
+            (ids["composed"], ids["space"], ids["worker"]),
+        )
+        db.execute(
+            "INSERT INTO composition_results(composition_id,phase,task_id,revision,run_id,"
+            "result_sha256,workspace_id,manifest_sha256,tree_sha256,created)"
+            " VALUES(?,'editor',?,1,?,'result-sha',?,'manifest','tree',1.0)",
+            (ids["composed"], ids["worker"], run_id, ids["space"]),
         )
         db.execute(
             "INSERT INTO run_telemetry(run_id,usage,model_usage,provider_cost_usd,"
@@ -204,7 +239,20 @@ class ObservationLedgerTests(unittest.TestCase):
                 sorted(payload["nodes"]),
                 ["composition", "run", "session", "task", "workflow", "workspace"],
             )
-            self.assertEqual(sorted(payload["edges"]), ["binding", "dependency", "review"])
+            self.assertEqual(
+                sorted(payload["edges"]),
+                [
+                    "binding",
+                    "composition_member",
+                    "composition_run",
+                    "dependency",
+                    "review",
+                    "task_run",
+                    "workflow_run",
+                    "workspace_run",
+                    "workspace_task",
+                ],
+            )
             self.assertEqual(payload["telemetry"], [])
             self.assertTrue(all(nodes == [] for nodes in payload["nodes"].values()))
             self.assertTrue(all(edges == [] for edges in payload["edges"].values()))
@@ -242,6 +290,15 @@ class ObservationLedgerTests(unittest.TestCase):
             self.assertEqual(len(payload["edges"]["dependency"]), 1)
             self.assertEqual(len(payload["edges"]["binding"]), 1)
             self.assertEqual(len(payload["edges"]["review"]), 1)
+            for kind in (
+                "task_run",
+                "workflow_run",
+                "workspace_task",
+                "workspace_run",
+                "composition_member",
+                "composition_run",
+            ):
+                self.assertEqual(len(payload["edges"][kind]), 1)
             self.assertEqual(payload["telemetry"][0]["usage"]["input_tokens"], 10)
             for needle in FORBIDDEN + PLANTED:
                 self.assertNotIn(needle, rows[0]["payload"])
@@ -325,6 +382,12 @@ class ObservationLedgerTests(unittest.TestCase):
                 ("edge_created", "dependency"),
                 ("edge_created", "binding"),
                 ("edge_created", "review"),
+                ("edge_created", "task_run"),
+                ("edge_created", "workflow_run"),
+                ("edge_created", "workspace_task"),
+                ("edge_created", "workspace_run"),
+                ("edge_created", "composition_member"),
+                ("edge_created", "composition_run"),
                 ("run_telemetry", "run"),
             ):
                 self.assertIn(expected, seen)

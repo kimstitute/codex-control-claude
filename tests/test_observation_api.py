@@ -40,6 +40,7 @@ EXPECTED = (
     ("node_created", "run"),
     ("node_created", "task"),
     ("node_created", "task"),
+    ("edge_created", "task_run"),
     ("edge_created", "dependency"),
     ("node_state", "run"),
     ("node_state", "task"),
@@ -47,7 +48,17 @@ EXPECTED = (
 )
 TOTAL = len(EXPECTED)
 NODE_KINDS = ["composition", "run", "session", "task", "workflow", "workspace"]
-EDGE_KINDS = ["binding", "dependency", "review"]
+EDGE_KINDS = [
+    "binding",
+    "composition_member",
+    "composition_run",
+    "dependency",
+    "review",
+    "task_run",
+    "workflow_run",
+    "workspace_run",
+    "workspace_task",
+]
 
 
 def ledger_connection():
@@ -129,6 +140,11 @@ def populate(store):
                 "acknowledge_context,created) VALUES(?,1,'prompt','sha',0,1.0)",
                 (ids[key],),
             )
+        db.execute(
+            "INSERT INTO task_runs(run_id,task_id,revision,contract,prompt_sha256)"
+            " VALUES(?,?,1,'wire','sha')",
+            (ids["run"], ids["worker"]),
+        )
         db.execute(
             "INSERT INTO dependency_sets(task_id,revision,fingerprint) VALUES(?,1,'fp')",
             (ids["worker"],),
