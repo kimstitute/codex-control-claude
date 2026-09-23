@@ -739,8 +739,11 @@ compositions and a read-only live TUI on Linux and Windows 10/11. Linux workspac
 use native Bubblewrap; Windows workspaces use Bubblewrap inside WSL2. Native
 Claude file/shell tools, arbitrary existing-session adoption, conversation forks,
 macOS, AppContainer, an MCP adapter, cross-host dispatch and automatic Codex
-wake-up remain outside this release. Windows hardware and WSL2 integration have
-not yet been validated on a physical Windows host, so Windows support is beta.
+wake-up remain outside this release. The native Windows helper, Job Object and a
+real tool-free Sonnet call passed on physical Windows hardware. Final
+WSL2/Bubblewrap validation remains blocked by WSL-service `E_ACCESSDENIED` under
+the Codex sandbox token and must run from a normal Windows terminal, so Windows
+workspace support remains beta.
 
 Maintained by [kimstitute](https://github.com/kimstitute). This is an independent
 project, not an official OpenAI or Anthropic integration.

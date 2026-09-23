@@ -3,9 +3,28 @@
 Version 0.14.1 supports same-user Claude Code sessions, tasks, workflows,
 compositions and provider-limit monitoring on Windows 10/11. The native helper,
 supervisor protocol, suspended-child identity sequence and Job Object execution
-have passed a physical Windows x64 smoke test. A live model request needs a valid
-Claude login, and the WSL2 workspace smoke must run from a Windows account that
-can access the WSL service.
+have passed a physical Windows x64 smoke test. A real, tool-free Sonnet request
+also completed successfully. The WSL2 workspace smoke must run from a Windows
+account and process token that can access the WSL service.
+
+## Physical Windows validation
+
+Commit `e3069a5` was tested after renewing Claude authentication. The pinned x64
+helper completed its protocol handshake, created and resumed the Claude child in
+a Job Object, and returned `WINDOWS_SMOKE_OK` from `claude-sonnet-5`. The call
+used zero tools, exited with code 0, reported no validation errors and spent
+about 2.4 seconds in the provider API.
+
+The WSL2/Bubblewrap leg is still unverified. Commands launched by the Codex task
+used its restricted sandbox token: `py -3` could not see the user Python install,
+the durability preflight stopped, and a diagnostic run past that preflight
+reached `wsl_transport_failed` because the WSL service returned
+`E_ACCESSDENIED`. This is an execution-account boundary; it is not evidence of a
+source or WSL configuration defect. Run the final probe from a normal terminal:
+
+```powershell
+py -3 .\work\windows-smoke\wsl_probe_smoke.py
+```
 
 ## Architecture and boundary
 
@@ -95,6 +114,7 @@ because a native worktree cannot faithfully create its Git mode.
 | Session control disabled | Helper architecture, install manifest and file SHA-256 |
 | `401 OAuth access token has expired` | Run `claude auth login` in a normal terminal for the same Windows user |
 | WSL reports `E_ACCESSDENIED` | Run from a normal same-user terminal with WSL service access; restricted app sandboxes may block it |
+| Codex shows an older plugin cache | Run the updater as the same Windows user, verify `--version`, then start a new Codex task |
 | WSL workspace probe fails | `wsl.exe --status` and the selected/default distribution |
 | `bwrap` missing | Install Bubblewrap inside that WSL distribution |
 | State path rejected | Use a WSL ext4 path outside `/mnt` |

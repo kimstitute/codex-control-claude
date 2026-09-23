@@ -8,9 +8,10 @@
   empty native tools/MCP and non-interactive permission handling.
 - Give the WSL workspace probe canonical empty mode metadata so it reaches the
   live WSL2/Bubblewrap checks on an empty scratch tree.
-- Record the physical Windows validation boundary: native supervisor and Job
-  Object execution passed; OAuth renewal and unrestricted WSL service access are
-  host prerequisites for the remaining live model/workspace checks.
+- Record the physical Windows validation boundary: the native supervisor, Job
+  Object and a tool-free `claude-sonnet-5` model call passed. The WSL2/Bubblewrap
+  check remains pending because the Codex sandbox token cannot access the WSL
+  service (`E_ACCESSDENIED`).
 
 ## 0.14.0 — 2026-09-22
 

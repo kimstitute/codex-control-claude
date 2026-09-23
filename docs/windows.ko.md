@@ -3,9 +3,28 @@
 0.14.1은 Windows 10/11에서 같은 사용자로 로그인한 Claude Code 세션과
 task, workflow, composition, provider 한도 모니터를 지원합니다. 네이티브
 helper, supervisor protocol, suspended child 신원 기록·재개와 Job Object 실행은
-실제 Windows x64에서 smoke test를 통과했습니다. 실제 모델 호출에는 유효한
-Claude 로그인이 필요하고, WSL2 workspace smoke는 WSL 서비스에 접근할 수 있는
-Windows 사용자 환경에서 실행해야 합니다.
+실제 Windows x64에서 smoke test를 통과했습니다. 도구를 비활성화한 실제 Sonnet
+호출도 성공했습니다. WSL2 workspace smoke는 WSL 서비스에 접근할 수 있는
+Windows 사용자와 process token으로 실행해야 합니다.
+
+## 실제 Windows 검증 결과
+
+Claude 인증을 갱신한 뒤 커밋 `e3069a5`를 시험했습니다. 고정된 x64 helper가
+protocol handshake를 마치고 Claude 자식을 Job Object 안에서 생성·재개했으며,
+`claude-sonnet-5`가 `WINDOWS_SMOKE_OK`를 반환했습니다. 도구 호출은 0회,
+종료 코드는 0, 검증 오류는 없었고 provider API 실행 시간은 약 2.4초였습니다.
+
+WSL2/Bubblewrap 구간은 아직 미검증입니다. Codex task가 실행한 모든 명령은
+제한된 sandbox token을 사용했습니다. 이 계정에서는 `py -3`가 사용자 Python을
+찾지 못했고 directory durability 확인이 중단됐습니다. 해당 preflight만 진단
+목적으로 지나간 실행은 WSL 서비스의 `E_ACCESSDENIED` 때문에
+`wsl_transport_failed`에 도달했습니다. 이는 실행 계정 경계이며 소스나 WSL
+설정 결함을 뜻하지 않습니다. 마지막 probe는 일반 Windows 터미널에서
+실행합니다.
+
+```powershell
+py -3 .\work\windows-smoke\wsl_probe_smoke.py
+```
 
 ## 지원 구조
 
@@ -105,6 +124,7 @@ push는 하지 않습니다. Windows에서 새 executable 파일은 worktree가 
 | session control 비활성 | helper 아키텍처, 설치 manifest, 실제 파일 SHA-256 |
 | `401 OAuth access token has expired` | 같은 Windows 사용자의 일반 터미널에서 `claude auth login` 실행 |
 | WSL `E_ACCESSDENIED` | 제한된 앱 sandbox 밖의 일반 사용자 터미널에서 WSL 서비스 접근 확인 |
+| Codex에 이전 plugin cache만 표시 | 같은 Windows 사용자로 updater 실행 후 `--version`을 확인하고 새 Codex task 시작 |
 | `workspace doctor`가 WSL 실패 | `wsl.exe --status`, 기본/선택 배포판 실행 여부 |
 | `bwrap`을 찾지 못함 | 같은 WSL 배포판에 Bubblewrap 설치 |
 | state 경로 거절 | `/mnt` 밖의 WSL ext4 경로 사용 |

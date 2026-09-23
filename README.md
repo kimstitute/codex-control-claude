@@ -742,8 +742,10 @@ ruff format --check .
 workspace는 네이티브 Bubblewrap, Windows workspace는 WSL2 내부 Bubblewrap을
 사용합니다. Claude의 직접 파일·shell 도구, 임의 기존 세션 인수, 대화 fork,
 macOS, AppContainer, MCP adapter, 서버 간 전달, Codex 자동 깨우기는 현재
-범위 밖입니다. Windows 실기기와 WSL2 통합 검증은 아직 수행되지 않았으므로
-Windows 지원은 beta로 표시합니다.
+범위 밖입니다. Windows 네이티브 helper, Job Object와 도구 없는 실제 Sonnet
+호출은 실기기에서 통과했습니다. WSL2/Bubblewrap 최종 검증은 Codex sandbox의
+WSL 서비스 `E_ACCESSDENIED` 때문에 일반 Windows 터미널 실행이 남아 있으므로
+Windows workspace 지원은 beta입니다.
 
 제작: [kimstitute](https://github.com/kimstitute). OpenAI 또는 Anthropic의
 공식 연동 제품이 아닌 독립 프로젝트입니다.
