@@ -38,11 +38,16 @@ The executable and project paths are explicit. The store belongs to its originat
 claude_control monitor tui --refresh-seconds 0.5 --history 100
 claude_control monitor snapshot --history 100
 claude_control monitor limits
+claude_control monitor events --after 0 --limit 100
+claude_control monitor replay --through 500
+claude_control monitor export --format otlp-json
 ```
 
 The TUI provides graph, agents, history and provider-limit views without mutating
 the ledger or advancing work. `snapshot` returns observation data as JSON;
 `limits` reads signed-in Codex, Claude Code, Gemini CLI and Cursor quota sources.
+`events` and `replay` expose schema-14 durable history; `export` emits a standard
+OTLP/HTTP JSON trace request with content bodies omitted.
 See the [live monitor guide](monitor.md) for keys and the distinction between live
 estimates and final provider values.
 

@@ -78,3 +78,58 @@ claude_control monitor snapshot --history 100 --limits
 The `claude-control.monitor.v1` response contains graph `nodes` and `edges`,
 current `agents`, newest-first `runs`, and final ledger totals under
 `summary.telemetry`. `--no-live` reads only SQLite and skips run streams.
+
+## Durable observation history and replay
+
+Schema 14 adds an append-only `claude-control.observation.v1` event ledger. The
+ledger is the durable source for the future graph viewer and time-travel replay;
+wall-clock timestamps are descriptive while the monotonically increasing cursor
+defines order.
+
+```bash
+claude_control monitor events --after 0 --limit 100
+claude_control monitor events --after 100 --limit 100 --through 500
+claude_control monitor replay
+claude_control monitor replay --through 500
+```
+
+`events` uses an exclusive `--after` cursor and an optional inclusive
+`--through` high-water mark. `replay` folds the baseline plus later events into
+the exact graph state at an inclusive cursor. A migrated store reports
+`baseline_only` fidelity when pre-schema-14 transitions cannot be reconstructed;
+new transitions after that baseline remain exact.
+
+The observation contract contains stable identifiers, lifecycle states,
+relationships, timestamps and numeric telemetry. It excludes prompts, results,
+message bodies, policies, project paths, operation receipts, account identity and
+credentials. Raw provider JSONL remains private controller evidence and is not an
+observation export.
+
+## OpenTelemetry and AG-UI interoperability
+
+```bash
+claude_control monitor export --format otlp-json
+claude_control monitor export --format otlp-json --through 500
+claude_control monitor export --format otlp-json --metadata
+```
+
+The default export is an OTLP/HTTP JSON `ExportTraceServiceRequest` containing
+`resourceSpans` only. Each terminal Claude run becomes an INTERNAL
+`invoke_agent` span with OpenTelemetry GenAI and OpenInference attributes. Trace
+and span IDs are deterministic, token/cache/reasoning counts retain provider
+semantics, and active or timestamp-incomplete runs are omitted rather than
+fabricated. `--metadata` intentionally wraps the standard document with local
+profile and omission details; use the default form when sending it to an OTLP
+collector.
+
+OpenTelemetry GenAI agent conventions are currently Development, so the export
+records the pinned local profile
+`claude-control.otel-genai-openinference.v1-development` and does not claim a
+stable standard version. Prompt and completion bodies remain absent by default.
+
+The Python adapter `claude_control.observation_agui` maps replay snapshots and
+decoded ledger events to AG-UI 1.0 `STATE_SNAPSHOT`, `RUN_STARTED`,
+`RUN_FINISHED`, `RUN_ERROR` and `CUSTOM` events. It is the live frontend boundary
+for the planned graph/replay viewer; SQLite plus observation cursors remain the
+durable history. The adapter never emits text-message, reasoning-content or
+tool-call-content events.

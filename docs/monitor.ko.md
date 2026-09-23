@@ -80,3 +80,54 @@ claude_control monitor snapshot --history 100 --limits
 그래프, `agents`는 현재 세션, `runs`는 최신순 기록, `summary.telemetry`는
 append-only 원장에 기록된 확정 누계입니다. `--no-live`는 실행 stream을 읽지
 않고 SQLite 원장만 조회합니다.
+
+## 영속 관측 기록과 과거 재생
+
+Schema 14부터 append-only `claude-control.observation.v1` 이벤트 원장을
+사용합니다. 이 원장은 향후 그래프 뷰어와 과거 시점 재생의 기준입니다. 시각은
+설명용 정보이고, 실제 순서는 단조 증가 cursor로 결정합니다.
+
+```bash
+claude_control monitor events --after 0 --limit 100
+claude_control monitor events --after 100 --limit 100 --through 500
+claude_control monitor replay
+claude_control monitor replay --through 500
+```
+
+`events`의 `--after`는 배타 cursor이며 `--through`는 선택적인 포괄 상한입니다.
+`replay`는 baseline과 이후 이벤트를 접어 해당 포괄 cursor 시점의 그래프를
+복원합니다. 기존 저장소를 schema 14로 이관하면 이관 전 상태 변화는 복구할 수
+없으므로 fidelity가 `baseline_only`이며, baseline 이후 변화는 정확히 기록됩니다.
+
+관측 계약에는 안정적인 식별자, 생명주기 상태, 관계, 시각, 숫자 telemetry만
+들어갑니다. prompt, result, message 본문, policy, 프로젝트 경로, 작업 receipt,
+계정 식별 정보, 자격 증명은 제외합니다. Provider 원본 JSONL은 controller 내부
+증거이며 관측 export에 포함되지 않습니다.
+
+## OpenTelemetry와 AG-UI 연동
+
+```bash
+claude_control monitor export --format otlp-json
+claude_control monitor export --format otlp-json --through 500
+claude_control monitor export --format otlp-json --metadata
+```
+
+기본 export는 최상위에 `resourceSpans`만 있는 OTLP/HTTP JSON
+`ExportTraceServiceRequest`입니다. 종료된 Claude run마다 INTERNAL
+`invoke_agent` span을 만들고 OpenTelemetry GenAI와 OpenInference 속성을 함께
+기록합니다. trace/span ID는 결정적이며, provider의 token/cache/reasoning 의미를
+보존합니다. 진행 중이거나 종료 시각이 없는 run은 값을 꾸며내지 않고 생략합니다.
+`--metadata`는 표준 문서에 로컬 profile과 생략 내역을 명시적으로 감싼 형태이므로,
+OTLP collector로 보낼 때는 기본 형식을 사용하세요.
+
+OpenTelemetry GenAI agent semantic convention은 현재 Development 상태입니다.
+따라서 export는 고정한 로컬 profile
+`claude-control.otel-genai-openinference.v1-development`을 기록하며 안정화된 표준
+버전을 따르는 것처럼 표시하지 않습니다. Prompt와 completion 본문은 기본적으로
+내보내지 않습니다.
+
+Python adapter `claude_control.observation_agui`는 replay snapshot과 해석된 원장
+이벤트를 AG-UI 1.0의 `STATE_SNAPSHOT`, `RUN_STARTED`, `RUN_FINISHED`,
+`RUN_ERROR`, `CUSTOM` 이벤트로 바꿉니다. 향후 그래프·과거 재생 화면의 실시간
+경계이며, 영속 기록은 계속 SQLite와 observation cursor가 담당합니다. 이 adapter는
+text message, reasoning 본문, tool-call 본문 이벤트를 만들지 않습니다.
