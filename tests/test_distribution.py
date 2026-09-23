@@ -149,7 +149,7 @@ class RelocatedDistributionTests(unittest.TestCase):
         continuation_done = self.wait_terminal(continuation["id"])
         continuation_result = self.cli("result", "--run", continuation["id"])
 
-        self.assertEqual(initialized["schema"], 13)
+        self.assertEqual(initialized["schema"], 14)
         self.assertIs(doctor["ready"], True)
         self.assertEqual(doctor["missing_options"], [])
         self.assertEqual(first_done["status"], "completed")

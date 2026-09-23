@@ -109,7 +109,13 @@ is used to recover. See [the task guide](tasks.md#schema-and-migration).
 
 ## Installation
 
-`install.py` uses Codex's bundled personal-marketplace helpers and `codex plugin add`. A host-local file lock serializes installations. The new tree is staged and validated before replacement; the previous tree is retained for rollback. Runtime state is neither packaged nor removed by updates.
+`install.py` uses Codex's bundled personal-marketplace helpers and `codex plugin add`. A host-local file lock serializes installations. The new tree is staged and validated before replacement; the previous tree is retained for rollback. Runtime state is neither packaged nor removed by updates. Optional viewer and Windows supervisor binaries are supplied locally with an exact SHA-256; update preservation revalidates their manifests and bytes.
+
+`ccc-viewer` is a separate Rust/Ratatui presentation process. It never opens the
+controller database. The Python controller streams content-free AG-UI JSONL from
+the observation ledger; the viewer folds those events deterministically, projects
+bounded agent cards and renders live or historical state. This keeps ledger schema,
+privacy filtering and mutation authority in the Python controller.
 
 The public repository uses only the maintainer's GitHub handle. Machine-specific implementation notes, account records, credentials, and raw live-session artifacts are intentionally absent.
 

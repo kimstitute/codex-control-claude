@@ -10,8 +10,9 @@ the [CLI reference](cli.md). Assignment files use the existing
 
 Task lifecycle requires schema 4 or newer; queues require schema 5, messages schema 6, workflows schema 7, and workspaces schema 8.
 Explicit effort settings require schema 9; plan/edit/review compositions require schema 10,
-run telemetry schema 11, and guarded workspace apply schema 12.
-New installations (`claude_control init`) start on schema 12. Existing schema-3 stores must migrate before
+run telemetry schema 11, guarded workspace apply schema 12, portable platform
+execution identities schema 13, and durable observation history schema 14.
+New installations (`claude_control init`) start on schema 14. Existing schema-3 stores must migrate before
 using any `task` subcommand; a schema-3 store rejects task commands until migrated.
 
 Migration is a maintenance operation, not a background service:
@@ -26,7 +27,7 @@ claude_control --state-dir /srv/project/.claude-control migrate --status
 claude_control --state-dir /srv/project/.claude-control migrate --offline
 ```
 
-Migration proceeds 3→4→5→6→7→8, creating and validating a `schema-<source>-backup.sqlite3`
+Migration proceeds through every schema from 3 to 14, creating and validating a `schema-<source>-backup.sqlite3`
 for each required step using SQLite's
 backup API, including committed WAL data. It marks configuration as `migrating`,
 changes the database in a transaction, then finishes configuration and the journal.

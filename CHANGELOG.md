@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.20.0 — 2026-09-23
+
+- Add the independently implemented `ccc-viewer` Rust TUI for live multi-agent
+  graphs, stable role/model cards, minimap navigation, overview/follow/manual
+  cameras, selected-agent details and event-indexed historical replay.
+- Add one blocking, cursor-resumable `monitor agui stream` JSONL boundary so a
+  long-lived viewer process can follow the schema-14 ledger without repeatedly
+  spawning the controller CLI.
+- Add `monitor viewer`, offline JSONL replay and headless `inspect`; retain
+  `monitor tui` as the dependency-free fallback and quota dashboard.
+- Add SHA-256-pinned viewer installation with verified update preservation plus
+  Linux, Windows and macOS release builds. No viewer binary is downloaded or
+  selected implicitly at runtime.
+- Use Zoetrope only as product-design inspiration. No Zoetrope source, assets or
+  runtime code are vendored; the fold, projection, layout and rendering code are
+  original to Claude Control.
+
 ## 0.19.0 — 2026-09-23
 
 - Upgrade stores to schema 14 with an append-only, cursor-ordered observation

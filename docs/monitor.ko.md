@@ -2,7 +2,78 @@
 
 `monitor`는 현재 호스트의 claude-control 상태를 읽기 전용으로 보여줍니다.
 작업을 시작하거나 다음 단계로 진행시키지 않으며, 재시도·중단·승인·apply도
-수행하지 않습니다.
+수행하지 않습니다. 두 화면을 제공합니다.
+
+- `monitor viewer`: Rust/Ratatui 기반 spatial graph와 과거 재생 화면
+- `monitor tui`: Python 표준 라이브러리 기반 fallback과 provider quota 화면
+
+## Graph/replay viewer 실행
+
+```bash
+claude_control monitor viewer
+claude_control monitor viewer --inspect
+tmux new -s claude-control-viewer 'claude_control monitor viewer'
+```
+
+viewer는 controller, composition, workflow, workspace, task와 Claude session을
+카드와 방향 관계로 표시합니다. session 카드에는 역할, 실제/요청 모델, 현재 상태,
+실행 수와 확정 output token을 집계합니다. run마다 카드를 무한히 늘리지 않으므로
+장기간 원장도 agent graph의 크기에 가깝게 유지됩니다.
+
+| 키 | 동작 |
+|---|---|
+| `←`, `→`, `[`, `]` | 과거 이벤트를 1개 또는 10개 이동 |
+| `Home`, `End` | baseline 또는 최신 live cursor로 이동 |
+| `Space` | 선택한 cursor부터 재생/일시정지 |
+| `Tab`, `↑`, `↓` | agent/card 선택 |
+| `Enter`, `v` | 선택한 카드의 안전한 observation 세부 정보 |
+| `o`, `f`, `m` | overview, 선택 카드 follow, manual camera |
+| `WASD`, `HJKL`, `+`, `-` | manual pan과 zoom |
+| `i`, `?`, `q` | session 정보, 도움말, 종료 |
+
+overview는 큰 그래프를 여러 lane으로 압축하고 낮은 zoom에서는 edge를 생략해
+교차선이 화면을 덮지 않게 합니다. `f`는 선택 카드를 읽을 수 있는 배율로 따라가며,
+minimap은 전체 graph에서 현재 위치를 보여줍니다. 하단 timeline의 순서는 시각이 아니라
+단조 증가 observation cursor로 결정됩니다.
+
+headless `--inspect`는 viewer contract, fidelity, cursor, node/edge/agent 수와 확정
+output token 합계를 JSON으로 출력합니다. 터미널 UI 없이 설치와 원장 호환성을 확인할
+때 사용합니다.
+
+```bash
+claude_control monitor agui stream > session.agui.jsonl
+claude_control monitor viewer --stream-file session.agui.jsonl
+claude_control monitor viewer --inspect --stream-file session.agui.jsonl
+```
+
+JSONL 파일은 content-free AG-UI event입니다. viewer는 SQLite를 직접 열지 않고,
+실시간 모드에서 controller의 `monitor agui stream` child process 하나만 유지합니다.
+cursor 중복은 무시하고 간격이 생기면 잘못된 과거 상태를 꾸미지 않고 중단합니다.
+
+### Viewer 설치와 빌드
+
+릴리스 바이너리 또는 직접 빌드한 바이너리의 SHA-256을 확인해 설치기에 함께 줍니다.
+설치기는 네트워크에서 바이너리를 받지 않으며 hash 불일치 시 중단합니다.
+
+```bash
+cargo build --locked --release --manifest-path viewer/Cargo.toml
+sha256sum viewer/target/release/ccc-viewer
+python3 install.py --update \
+  --viewer viewer/target/release/ccc-viewer \
+  --viewer-sha256 <위에서 확인한 SHA-256>
+```
+
+Windows에서는 `ccc-viewer.exe`와 `Get-FileHash -Algorithm SHA256`을 사용합니다.
+viewer가 번들되지 않았으면 `monitor viewer`는 `viewer_unavailable`로 실패하고 기존
+`monitor tui`는 계속 사용할 수 있습니다. update는 이전 `viewer-manifest.json`과
+바이너리가 모두 일치할 때만 기존 viewer를 보존합니다.
+
+viewer는 [Zoetrope](https://github.com/furkankly/zoetrope)의 spatial graph,
+camera와 timeline이라는 제품 방식을 참고했습니다. 소스나 asset은 가져오지 않았고
+event fold, graph projection, layout, UI와 launcher는 이 저장소에서 독립 구현했습니다.
+
+## Python TUI 실행
+
 Linux에서는 curses, Windows 10/11에서는 ANSI/VT console backend를 사용합니다.
 
 ## TUI 실행

@@ -1,6 +1,6 @@
 # OMX 기능 도입 계획
 
-작성: 2026-09-20 · 갱신: 2026-09-23 · 기준: v0.19.0 · 상태: P1–P5, model catalog 및 실시간·과거 관측 구현
+작성: 2026-09-20 · 갱신: 2026-09-23 · 기준: v0.20.0 · 상태: P1–P5, model catalog 및 Rust graph/replay 관측 구현
 
 이 문서는 도입 당시의 설계와 단계별 통과 조건을 보존한다. 단계별 구현 상태는 문서 끝의 진행 기록을 따른다. P5는 기존 Claude 도구 비활성화를 유지하는 컨트롤러 작업 요청 방식으로 구체화했다.
 
@@ -756,3 +756,24 @@ catalog smoke에서는 prompt·도구 호출 없이 모델 5개를 반환했고 
 관측·마이그레이션 관련 회귀 시험 47개, 변경 Python 파일 Ruff, plugin/skill validator,
 manifest JSON과 `git diff --check`가 통과했다. 실제 계정 상태 이관은 설치 전에
 `migrate --status`로 진행 중 run이 없음을 확인한 뒤 offline migration으로만 수행한다.
+
+## 28. 독립 Rust graph/replay viewer — v0.20.0
+
+- Zoetrope의 제품 개념인 spatial graph, camera mode, minimap, event timeline과
+  time-travel replay를 참고하되 소스·asset·자료구조를 복사하지 않고 Rust/Ratatui로
+  Claude Control 전용 구현을 작성한다.
+- Python controller는 schema 14 observation 원장의 유일한 해석 경계다.
+  `monitor agui stream`이 표준 AG-UI JSONL을 cursor 순서로 내보내고 Rust viewer는
+  read-only child process로 한 번 연결한다. viewer는 SQLite를 직접 열지 않는다.
+- replay는 append-only event를 결정적으로 fold하고 64-event checkpoint를 사용한다.
+  중복 cursor는 무시하고 간격은 fail-closed 처리한다. 대규모 기록은 run을 별도 카드로
+  늘리지 않고 session에 실행 수와 output token을 집계한다.
+- 그래프는 controller, composition, workflow, workspace, task, session을 stable lane에
+  배치한다. overview/follow/manual camera, minimap, agent detail, live/pause/play/seek와
+  headless inspect를 제공한다. 기존 `monitor tui`는 quota 및 바이너리 없는 fallback이다.
+- 설치기는 사용자가 제공한 viewer bytes와 SHA-256을 함께 요구하고 manifest로 검증한다.
+  update는 이전 manifest가 완전할 때만 바이너리를 보존한다. GitHub Actions는 Linux,
+  Windows와 macOS release asset을 빌드하지만 runtime download나 조용한 platform
+  fallback은 하지 않는다.
+- cross-host 작업 전달, viewer에서의 승인·재시도·apply, prompt/result/reasoning/tool
+  본문 표시는 계속 범위 밖이다. AG-UI와 OTLP의 기존 privacy contract를 그대로 쓴다.

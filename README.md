@@ -66,6 +66,10 @@ OpenTelemetry trace export, AG-UI 1.0 snapshot/event 출력을 추가합니다. 
 기록을 한 단계씩 이동하거나 자동 재생할 수 있으며 prompt·reasoning·tool 본문은
 관측 형식에 기록하지 않습니다.
 
+0.20 버전은 독립 구현한 Rust graph/replay viewer를 추가합니다. spatial graph,
+minimap, overview/follow/manual camera와 event timeline을 제공하며 AG-UI JSONL을
+한 장기 실행 process로 따라갑니다. Zoetrope 소스와 asset은 포함하지 않습니다.
+
 ## 어떤 명령을 선택해야 하나요?
 
 | 원하는 일 | 사용할 기능 | 추가되는 보장 |
@@ -78,7 +82,8 @@ OpenTelemetry trace export, AG-UI 1.0 snapshot/event 출력을 추가합니다. 
 | 계획부터 구현·검토까지 연결하기 | `composition` | P4 계획과 P5 편집·동결 검토의 명시적 연결 |
 | 의존 작업을 순서대로 실행하기 | `task enqueue` + `dispatch` | FIFO 대기열과 정확한 부모 승인 조건 |
 | 다음 턴에 전달할 지시를 저장하기 | `message` | 선택된 개정에만 전달되는 지시와 결과 인수인계 |
-| 현재 에이전트와 과거 실행 관찰하기 | `monitor tui` | 역할·모델·작업 그래프, cursor 재생, 실행 토큰, 계정 한도 |
+| multi-agent graph와 과거 실행 관찰하기 | `monitor viewer` | spatial graph, minimap, camera, cursor 재생, agent별 실행 토큰 |
+| 계정 한도와 portable fallback 보기 | `monitor tui` / `monitor limits` | Codex·Claude·Gemini·Cursor quota와 Python-only 화면 |
 | 계정에서 선택 가능한 모델 확인하기 | `models catalog` | 현재 selector·해석된 모델·지원 effort, 계정 식별자 제거 |
 | 역할별 모델과 effort 바꾸기 | `models show/configure/reset` | 별칭·정확한 버전 ID, 원자적 설정 교체, 기존 작업 동결 |
 
@@ -86,9 +91,10 @@ Codex 앱에서 사용할 때는 설치된 `$claude-control` 스킬을 명시하
 직접 상태를 확인하거나 운영하려면 아래 CLI를 사용하세요.
 
 ```bash
+claude_control monitor viewer
 claude_control monitor tui
 claude_control monitor limits
-claude_control monitor agui events --after 0 --limit 100
+claude_control monitor agui stream --after 0 --limit 100
 ```
 
 키 조작과 토큰 수치의 의미는 [실시간 모니터 안내](docs/monitor.ko.md)를
@@ -148,7 +154,8 @@ Windows 네이티브 세션만 사용할 때는 WSL2가 필요하지 않습니�
 첫 편집 전에 `workspace doctor`를 실행하세요. 격리를 사용할 수 없으면
 workspace 실행을 거절하며, 격리 없는 대체 경로는 없습니다.
 
-지원 모델 별칭은 `sonnet`과 `fable`입니다. 실제 사용 가능 여부는 Claude
+지원 모델 별칭은 `sonnet`, `opus`, `haiku`, `fable`입니다. 정확한
+`claude-...` ID와 `[1m]` selector도 설정할 수 있습니다. 실제 사용 가능 여부는 Claude
 계정에 따라 달라집니다. 선택한 모델을 쓸 수 없을 때 다른 모델로 조용히
 바꾸지 않습니다.
 
@@ -166,6 +173,21 @@ Windows에서는 helper의 SHA-256을 먼저 확인하고 함께 설치합니다
 $sha = (Get-FileHash .\ccc-win-supervisor.exe -Algorithm SHA256).Hash.ToLower()
 py -3 install.py --windows-helper .\ccc-win-supervisor.exe --windows-helper-sha256 $sha
 ```
+
+Graph/replay viewer는 릴리스 바이너리 또는 직접 빌드한 바이너리의 hash를 함께
+지정합니다. 설치기가 네트워크에서 바이너리를 받거나 다른 platform 파일로
+대체하지 않습니다.
+
+```bash
+cargo build --locked --release --manifest-path viewer/Cargo.toml
+viewer_sha=$(sha256sum viewer/target/release/ccc-viewer | cut -d' ' -f1)
+python3 install.py --update \
+  --viewer viewer/target/release/ccc-viewer \
+  --viewer-sha256 "$viewer_sha"
+```
+
+viewer를 직접 빌드할 때만 Rust 1.88 이상이 필요합니다. 조작법, offline JSONL 재생,
+headless inspect와 Windows 명령은 [실시간 모니터 안내](docs/monitor.ko.md)에 있습니다.
 
 helper가 없거나 해시가 다르면 설치 또는 Windows session control이 fail-closed로
 중단되며 다른 실행 경로로 대체되지 않습니다.
@@ -735,7 +757,7 @@ claude_control migrate --offline
 claude_control migrate --status
 ```
 
-새 저장소는 schema 13을 사용합니다. 기존 schema 3–12는 각 단계마다 검증된
+새 저장소는 schema 14를 사용합니다. 기존 schema 3–13은 각 단계마다 검증된
 SQLite 백업과 영속 migration journal을 만들면서 순서대로 이관됩니다.
 중단되었다면 원래 상태 디렉터리에서 같은 `migrate --offline`을 다시
 실행합니다. 백업 DB로 작업을 실행하거나 원본 DB를 단일 SQLite 파일

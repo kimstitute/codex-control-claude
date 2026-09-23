@@ -1,7 +1,79 @@
 # Live agent monitor
 
 `monitor` observes the current host's claude-control state without advancing,
-retrying, stopping, accepting or applying any work.
+retrying, stopping, accepting or applying any work. It provides two interfaces:
+
+- `monitor viewer`: a Rust/Ratatui spatial graph and historical replay viewer;
+- `monitor tui`: a Python standard-library fallback and provider quota dashboard.
+
+## Run the graph/replay viewer
+
+```bash
+claude_control monitor viewer
+claude_control monitor viewer --inspect
+tmux new -s claude-control-viewer 'claude_control monitor viewer'
+```
+
+The viewer renders controller, composition, workflow, workspace, task and Claude
+session cards with directional relationships. Session cards aggregate role,
+model, current state, run counts and final output tokens. Runs do not become an
+unbounded set of cards, so graph size remains close to the number of agents.
+
+| Key | Action |
+|---|---|
+| `←`, `→`, `[`, `]` | Seek by one or ten historical events |
+| `Home`, `End` | Jump to the baseline or latest live cursor |
+| `Space` | Play or pause from the selected cursor |
+| `Tab`, `↑`, `↓` | Select an agent/card |
+| `Enter`, `v` | Show safe observation details for the selected card |
+| `o`, `f`, `m` | Use overview, selected-card follow or manual camera |
+| `WASD`, `HJKL`, `+`, `-` | Pan and zoom the manual camera |
+| `i`, `?`, `q` | Show session information, help or quit |
+
+Overview packs large graphs into lanes and omits edges at very low zoom so line
+crossings do not cover the cards. Follow mode restores a readable scale for the
+selected card, and the minimap shows its location in the full graph. Timeline
+order comes from the monotonic observation cursor rather than wall-clock time.
+
+Headless `--inspect` prints the viewer contract, fidelity, cursor, node, edge and
+agent counts, and final output-token total as JSON.
+
+```bash
+claude_control monitor agui stream > session.agui.jsonl
+claude_control monitor viewer --stream-file session.agui.jsonl
+claude_control monitor viewer --inspect --stream-file session.agui.jsonl
+```
+
+The JSONL file contains content-free AG-UI events. The viewer never opens SQLite
+directly. Live mode holds one controller `monitor agui stream` child process.
+Duplicate cursors are ignored; cursor gaps fail closed instead of fabricating a
+historical state.
+
+### Install or build the viewer
+
+Pass the verified SHA-256 of a release or locally built binary to the installer.
+The installer never downloads a viewer and rejects a hash mismatch.
+
+```bash
+cargo build --locked --release --manifest-path viewer/Cargo.toml
+sha256sum viewer/target/release/ccc-viewer
+python3 install.py --update \
+  --viewer viewer/target/release/ccc-viewer \
+  --viewer-sha256 <verified-sha256>
+```
+
+On Windows use `ccc-viewer.exe` and `Get-FileHash -Algorithm SHA256`. If no
+viewer is bundled, `monitor viewer` returns `viewer_unavailable` while
+`monitor tui` remains usable. Updates retain the old viewer only when both its
+manifest and bytes still verify.
+
+The product interaction takes inspiration from
+[Zoetrope](https://github.com/furkankly/zoetrope)'s spatial graph, camera and
+timeline. No Zoetrope source or assets are vendored; event folding, projection,
+layout, rendering and the launcher are implemented independently in this repo.
+
+## Run the Python TUI
+
 It uses curses on Linux and the ANSI/VT console backend on Windows 10/11.
 
 ## Run the TUI

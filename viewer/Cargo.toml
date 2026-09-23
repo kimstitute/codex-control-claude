@@ -1,0 +1,19 @@
+[package]
+name = "claude-control-viewer"
+version = "0.20.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Read-only terminal graph and replay viewer for Claude Control"
+license = "MIT"
+repository = "https://github.com/kimstitute/codex-control-claude"
+
+[[bin]]
+name = "ccc-viewer"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+crossterm = "0.29"
+ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
+serde_json = "1"
+unicode-width = "0.2"

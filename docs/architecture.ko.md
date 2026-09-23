@@ -154,7 +154,15 @@ SHA-256 다이제스트가 저장됩니다. 상태 조회와 후속 승인 절�
 `install.py`는 Codex에 번들된 개인 마켓플레이스 헬퍼와 `codex plugin add`를
 사용합니다. 호스트 로컬 파일 락이 설치를 직렬화합니다. 새 트리는 교체 전에
 스테이징되고 검증되며, 이전 트리는 롤백을 위해 보존됩니다. 런타임 상태는
-패키징되지도, 업데이트에 의해 제거되지도 않습니다.
+패키징되지도, 업데이트에 의해 제거되지도 않습니다. 선택적인 viewer와 Windows
+supervisor 바이너리는 정확한 SHA-256과 함께 로컬에서 제공해야 하며, 업데이트 시
+manifest와 실제 바이트를 다시 검증한 뒤에만 보존합니다.
+
+`ccc-viewer`는 별도의 Rust/Ratatui 표시 process입니다. controller database를 직접
+열지 않습니다. Python controller가 observation 원장에서 content-free AG-UI JSONL을
+stream하고, viewer가 이를 결정적으로 fold한 뒤 제한된 agent card로 투영해 실시간
+또는 과거 상태를 그립니다. 원장 schema, privacy filtering과 변경 권한은 계속 Python
+controller에 남습니다.
 
 공개 저장소는 관리자의 GitHub 핸들만 사용합니다. 머신별 구현 노트, 계정
 기록, 자격 증명, 원본 실시간 세션 산출물은 의도적으로 포함되어 있지

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import io
 import json
 import sys
 import tempfile
@@ -10,7 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "plugins/claude-control/scripts"))
 
-from claude_control import monitor, observation_agui  # noqa: E402
+from claude_control import monitor, monitor_cli, observation_agui  # noqa: E402
 from claude_control.store import Store  # noqa: E402
 from test_controller import ControllerTestCase  # noqa: E402
 
@@ -37,9 +39,61 @@ class MonitorTests(ControllerTestCase):
     def test_cli_snapshot_is_json_and_tui_requires_terminal(self) -> None:
         data = self.cli("monitor", "snapshot", "--history", "5", "--no-live")
         rejected = self.cli("monitor", "tui", expected=2)
+        viewer_rejected = self.cli("monitor", "viewer", expected=2)
 
         self.assertEqual(data["protocol"], monitor.PROTOCOL)
         self.assertEqual(rejected["error"], "monitor_terminal")
+        self.assertEqual(viewer_rejected["error"], "monitor_terminal")
+
+    def test_viewer_launcher_passes_the_current_runtime_and_state_store(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            binary = Path(root) / ("ccc-viewer.exe" if sys.platform == "win32" else "ccc-viewer")
+            binary.write_bytes(b"viewer")
+            args = type(
+                "Args",
+                (),
+                {
+                    "viewer_bin": binary,
+                    "inspect": False,
+                    "stream_file": None,
+                    "state_dir": self.state,
+                    "poll_seconds": 0.5,
+                    "no_follow": True,
+                },
+            )()
+
+            command = monitor_cli._viewer_command(args)
+
+        self.assertEqual(command[0], str(binary.resolve()))
+        self.assertIn(sys.executable, command)
+        self.assertIn(str(self.state.resolve()), command)
+        self.assertEqual(command[-1], "--no-follow")
+
+    def test_bundled_viewer_manifest_detects_tampering(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            binary = Path(root) / ("ccc-viewer.exe" if sys.platform == "win32" else "ccc-viewer")
+            data = b"verified-viewer"
+            binary.write_bytes(data)
+            (binary.parent / "viewer-manifest.json").write_text(
+                json.dumps(
+                    {
+                        "protocol": 1,
+                        "target": "test",
+                        "artifacts": [
+                            {
+                                "name": binary.name,
+                                "sha256": hashlib.sha256(data).hexdigest(),
+                                "size": len(data),
+                            }
+                        ],
+                    }
+                )
+            )
+
+            monitor_cli._verify_bundled_viewer(binary)
+            binary.write_bytes(b"tampered")
+            with self.assertRaisesRegex(Exception, "integrity verification"):
+                monitor_cli._verify_bundled_viewer(binary)
 
     def test_cli_pages_replays_and_exports_standard_observation_data(self) -> None:
         started = self.start("exported-sonnet", {"text": "observed"}, "exported-run")
@@ -129,6 +183,42 @@ class MonitorTests(ControllerTestCase):
         self.assertEqual(low["error"], "invalid_limit")
         self.assertEqual(high["error"], "invalid_limit")
         self.assertEqual(cursor["error"], "invalid_cursor")
+
+    def test_agui_stream_drains_standard_json_lines_in_cursor_order(self) -> None:
+        started = self.start("agui-stream-sonnet", {"text": "observed"}, "agui-stream-run")
+        self.assertEqual(self.wait_terminal(started["id"])["status"], "completed")
+        args = type(
+            "Args",
+            (),
+            {"after": 0, "limit": 2, "through": None, "follow": False, "poll_seconds": 0.25},
+        )()
+        output = io.StringIO()
+
+        monitor_cli._agui_stream(Store(self.state), args, output=output)
+
+        events = [json.loads(line) for line in output.getvalue().splitlines()]
+        cursors = [event["metadata"]["claude-control"]["cursor"] for event in events]
+        self.assertGreater(len(events), 2)
+        self.assertEqual(cursors, sorted(cursors))
+        self.assertEqual(len(cursors), len(set(cursors)))
+        self.assertTrue(all("type" in event for event in events))
+
+    def test_agui_stream_rejects_followed_high_water_and_bad_poll_interval(self) -> None:
+        followed = type(
+            "Args",
+            (),
+            {"after": 0, "limit": 1, "through": 1, "follow": True, "poll_seconds": 0.25},
+        )()
+        invalid_poll = type(
+            "Args",
+            (),
+            {"after": 0, "limit": 1, "through": None, "follow": False, "poll_seconds": 0},
+        )()
+
+        with self.assertRaisesRegex(Exception, "cannot pin"):
+            monitor_cli._agui_stream(Store(self.state), followed, output=io.StringIO())
+        with self.assertRaisesRegex(Exception, "poll interval"):
+            monitor_cli._agui_stream(Store(self.state), invalid_poll, output=io.StringIO())
 
     def test_live_stream_uses_estimate_until_terminal_result(self) -> None:
         session = "00000000-0000-4000-8000-000000000001"

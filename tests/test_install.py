@@ -1,7 +1,7 @@
 """Installation rollback must retain the previous package even on a second failure."""
 
-import importlib.util
 import hashlib
+import importlib.util
 import json
 import multiprocessing
 import subprocess
@@ -212,9 +212,7 @@ class WindowsDistributionTests(unittest.TestCase):
             artifact = manifest["artifacts"][0]
             self.assertEqual(artifact["sha256"], digest)
             self.assertEqual(artifact["size"], len(b"verified-helper"))
-            self.assertEqual(
-                (staged / "bin" / artifact["name"]).read_bytes(), b"verified-helper"
-            )
+            self.assertEqual((staged / "bin" / artifact["name"]).read_bytes(), b"verified-helper")
 
     def test_installer_rejects_a_helper_hash_mismatch(self):
         with tempfile.TemporaryDirectory() as root:
@@ -260,6 +258,93 @@ class WindowsDistributionTests(unittest.TestCase):
             clean = root / "clean"
             clean.mkdir()
             self.assertFalse(INSTALLER.preserve_windows_helper(existing, clean))
+            self.assertFalse((clean / "bin").exists())
+
+
+class ViewerDistributionTests(unittest.TestCase):
+    def test_installer_stages_a_hash_pinned_executable_viewer(self):
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            viewer = root / "viewer"
+            viewer.write_bytes(b"verified-viewer")
+            staged = root / "plugin"
+            staged.mkdir()
+            digest = hashlib.sha256(viewer.read_bytes()).hexdigest()
+
+            INSTALLER.stage_viewer(
+                staged,
+                viewer,
+                digest,
+                system="Linux",
+                machine="x86_64",
+            )
+
+            manifest = json.loads((staged / "bin/viewer-manifest.json").read_text())
+            self.assertEqual(manifest["target"], "x86_64-unknown-linux-gnu")
+            self.assertEqual(manifest["artifacts"][0]["sha256"], digest)
+            installed = staged / "bin/ccc-viewer"
+            self.assertEqual(installed.read_bytes(), b"verified-viewer")
+            self.assertNotEqual(installed.stat().st_mode & 0o111, 0)
+
+    def test_viewer_target_covers_supported_desktop_platforms(self):
+        self.assertEqual(
+            INSTALLER.viewer_target("Windows", "AMD64"),
+            "x86_64-pc-windows-msvc",
+        )
+        self.assertEqual(
+            INSTALLER.viewer_target("Darwin", "arm64"),
+            "aarch64-apple-darwin",
+        )
+        with self.assertRaisesRegex(ValueError, "Unsupported viewer platform"):
+            INSTALLER.viewer_target("Plan9", "mips")
+
+    def test_update_preserves_only_an_intact_viewer(self):
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            existing = root / "existing"
+            staged = root / "staged"
+            binary_dir = existing / "bin"
+            binary_dir.mkdir(parents=True)
+            staged.mkdir()
+            data = b"old-viewer"
+            (binary_dir / "ccc-viewer").write_bytes(data)
+            (binary_dir / "viewer-manifest.json").write_text(
+                json.dumps(
+                    {
+                        "protocol": 1,
+                        "target": "x86_64-unknown-linux-gnu",
+                        "artifacts": [
+                            {
+                                "name": "ccc-viewer",
+                                "sha256": hashlib.sha256(data).hexdigest(),
+                                "size": len(data),
+                            }
+                        ],
+                    }
+                )
+            )
+
+            self.assertTrue(
+                INSTALLER.preserve_viewer(
+                    existing,
+                    staged,
+                    system="Linux",
+                    machine="x86_64",
+                )
+            )
+            self.assertEqual((staged / "bin/ccc-viewer").read_bytes(), data)
+
+            (binary_dir / "ccc-viewer").write_bytes(b"tampered")
+            clean = root / "clean"
+            clean.mkdir()
+            self.assertFalse(
+                INSTALLER.preserve_viewer(
+                    existing,
+                    clean,
+                    system="Linux",
+                    machine="x86_64",
+                )
+            )
             self.assertFalse((clean / "bin").exists())
 
 

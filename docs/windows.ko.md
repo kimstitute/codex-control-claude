@@ -67,6 +67,21 @@ py -3 install.py `
   --windows-helper-sha256 $sha
 ```
 
+Graph/replay viewer도 함께 설치하려면 별도 릴리스 파일의 hash를 확인해 같은
+명령에 추가합니다.
+
+```powershell
+$viewerSha = (Get-FileHash .\ccc-viewer.exe -Algorithm SHA256).Hash.ToLower()
+py -3 install.py --update `
+  --windows-helper .\ccc-win-supervisor.exe `
+  --windows-helper-sha256 $sha `
+  --viewer .\ccc-viewer.exe `
+  --viewer-sha256 $viewerSha
+```
+
+viewer는 native Windows console application이므로 WSL2가 필요하지 않습니다.
+WSL2는 격리된 workspace와 composition 실행에만 계속 필요합니다.
+
 업데이트도 같은 고정값을 명시할 수 있습니다.
 
 ```powershell

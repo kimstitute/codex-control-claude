@@ -65,6 +65,10 @@ history replay, OpenTelemetry trace export and AG-UI 1.0 snapshot/event output.
 The TUI steps or automatically plays recorded events while observation formats
 exclude prompt, reasoning and tool-call bodies.
 
+Version 0.20 adds an independently implemented Rust graph/replay viewer with a
+spatial graph, minimap, overview/follow/manual cameras and event timeline over
+one long-lived AG-UI JSONL process. It vendors no Zoetrope source or assets.
+
 ## Choose the right workflow
 
 | Goal | Use | What it adds |
@@ -77,7 +81,8 @@ exclude prompt, reasoning and tool-call bodies.
 | Plan, implement and review | `composition` | P4 planning plus P5 editing and frozen Fable verification |
 | Schedule dependent tasks | `task enqueue` + `dispatch` | FIFO admission and exact accepted-parent gates |
 | Save instructions for the next turn | `message` | Explicit next-revision delivery and result handoff |
-| Observe agents and past execution | `monitor tui` | Role/model/work graph, cursor replay, run tokens and account limits |
+| Observe the multi-agent graph and past execution | `monitor viewer` | Spatial graph, minimap, cameras, cursor replay and per-agent run tokens |
+| Inspect account limits or use the portable fallback | `monitor tui` / `monitor limits` | Codex, Claude, Gemini and Cursor quotas plus a Python-only screen |
 | List models available to the account | `models catalog` | Current selectors, resolved models and effort levels with account identity removed |
 | Configure model and effort per role | `models show/configure/reset` | Aliases, exact version IDs, atomic replacement and frozen existing work |
 
@@ -86,9 +91,10 @@ If you use Codex interactively, ask Codex to apply the installed
 the controller yourself.
 
 ```bash
+claude_control monitor viewer
 claude_control monitor tui
 claude_control monitor limits
-claude_control monitor agui events --after 0 --limit 100
+claude_control monitor agui stream --after 0 --limit 100
 ```
 
 See the [live monitor guide](docs/monitor.md) for keys and token semantics.
@@ -165,6 +171,22 @@ On Windows, verify and pin the native helper during installation:
 $sha = (Get-FileHash .\ccc-win-supervisor.exe -Algorithm SHA256).Hash.ToLower()
 py -3 install.py --windows-helper .\ccc-win-supervisor.exe --windows-helper-sha256 $sha
 ```
+
+For the graph/replay viewer, pass the verified hash of a release binary or a
+locally built binary. The installer does not download it or substitute another
+platform's artifact.
+
+```bash
+cargo build --locked --release --manifest-path viewer/Cargo.toml
+viewer_sha=$(sha256sum viewer/target/release/ccc-viewer | cut -d' ' -f1)
+python3 install.py --update \
+  --viewer viewer/target/release/ccc-viewer \
+  --viewer-sha256 "$viewer_sha"
+```
+
+Rust 1.88 or newer is needed only when building the viewer. See the
+[live monitor guide](docs/monitor.md) for controls, offline JSONL replay,
+headless inspection and Windows commands.
 
 A missing or mismatched helper fails closed; session control is never silently
 routed through another launcher.
@@ -732,7 +754,7 @@ claude_control migrate --offline
 claude_control migrate --status
 ```
 
-New stores use schema 13. Existing schema 3–12 stores are upgraded step by step
+New stores use schema 14. Existing schema 3–13 stores are upgraded step by step
 with verified SQLite backups and a durable migration journal. Repeat
 `migrate --offline` on the original state directory after an interrupted
 migration. Never run jobs against a backup or replace the original database with

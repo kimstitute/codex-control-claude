@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "plugins/claude-control
 from claude_control.platform.locks import file_lock  # noqa: E402
 
 WINDOWS_HELPER_LIMIT = 16 * 1024 * 1024
+VIEWER_LIMIT = 64 * 1024 * 1024
 
 
 def windows_helper_target(machine=None):
@@ -101,6 +102,113 @@ def preserve_windows_helper(existing, staged):
     return True
 
 
+def viewer_target(system=None, machine=None):
+    system = (platform.system() if system is None else system).lower()
+    machine = (platform.machine() if machine is None else machine).lower()
+    architectures = {
+        "amd64": "x86_64",
+        "x86_64": "x86_64",
+        "arm64": "aarch64",
+        "aarch64": "aarch64",
+    }
+    architecture = architectures.get(machine)
+    platforms = {
+        "linux": "unknown-linux-gnu",
+        "darwin": "apple-darwin",
+        "windows": "pc-windows-msvc",
+    }
+    platform_name = platforms.get(system)
+    if architecture is None or platform_name is None:
+        raise ValueError(f"Unsupported viewer platform: {system}/{machine}")
+    return f"{architecture}-{platform_name}"
+
+
+def stage_viewer(staged, viewer_path, expected_sha256, *, system=None, machine=None):
+    """Copy one locally supplied, hash-pinned viewer binary into a plugin stage."""
+    source = Path(viewer_path)
+    if source.is_symlink() or not source.is_file():
+        raise ValueError("Viewer must be an existing regular file, not a symlink.")
+    data = source.read_bytes()
+    if not data or len(data) > VIEWER_LIMIT:
+        raise ValueError("Viewer size must be between 1 byte and 64 MiB.")
+    expected = str(expected_sha256).strip().lower()
+    if len(expected) != 64 or any(character not in "0123456789abcdef" for character in expected):
+        raise ValueError("Viewer SHA-256 must be 64 hexadecimal digits.")
+    actual = hashlib.sha256(data).hexdigest()
+    if actual != expected:
+        raise ValueError("Viewer SHA-256 does not match the supplied pin.")
+    target = viewer_target(system, machine)
+    name = "ccc-viewer.exe" if target.endswith("windows-msvc") else "ccc-viewer"
+    binary_dir = Path(staged) / "bin"
+    binary_dir.mkdir(mode=0o700, exist_ok=True)
+    destination = binary_dir / name
+    destination.write_bytes(data)
+    if not name.endswith(".exe"):
+        destination.chmod(0o755)
+    (binary_dir / "viewer-manifest.json").write_text(
+        json.dumps(
+            {
+                "protocol": 1,
+                "target": target,
+                "artifacts": [{"name": name, "sha256": actual, "size": len(data)}],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+        encoding="utf-8",
+    )
+
+
+def preserve_viewer(existing, staged, *, system=None, machine=None):
+    """Carry forward only an intact viewer pinned by this installer's manifest."""
+    source = Path(existing) / "bin"
+    manifest_path = source / "viewer-manifest.json"
+    if not manifest_path.is_file() or manifest_path.is_symlink():
+        return False
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        artifacts = manifest["artifacts"]
+        if manifest.get("protocol") != 1 or manifest.get("target") != viewer_target(
+            system, machine
+        ):
+            return False
+        if len(artifacts) != 1:
+            return False
+        item = artifacts[0]
+        name = item["name"]
+        if set(item) != {"name", "sha256", "size"} or name not in (
+            "ccc-viewer",
+            "ccc-viewer.exe",
+        ):
+            return False
+        binary = source / name
+        if (
+            binary.is_symlink()
+            or not binary.is_file()
+            or isinstance(item["size"], bool)
+            or not isinstance(item["size"], int)
+            or not 1 <= item["size"] <= VIEWER_LIMIT
+        ):
+            return False
+        data = binary.read_bytes()
+        if (
+            binary.parent != source
+            or len(data) != item["size"]
+            or hashlib.sha256(data).hexdigest() != item["sha256"]
+        ):
+            return False
+    except (KeyError, OSError, TypeError, ValueError):
+        return False
+    destination = Path(staged) / "bin"
+    destination.mkdir(mode=0o700, exist_ok=True)
+    target = destination / name
+    target.write_bytes(data)
+    if not name.endswith(".exe"):
+        target.chmod(0o755)
+    (destination / manifest_path.name).write_bytes(manifest_path.read_bytes())
+    return True
+
+
 @contextmanager
 def installation_lock(lock_path):
     """Serialize installation and rollback across CLI processes on this host."""
@@ -161,9 +269,17 @@ def main():
         "--windows-helper-sha256",
         help="Required SHA-256 pin for --windows-helper.",
     )
+    parser.add_argument(
+        "--viewer",
+        type=Path,
+        help="Optional local ccc-viewer binary to bundle for this host platform.",
+    )
+    parser.add_argument("--viewer-sha256", help="Required SHA-256 pin for --viewer.")
     args = parser.parse_args()
     if bool(args.windows_helper) != bool(args.windows_helper_sha256):
         parser.error("--windows-helper and --windows-helper-sha256 must be supplied together.")
+    if bool(args.viewer) != bool(args.viewer_sha256):
+        parser.error("--viewer and --viewer-sha256 must be supplied together.")
     plugin_parent = Path.home() / "plugins"
     plugin_parent.mkdir(parents=True, exist_ok=True)
     with installation_lock(plugin_parent / ".claude-control-install.lock"):
@@ -291,6 +407,13 @@ def install_package(args, parser):
                 parser.error(str(exc))
         elif existing:
             preserve_windows_helper(target, staged)
+        if args.viewer:
+            try:
+                stage_viewer(staged, args.viewer, args.viewer_sha256)
+            except (OSError, ValueError) as exc:
+                parser.error(str(exc))
+        elif existing:
+            preserve_viewer(target, staged)
         (staged / ".claude-control-install.json").write_text(
             json.dumps({"package": "claude-control", "source": str(source)})
         )

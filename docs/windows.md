@@ -66,6 +66,21 @@ py -3 install.py `
   --windows-helper-sha256 $sha
 ```
 
+To install the graph/replay viewer at the same time, verify its independent
+release artifact and add it to the same command:
+
+```powershell
+$viewerSha = (Get-FileHash .\ccc-viewer.exe -Algorithm SHA256).Hash.ToLower()
+py -3 install.py --update `
+  --windows-helper .\ccc-win-supervisor.exe `
+  --windows-helper-sha256 $sha `
+  --viewer .\ccc-viewer.exe `
+  --viewer-sha256 $viewerSha
+```
+
+The viewer is a native Windows console application and does not require WSL2.
+WSL2 remains required only for isolated workspace and composition execution.
+
 Use the same flags with `--update`. The installer reads the helper once, verifies
 the SHA-256, and stores it with an architecture-specific name and manifest. A
 missing, mismatched or wrong-architecture helper fails closed.
