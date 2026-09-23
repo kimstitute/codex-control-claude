@@ -41,6 +41,21 @@ class MonitorTests(ControllerTestCase):
         self.assertEqual(data["protocol"], monitor.PROTOCOL)
         self.assertEqual(rejected["error"], "monitor_terminal")
 
+    def test_cli_pages_replays_and_exports_standard_observation_data(self) -> None:
+        started = self.start("exported-sonnet", {"text": "observed"}, "exported-run")
+        self.assertEqual(self.wait_terminal(started["id"])["status"], "completed")
+
+        events = self.cli("monitor", "events", "--limit", "2")
+        replay = self.cli("monitor", "replay", "--through", str(events["next_cursor"]))
+        document = self.cli("monitor", "export", "--format", "otlp-json")
+        bundle = self.cli("monitor", "export", "--format", "otlp-json", "--metadata")
+
+        self.assertLessEqual(len(events["events"]), 2)
+        self.assertEqual(replay["cursor"], events["next_cursor"])
+        self.assertEqual(set(document) - {"_exit_code"}, {"resourceSpans"})
+        self.assertEqual(bundle["document"], {"resourceSpans": document["resourceSpans"]})
+        self.assertEqual(bundle["metadata"]["exported_run_count"], 1)
+
     def test_live_stream_uses_estimate_until_terminal_result(self) -> None:
         session = "00000000-0000-4000-8000-000000000001"
         events = [

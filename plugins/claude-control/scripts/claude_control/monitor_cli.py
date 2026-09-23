@@ -2,7 +2,7 @@
 
 import sys
 
-from . import monitor, provider_usage
+from . import monitor, observation, observation_otel, provider_usage
 from .store import ControlError, Store
 
 
@@ -18,6 +18,20 @@ def register(commands):
     limits = sub.add_parser("limits", help="Return Codex, Claude, Gemini and Cursor usage limits.")
     limits.add_argument("--timeout", type=float, default=12.0)
     limits.add_argument("--local-only", action="store_true")
+    events = sub.add_parser("events", help="Page through the append-only observation ledger.")
+    events.add_argument("--after", type=int, default=0, help="Exclusive event cursor.")
+    events.add_argument("--limit", type=int, default=100)
+    events.add_argument("--through", type=int, help="Inclusive high-water cursor.")
+    replay = sub.add_parser("replay", help="Reconstruct the graph at an event cursor.")
+    replay.add_argument("--through", type=int, help="Inclusive replay cursor; defaults to latest.")
+    export = sub.add_parser("export", help="Export replayed history for observability tools.")
+    export.add_argument("--format", choices=("otlp-json",), default="otlp-json")
+    export.add_argument("--through", type=int, help="Inclusive replay cursor; defaults to latest.")
+    export.add_argument(
+        "--metadata",
+        action="store_true",
+        help="Wrap the standard document with local profile and omission metadata.",
+    )
     tui = sub.add_parser("tui", help="Open the live terminal dashboard.")
     tui.add_argument("--history", type=int, default=100)
     tui.add_argument("--refresh-seconds", type=float, default=0.5)
@@ -36,6 +50,19 @@ def execute(args):
             return provider_usage.collect(timeout=args.timeout, network=not args.local_only)
         except ValueError as exc:
             raise ControlError("invalid_limit", str(exc)) from exc
+    if args.monitor_command == "events":
+        return observation.events(
+            store,
+            after=args.after,
+            limit=args.limit,
+            through=args.through,
+        )
+    if args.monitor_command == "replay":
+        return observation.replay(store, through=args.through)
+    if args.monitor_command == "export":
+        snapshot = observation.replay(store, through=args.through)
+        bundle = observation_otel.build_export(snapshot)
+        return bundle if args.metadata else bundle["document"]
     if args.monitor_command == "tui":
         if not sys.stdin.isatty() or not sys.stdout.isatty():
             raise ControlError("monitor_terminal", "Monitor TUI needs an interactive terminal.")
