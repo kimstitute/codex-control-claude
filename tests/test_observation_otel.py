@@ -138,11 +138,16 @@ class ObservationOtelTests(unittest.TestCase):
         self.assertEqual(success_attrs["gen_ai.request.model"], "opus[1m]")
         self.assertEqual(success_attrs["gen_ai.response.model"], "claude-opus-5")
         self.assertEqual(success_attrs["openinference.span.kind"], "AGENT")
+        self.assertEqual(success_attrs["gen_ai.usage.input_tokens"], "17")
+        self.assertEqual(success_attrs["gen_ai.usage.cache_read.input_tokens"], "4")
+        self.assertEqual(success_attrs["gen_ai.usage.cache_creation.input_tokens"], "3")
+        self.assertEqual(success_attrs["gen_ai.usage.reasoning.output_tokens"], "2")
         self.assertEqual(success_attrs["llm.token_count.prompt"], "17")
         self.assertEqual(success_attrs["llm.token_count.completion"], "5")
         self.assertEqual(success_attrs["llm.token_count.total"], "22")
         self.assertEqual(success_attrs["llm.token_count.reasoning"], "2")
         self.assertEqual(success_attrs["llm.cost.total"], 0.25)
+        self.assertNotIn("gen_ai.usage.cost", success_attrs)
         self.assertEqual(failed_attrs["error.type"], "claude_control.run.failed")
 
     def test_serialized_export_contains_no_content_or_private_fields(self):

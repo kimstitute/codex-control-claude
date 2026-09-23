@@ -130,7 +130,7 @@ def _span(run_id, run, session, telemetry):
     output = tokens["output"]
     reasoning = tokens["reasoning"]
     if raw_input is not None:
-        attrs["gen_ai.usage.input_tokens"] = raw_input
+        attrs["claude_control.usage.uncached_input_tokens"] = raw_input
     if output is not None:
         attrs["gen_ai.usage.output_tokens"] = output
         attrs["llm.token_count.completion"] = output
@@ -141,7 +141,7 @@ def _span(run_id, run, session, telemetry):
         attrs["gen_ai.usage.cache_creation.input_tokens"] = cache_creation
         attrs["llm.token_count.cache_write"] = cache_creation
     if reasoning is not None:
-        attrs["gen_ai.usage.reasoning_tokens"] = reasoning
+        attrs["gen_ai.usage.reasoning.output_tokens"] = reasoning
         attrs["llm.token_count.reasoning"] = reasoning
 
     # Claude reports non-cached input and cache read/write separately.  OpenInference
@@ -149,13 +149,14 @@ def _span(run_id, run, session, telemetry):
     prompt_parts = (raw_input, cache_creation, cache_read)
     if any(value is not None for value in prompt_parts):
         prompt = sum(value or 0 for value in prompt_parts)
+        attrs["gen_ai.usage.input_tokens"] = prompt
         attrs["llm.token_count.prompt"] = prompt
         if output is not None:
             attrs["llm.token_count.total"] = prompt + output
 
     cost = _number(telemetry.get("provider_cost_usd")) if isinstance(telemetry, dict) else None
     if cost is not None:
-        attrs["gen_ai.usage.cost"] = cost
+        attrs["claude_control.provider.cost_usd"] = cost
         attrs["llm.cost.total"] = cost
     duration = _number(telemetry.get("duration_ms")) if isinstance(telemetry, dict) else None
     if duration is not None:
