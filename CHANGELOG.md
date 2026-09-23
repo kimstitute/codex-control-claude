@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.19.0 — 2026-09-23
+
+- Upgrade stores to schema 14 with an append-only, cursor-ordered observation
+  ledger, deterministic baseline replay and durable graph relationships.
+- Add the fifth TUI Replay view on Linux and Windows, including one/ten-event
+  seeking, first/latest jumps and timed play/pause over recorded history.
+- Export terminal runs as OTLP/HTTP JSON traces with deterministic IDs,
+  provider-faithful token attributes and no prompt, reasoning or tool bodies.
+- Add AG-UI 1.0 snapshot and lifecycle adapters plus bounded
+  `monitor agui snapshot/events` commands with resumable cursor metadata.
+- Keep account identity, credentials, project paths, prompts and result bodies
+  outside the observation contract and interoperability exports.
+
 ## 0.18.0 — 2026-09-23
 
 - Add `models catalog`, which uses Claude Code's Agent SDK initialization

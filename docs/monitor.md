@@ -18,11 +18,15 @@ hammering account APIs; valid values are 30–3600 seconds. History may contain
 
 | Key | Action |
 |---|---|
-| `1`, `2`, `3`, `4` | Select Graph, Agents, History or Limits |
+| `1`, `2`, `3`, `4`, `5` | Select Graph, Agents, History, Limits or Replay |
 | `Tab` | Select the next view |
 | `↑`, `↓`, `j`, `k` | Scroll one line |
 | `PageUp`, `PageDown` | Scroll one page |
 | `a` | Toggle active/attention and full graph |
+| `←`, `→` | Move the Replay cursor by one event |
+| `[`, `]` | Move the Replay cursor by ten events |
+| `Home`, `End` | Jump to the first event or return to live history |
+| `Space`, `p` | Play or pause recorded history at the TUI refresh rate |
 | `r` | Refresh immediately |
 | `q` | Quit |
 
@@ -31,6 +35,9 @@ task dependencies. Agents shows role, requested and actual model, current work
 and state. History shows recent run state, tokens, duration and cost. Limits
 shows reported quota use, capacity left, reset times, token/request amounts and
 overage spending for signed-in Codex, Claude Code, Gemini CLI and Cursor CLI.
+Replay reconstructs the historical graph at a durable cursor. `LIVE` follows the
+latest event, `PAUSED` holds a selected cursor and `PLAYING` advances one event
+per refresh interval until it reaches the recorded high-water mark.
 
 ## Account limits and remaining tokens
 
@@ -91,6 +98,8 @@ claude_control monitor events --after 0 --limit 100
 claude_control monitor events --after 100 --limit 100 --through 500
 claude_control monitor replay
 claude_control monitor replay --through 500
+claude_control monitor agui snapshot --through 500
+claude_control monitor agui events --after 100 --limit 100 --through 500
 ```
 
 `events` uses an exclusive `--after` cursor and an optional inclusive
@@ -130,6 +139,9 @@ stable standard version. Prompt and completion bodies remain absent by default.
 The Python adapter `claude_control.observation_agui` maps replay snapshots and
 decoded ledger events to AG-UI 1.0 `STATE_SNAPSHOT`, `RUN_STARTED`,
 `RUN_FINISHED`, `RUN_ERROR` and `CUSTOM` events. It is the live frontend boundary
-for the planned graph/replay viewer; SQLite plus observation cursors remain the
-durable history. The adapter never emits text-message, reasoning-content or
-tool-call-content events.
+for graph and replay viewers; SQLite plus observation cursors remain the durable
+history. `monitor agui snapshot` returns one standard event. `monitor agui events`
+returns standard events inside a local bounded paging envelope containing
+`after`, `through`, `next_cursor` and `has_more`; consumers resume from
+`next_cursor` without polling hidden state. The adapter never emits text-message,
+reasoning-content or tool-call-content events.

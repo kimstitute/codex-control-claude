@@ -1,6 +1,6 @@
 # OMX 기능 도입 계획
 
-작성: 2026-09-20 · 갱신: 2026-09-23 · 기준: v0.18.0 · 상태: P1–P5, 역할별 모델 설정 및 계정 model catalog 구현
+작성: 2026-09-20 · 갱신: 2026-09-23 · 기준: v0.19.0 · 상태: P1–P5, model catalog 및 실시간·과거 관측 구현
 
 이 문서는 도입 당시의 설계와 단계별 통과 조건을 보존한다. 단계별 구현 상태는 문서 끝의 진행 기록을 따른다. P5는 기존 Claude 도구 비활성화를 유지하는 컨트롤러 작업 요청 방식으로 구체화했다.
 
@@ -740,3 +740,19 @@ namespace 제약으로 생략됐다. 변경 파일 Ruff 검사·포맷, plugin/s
 manifest JSON과 `git diff --check`도 통과했다. 로그인된 실제 Claude Code에 대한
 catalog smoke에서는 prompt·도구 호출 없이 모델 5개를 반환했고 계정 식별자는
 출력되지 않았다.
+
+## 27. 실시간 관측·과거 재생·표준 연동 — v0.19.0
+
+- schema 14의 append-only observation 원장은 graph node, 관계, 생명주기 상태와
+  수치 telemetry를 단조 증가 cursor 순서로 기록한다. 기존 저장소 이관 시 현재
+  상태를 baseline으로 고정하고 복구할 수 없는 과거 전이는 꾸며내지 않는다.
+- Linux curses와 Windows ANSI/VT TUI에 Replay 화면을 추가했다. 이벤트 단위 이동,
+  10개 단위 이동, 처음·최신 이동, 갱신 주기 기반 재생·일시정지를 제공한다.
+- 종료 run은 결정적 trace/span ID를 가진 OTLP/HTTP JSON으로 내보낸다. AG-UI 1.0
+  snapshot과 lifecycle event는 명시적 `after`/`through` cursor 페이지로 읽는다.
+- prompt, 결과, reasoning, tool-call 본문, 프로젝트 경로, 계정 식별자와 자격 증명은
+  observation 원장과 두 표준 adapter 모두에서 제외한다.
+
+관측·마이그레이션 관련 회귀 시험 47개, 변경 Python 파일 Ruff, plugin/skill validator,
+manifest JSON과 `git diff --check`가 통과했다. 실제 계정 상태 이관은 설치 전에
+`migrate --status`로 진행 중 run이 없음을 확인한 뒤 offline migration으로만 수행한다.

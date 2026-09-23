@@ -41,13 +41,16 @@ claude_control monitor limits
 claude_control monitor events --after 0 --limit 100
 claude_control monitor replay --through 500
 claude_control monitor export --format otlp-json
+claude_control monitor agui snapshot --through 500
+claude_control monitor agui events --after 0 --limit 100
 ```
 
-The TUI provides graph, agents, history and provider-limit views without mutating
+The TUI provides graph, agents, history, provider-limit and cursor-replay views without mutating
 the ledger or advancing work. `snapshot` returns observation data as JSON;
 `limits` reads signed-in Codex, Claude Code, Gemini CLI and Cursor quota sources.
 `events` and `replay` expose schema-14 durable history; `export` emits a standard
-OTLP/HTTP JSON trace request with content bodies omitted.
+OTLP/HTTP JSON trace request with content bodies omitted. `agui` exposes the same
+history as AG-UI 1.0 snapshot and lifecycle events with explicit cursor paging.
 See the [live monitor guide](monitor.md) for keys and the distinction between live
 estimates and final provider values.
 

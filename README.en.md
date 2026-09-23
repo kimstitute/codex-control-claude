@@ -60,6 +60,11 @@ Version 0.18 adds `models catalog` for the signed-in Claude Code account's
 effective model selectors and effort capabilities. It sends no model prompt and
 returns or stores no account identifiers.
 
+Version 0.19 adds an append-only observation ledger, live graph and cursor-based
+history replay, OpenTelemetry trace export and AG-UI 1.0 snapshot/event output.
+The TUI steps or automatically plays recorded events while observation formats
+exclude prompt, reasoning and tool-call bodies.
+
 ## Choose the right workflow
 
 | Goal | Use | What it adds |
@@ -72,7 +77,7 @@ returns or stores no account identifiers.
 | Plan, implement and review | `composition` | P4 planning plus P5 editing and frozen Fable verification |
 | Schedule dependent tasks | `task enqueue` + `dispatch` | FIFO admission and exact accepted-parent gates |
 | Save instructions for the next turn | `message` | Explicit next-revision delivery and result handoff |
-| Observe agents and account limits | `monitor tui` | Role/model/work graph, run tokens and Codex/Claude/Gemini/Cursor limits |
+| Observe agents and past execution | `monitor tui` | Role/model/work graph, cursor replay, run tokens and account limits |
 | List models available to the account | `models catalog` | Current selectors, resolved models and effort levels with account identity removed |
 | Configure model and effort per role | `models show/configure/reset` | Aliases, exact version IDs, atomic replacement and frozen existing work |
 
@@ -83,6 +88,7 @@ the controller yourself.
 ```bash
 claude_control monitor tui
 claude_control monitor limits
+claude_control monitor agui events --after 0 --limit 100
 ```
 
 See the [live monitor guide](docs/monitor.md) for keys and token semantics.

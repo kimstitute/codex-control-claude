@@ -41,13 +41,16 @@ claude_control monitor limits
 claude_control monitor events --after 0 --limit 100
 claude_control monitor replay --through 500
 claude_control monitor export --format otlp-json
+claude_control monitor agui snapshot --through 500
+claude_control monitor agui events --after 0 --limit 100
 ```
 
-TUI는 graph, agents, history, provider limits 화면을 제공하며 원장을 변경하거나
+TUI는 graph, agents, history, provider limits, cursor replay 화면을 제공하며 원장을 변경하거나
 작업을 진행시키지 않습니다. 자동화용 `snapshot`은 관찰 정보를 JSON으로
 반환하고, `limits`는 로그인된 Codex, Claude Code, Gemini CLI, Cursor 한도를
 조회합니다. `events`와 `replay`는 schema 14의 영속 기록을 제공하고, `export`는
-본문을 제외한 표준 OTLP/HTTP JSON trace 요청을 출력합니다.
+본문을 제외한 표준 OTLP/HTTP JSON trace 요청을 출력합니다. `agui`는 같은 기록을
+명시적 cursor 페이지가 있는 AG-UI 1.0 snapshot과 lifecycle event로 제공합니다.
 자세한 키 조작과 실시간 추정치·완료 확정값의 차이는
 [실시간 모니터 안내](monitor.ko.md)를 참고하세요.
 

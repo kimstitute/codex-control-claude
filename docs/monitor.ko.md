@@ -18,11 +18,15 @@ claude_control monitor tui --refresh-seconds 1 --limits-refresh-seconds 60 --his
 
 | 키 | 동작 |
 |---|---|
-| `1`, `2`, `3`, `4` | Graph, Agents, History, Limits 화면 선택 |
+| `1`, `2`, `3`, `4`, `5` | Graph, Agents, History, Limits, Replay 화면 선택 |
 | `Tab` | 다음 화면 |
 | `↑`, `↓`, `j`, `k` | 한 줄 이동 |
 | `PageUp`, `PageDown` | 한 화면 이동 |
 | `a` | Graph에서 진행·주의 대상만 보기/전체 보기 |
+| `←`, `→` | Replay cursor를 이벤트 한 개만큼 이동 |
+| `[`, `]` | Replay cursor를 이벤트 열 개만큼 이동 |
+| `Home`, `End` | 첫 이벤트로 이동하거나 최신 기록을 실시간 추적 |
+| `Space`, `p` | TUI 갱신 주기로 과거 기록 재생/일시정지 |
 | `r` | 즉시 새로 읽기 |
 | `q` | 종료 |
 
@@ -32,6 +36,9 @@ dependency를 표시합니다. Agents 화면은 역할, 요청 모델, 실제 �
 비용을 표시합니다. Limits 화면은 이 호스트에 로그인된 Codex, Claude Code,
 Gemini CLI, Cursor CLI의 기간별 사용률, 남은 비율, 초기화 시각, provider가
 공개한 토큰·요청 수·초과 지출을 보여줍니다.
+Replay 화면은 영속 cursor 시점의 그래프를 복원합니다. `LIVE`는 최신 이벤트를
+따라가고, `PAUSED`는 선택한 cursor를 유지하며, `PLAYING`은 기록의 상한에
+도달할 때까지 갱신 주기마다 이벤트 한 개씩 진행합니다.
 
 ## 계정 한도와 남은 토큰
 
@@ -92,6 +99,8 @@ claude_control monitor events --after 0 --limit 100
 claude_control monitor events --after 100 --limit 100 --through 500
 claude_control monitor replay
 claude_control monitor replay --through 500
+claude_control monitor agui snapshot --through 500
+claude_control monitor agui events --after 100 --limit 100 --through 500
 ```
 
 `events`의 `--after`는 배타 cursor이며 `--through`는 선택적인 포괄 상한입니다.
@@ -128,6 +137,10 @@ OpenTelemetry GenAI agent semantic convention은 현재 Development 상태입니
 
 Python adapter `claude_control.observation_agui`는 replay snapshot과 해석된 원장
 이벤트를 AG-UI 1.0의 `STATE_SNAPSHOT`, `RUN_STARTED`, `RUN_FINISHED`,
-`RUN_ERROR`, `CUSTOM` 이벤트로 바꿉니다. 향후 그래프·과거 재생 화면의 실시간
-경계이며, 영속 기록은 계속 SQLite와 observation cursor가 담당합니다. 이 adapter는
-text message, reasoning 본문, tool-call 본문 이벤트를 만들지 않습니다.
+`RUN_ERROR`, `CUSTOM` 이벤트로 바꿉니다. 그래프·과거 재생 화면의 실시간
+경계이며, 영속 기록은 계속 SQLite와 observation cursor가 담당합니다.
+`monitor agui snapshot`은 표준 이벤트 하나를 반환합니다. `monitor agui events`는
+표준 이벤트 배열을 `after`, `through`, `next_cursor`, `has_more`가 있는 로컬
+페이지 envelope에 담습니다. 소비자는 숨은 상태 없이 `next_cursor`부터 이어서
+읽을 수 있습니다. 이 adapter는 text message, reasoning 본문, tool-call 본문
+이벤트를 만들지 않습니다.
