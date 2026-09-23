@@ -286,4 +286,4 @@ Schema 11의 run 객체에는 `telemetry`가 포함됩니다. Claude가 반환�
 
 ## Composition
 
-`composition create/run/status/stop`은 기존의 제한된 계획 workflow를 통제된 editor와 동결된 reviewer workspace에 연결합니다. schema 10이 필요하며, 계획과 최종 결과 승인을 명시적으로 유지합니다. 파일, 순서, 복구 동작에 대해서는 [composition 가이드](compositions.ko.md)를 참고하세요.
+`composition create/run/status/stop`은 기존의 제한된 계획 workflow를 통제된 editor와 동결된 reviewer workspace에 연결합니다. `create`는 선택적인 `--routing-metadata-file`, 수동 `--scout-workspace` 또는 정확 일치 `--scout-cache-assignment-file`을 받습니다. `composition dispatch`는 명시적 목록이나 모든 active composition을 유한하게 진행하고, `composition evaluate`는 반복 `--stratify`로 라우팅·모델·결과별 집계를 반환합니다. 현재 store schema는 13이며 0.16 기능에는 추가 migration이 없습니다. 계획과 최종 결과 승인은 계속 명시적입니다. 파일, 순서, 복구 동작에 대해서는 [composition 가이드](compositions.ko.md)를 참고하세요.

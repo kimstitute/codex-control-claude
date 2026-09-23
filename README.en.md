@@ -46,6 +46,13 @@ provider limits and an ANSI/VT TUI on Windows 10/11. A SHA-256-pinned
 `ccc-win-supervisor.exe` owns native sessions. Windows workspaces run only through
 Bubblewrap inside WSL2. AppContainer and an unconfined fallback are excluded.
 
+Version 0.15 adds immutable Codex leader specifications, frozen tests that the
+editor cannot write, final-tree check gates and read-only composition evaluation.
+
+Version 0.16 records task type, risk, routing policy, model-selection reason and
+escalation lineage; fairly advances multiple compositions within the global
+concurrency limit; and optionally reuses exact, reverified Sonnet scout results.
+
 ## Choose the right workflow
 
 | Goal | Use | What it adds |
@@ -437,7 +444,8 @@ claude_control composition create \
   --max-revisions 2 \
   --max-calls 6 \
   --dispatch-window-seconds 900 \
-  --reviewer-effort high
+  --reviewer-effort high \
+  --routing-metadata-file /tmp/claude-composition/routing.json
 ```
 
 Creation pins the Git commit and records the P4 workflow. It makes no model
@@ -448,11 +456,24 @@ For a leader-authored specification, replace `--planning-assignment-file` with
 `--test-contract-file` checks the baseline before editor binding and opens the
 reviewer only when frozen test paths are unchanged and every required check
 passes on the final tree. See the [composition guide](docs/compositions.md) for
-the JSON contracts and complete examples. Evaluate real recorded runs with:
+the JSON contracts and complete examples.
+
+Reuse an exact finished scout with
+`--scout-cache-assignment-file /tmp/claude-composition/scout.json`; an absent or
+invalid match fails explicitly. Advance several compositions with the finite
+foreground dispatcher:
+
+```bash
+claude_control composition dispatch --all --once
+claude_control composition dispatch --all --until-idle --max-seconds 60
+```
+
+Evaluate recorded success, cost and routing strata with:
 
 ```bash
 claude_control composition evaluate --all
 claude_control composition evaluate --composition <uuid> --composition <uuid>
+claude_control composition evaluate --all --stratify risk_class --stratify editor_model
 ```
 
 Evaluation does not mutate the ledger or estimate missing cost or token values.
@@ -747,9 +768,10 @@ are opt-in and use your own Claude account; see [docs/testing.md](docs/testing.m
 
 ## Current scope
 
-Version 0.14 supports supplied-text delegation, persistent sessions,
+Version 0.16 supports supplied-text delegation, persistent sessions,
 review-gated task revisions, finite queues/workflows, explicit plan/edit/review
-compositions and a read-only live TUI on Linux and Windows 10/11. Linux workspaces
+compositions, multi-composition dispatch, routing provenance and evaluation,
+verified scout reuse, and a read-only live TUI on Linux and Windows 10/11. Linux workspaces
 use native Bubblewrap; Windows workspaces use Bubblewrap inside WSL2. Native
 Claude file/shell tools, arbitrary existing-session adoption, conversation forks,
 macOS, AppContainer, an MCP adapter, cross-host dispatch and automatic Codex

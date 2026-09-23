@@ -54,6 +54,59 @@ revision, run and result digest, then record `task accept`. A later bounded
 composition run copies that verified plan report and provenance into the editor
 assignment before creating the editor workspace.
 
+Instead of selecting a finished scout UUID directly, an exact scout assignment
+can be used as an opt-in cache key. `--scout-cache-assignment-file` is mutually
+exclusive with `--scout-workspace`:
+
+```bash
+claude_control composition create \
+  --scout-cache-assignment-file /absolute/path/scout.json \
+  ...
+```
+
+The lookup requires the complete normalized assignment (including model and
+effort), source repository, pinned Git commit, exact editor read paths and
+workspace task protocol to match a finished scout. It reverifies the candidate's
+frozen manifest and result digest. No match returns `scout_cache_miss`; it does
+not launch a scout or silently continue without one. Cache reuse is off unless
+this flag is supplied.
+
+### Routing provenance
+
+`--routing-metadata-file` stores the model-selection policy and escalation
+lineage in immutable composition policy. Existing compositions and new
+compositions that omit it remain valid and evaluate as `unrecorded`.
+
+```json
+{
+  "version": 1,
+  "task_type": "bugfix",
+  "risk_class": "R1",
+  "routing_policy_version": "manual.v1",
+  "model_selection_reason": "This is a bounded routine code change.",
+  "parent": null
+}
+```
+
+An escalated composition records its predecessor and consecutive attempt in
+`parent`:
+
+```json
+{
+  "composition_id": "<previous-composition-uuid>",
+  "attempt": 2,
+  "escalation": {
+    "from_model": "sonnet",
+    "to_model": "fable",
+    "reason": "The first attempt did not pass its verification gate."
+  }
+}
+```
+
+The controller verifies the parent, consecutive attempt and agreement between
+the escalation models and the previous/current editor assignments. It does not
+rewrite prior policy or retry a failed run.
+
 ### Leader-authored specification
 
 Version 0.15 can keep specification authorship with the Codex leader. Replace
@@ -120,6 +173,8 @@ receipts stop the composition before reviewer creation.
 claude_control composition evaluate --all
 claude_control composition evaluate \
   --composition <uuid> --composition <uuid>
+claude_control composition evaluate --all \
+  --stratify risk_class --stratify editor_model
 ```
 
 Evaluation performs SELECT queries only. It reports terminal readiness,
@@ -127,6 +182,27 @@ acceptance and unassisted-success rates with 95% Wilson intervals. Cost and the
 four provider token fields are aggregated only when every attributed run has
 complete telemetry; partial and missing records stay separate. Complete-case
 cost per success includes measured failed attempts in its numerator.
+Supported strata are `task_type`, `risk_class`, `routing_policy_version`,
+`origin`, `editor_model`, `editor_effort` and `outcome`. Groups are returned in
+deterministic order and use the same summary and telemetry contract.
+
+### Advance multiple compositions
+
+```bash
+claude_control composition dispatch --all --once
+claude_control composition dispatch --all --until-idle --max-seconds 60
+claude_control composition dispatch \
+  --composition <uuid-a> --composition <uuid-b> --once
+```
+
+The dispatcher gives each selected composition one fair advancement per sweep,
+ordered by creation time and UUID for `--all`; explicit selections preserve
+caller order. Each advancement uses the existing `composition run --once`, so
+detached Claude workers may overlap within the store's global `max_parallel`
+limit. A busy or failed composition does not stop the others and is reported
+separately under `skipped` or `errors`. The dispatcher is finite and foreground;
+it adds no daemon, retry, acceptance or apply behavior. Only one
+multi-composition dispatcher can own a state store at a time.
 
 When the editor freezes a final export, the next composition step automatically
 creates a separate reviewer workspace from that frozen tree. It never reads the
@@ -160,8 +236,10 @@ idempotent.
 
 ## Provenance and compatibility
 
-Schema 10 adds only composition, member and exact-result tables. It does not
-rewrite historical workflow, workspace, task, decision, session or run rows.
-Every stage pins task, revision, run and result digest. Workspace stages also pin
-the frozen manifest and tree digests. Upgrade an idle schema-9 store with the
-normal verified `migrate --offline` procedure.
+Schema 10 introduced composition, member and exact-result tables; the current
+store schema is 13. Version 0.16 routing, dispatch and scout-cache behavior needs
+no new table or migration: it uses immutable composition policy and the verified
+workspace ledger. Every stage pins task, revision, run and result digest, while
+workspace stages also pin frozen manifest and tree digests. Upgrade an older idle
+store to the current schema with the normal verified `migrate --offline`
+procedure.

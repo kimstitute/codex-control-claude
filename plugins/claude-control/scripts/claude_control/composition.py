@@ -3,6 +3,7 @@
 import hashlib
 import json
 import math
+import re
 import sqlite3
 import tempfile
 import time
@@ -11,7 +12,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from . import task_contracts as contract
-from . import tasks, workflow, workspace
+from . import tasks, workflow, workspace, workspace_contracts
 from . import workspace_files as files
 from .platform.locks import file_lock
 from .store import ControlError
@@ -19,6 +20,8 @@ from .workspace_policy import normalize_policy, permits
 from .workspace_policy import path as policy_path
 
 STATE_ERRORS = (ControlError, OSError, ValueError, KeyError, TypeError, sqlite3.IntegrityError)
+TASK_TYPE_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
+ROUTING_VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
 def _require(store):
@@ -132,6 +135,98 @@ def _leader_spec(value):
     if len(raw.encode("utf-8")) > 256 * 1024:
         raise ControlError("invalid_composition", "Leader specification exceeds 256 KiB.")
     return spec, hashlib.sha256(raw.encode()).hexdigest()
+
+
+def _routing_text(value, field, maximum):
+    if not isinstance(value, str) or not value.strip() or len(value) > maximum:
+        raise ControlError("invalid_composition", f"Routing metadata {field} is invalid.")
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        raise ControlError("invalid_composition", f"Routing metadata {field} is invalid.") from None
+    return value
+
+
+def _normalize_routing(store, value, composition_id, editor):
+    if value is None:
+        return None
+    fields = {
+        "version",
+        "task_type",
+        "risk_class",
+        "routing_policy_version",
+        "model_selection_reason",
+        "parent",
+    }
+    if not isinstance(value, dict) or set(value) != fields or value["version"] != 1:
+        raise ControlError("invalid_composition", "Routing metadata fields must match version 1.")
+    task_type = value["task_type"]
+    policy_version = value["routing_policy_version"]
+    if not isinstance(task_type, str) or not TASK_TYPE_RE.fullmatch(task_type):
+        raise ControlError("invalid_composition", "Routing task_type must be a lowercase slug.")
+    if not isinstance(policy_version, str) or not ROUTING_VERSION_RE.fullmatch(policy_version):
+        raise ControlError("invalid_composition", "Routing routing_policy_version is invalid.")
+    if value["risk_class"] not in ("R0", "R1", "R2"):
+        raise ControlError("invalid_composition", "Routing risk_class must be R0, R1 or R2.")
+    parent = value["parent"]
+    normalized_parent = None
+    if parent is not None:
+        if not isinstance(parent, dict) or set(parent) != {
+            "composition_id",
+            "attempt",
+            "escalation",
+        }:
+            raise ControlError("invalid_composition", "Routing parent fields are invalid.")
+        if parent["composition_id"] == composition_id:
+            raise ControlError("invalid_composition", "A composition cannot route from itself.")
+        if type(parent["attempt"]) is not int or parent["attempt"] < 2:
+            raise ControlError("invalid_composition", "Routing parent attempt must be at least 2.")
+        escalation = parent["escalation"]
+        if not isinstance(escalation, dict) or set(escalation) != {
+            "from_model",
+            "to_model",
+            "reason",
+        }:
+            raise ControlError("invalid_composition", "Routing escalation fields are invalid.")
+        with store.db() as db:
+            prior = db.execute(
+                "SELECT policy FROM compositions WHERE id=?", (parent["composition_id"],)
+            ).fetchone()
+        if not prior:
+            raise ControlError("invalid_composition", "Routing parent composition does not exist.")
+        prior_policy = json.loads(prior["policy"])
+        prior_routing = prior_policy.get("routing")
+        prior_attempt = (
+            prior_routing["parent"]["attempt"]
+            if prior_routing and prior_routing.get("parent")
+            else 1
+        )
+        if parent["attempt"] != prior_attempt + 1:
+            raise ControlError("invalid_composition", "Routing parent attempt is not consecutive.")
+        prior_model = prior_policy["editor_assignment"]["model"]
+        if escalation["from_model"] != prior_model or escalation["to_model"] != editor["model"]:
+            raise ControlError(
+                "invalid_composition", "Routing escalation models do not match the recorded route."
+            )
+        normalized_parent = {
+            "composition_id": parent["composition_id"],
+            "attempt": parent["attempt"],
+            "escalation": {
+                "from_model": _routing_text(escalation["from_model"], "from_model", 64),
+                "to_model": _routing_text(escalation["to_model"], "to_model", 64),
+                "reason": _routing_text(escalation["reason"], "escalation reason", 1024),
+            },
+        }
+    return {
+        "version": 1,
+        "task_type": task_type,
+        "risk_class": value["risk_class"],
+        "routing_policy_version": policy_version,
+        "model_selection_reason": _routing_text(
+            value["model_selection_reason"], "model_selection_reason", 1024
+        ),
+        "parent": normalized_parent,
+    }
 
 
 def _selector_covers(selector, relative):
@@ -252,8 +347,13 @@ def _scout_provenance(store, workspace_id, source_repo, pinned_commit, read_path
         assignment = json.loads(binding["assignment"])
         if assignment["role"] != "researcher" or assignment["model"] != "sonnet":
             raise ControlError("invalid_composition", "Scout must use the Sonnet researcher role.")
+        execution = db.execute(
+            "SELECT prompt FROM execution_inputs WHERE run_id=?", (saved["run_id"],)
+        ).fetchone()
+        task_protocol = json.loads(execution["prompt"]).get("protocol") if execution else None
         return {
             "protocol": "claude-control.scout.v1",
+            "task_protocol": task_protocol,
             "workspace_id": workspace_id,
             "task_id": binding["task_id"],
             "run_id": saved["run_id"],
@@ -262,6 +362,70 @@ def _scout_provenance(store, workspace_id, source_repo, pinned_commit, read_path
             "tree_sha256": manifest["tree_sha256"],
             "report": checked["report"],
         }
+
+
+def _scout_cache_inputs(source_repo, pinned_commit, read_paths, assignment):
+    return {
+        "version": 1,
+        "source_repo": source_repo,
+        "base_commit": pinned_commit,
+        "read_paths": read_paths,
+        "assignment": assignment,
+        "task_protocol": workspace_contracts.PROTOCOL,
+    }
+
+
+def _cached_scout_provenance(store, assignment, source_repo, pinned_commit, read_paths):
+    inputs = _scout_cache_inputs(source_repo, pinned_commit, read_paths, assignment)
+    key = hashlib.sha256(contract.canonical(inputs).encode()).hexdigest()
+    with store.db() as db:
+        candidates = db.execute(
+            "SELECT w.id,t.assignment,e.run_id,i.prompt FROM workspaces w "
+            "JOIN workspace_tasks t ON t.workspace_id=w.id "
+            "JOIN workspace_exports e ON e.workspace_id=w.id "
+            "JOIN execution_inputs i ON i.run_id=e.run_id "
+            "WHERE w.state='finished' AND w.source_workspace IS NULL "
+            "AND w.source_repo=? AND w.base_commit=? ORDER BY w.created,w.id",
+            (source_repo, pinned_commit),
+        ).fetchall()
+        selected = None
+        for candidate in candidates:
+            policy = json.loads(
+                db.execute(
+                    "SELECT policy FROM workspaces WHERE id=?", (candidate["id"],)
+                ).fetchone()[0]
+            )
+            prompt = json.loads(candidate["prompt"])
+            saved_assignment = json.loads(candidate["assignment"])
+            # Workspace bindings replace the source project with their private
+            # control directory. Restore the immutable source identity before
+            # comparing it with the caller's normalized assignment.
+            saved_assignment["project"] = source_repo
+            if (
+                policy["role"] == "scout"
+                and policy["read_paths"] == read_paths
+                and not policy["write_paths"]
+                and not policy["checks"]
+                and saved_assignment == assignment
+                and prompt.get("protocol") == workspace_contracts.PROTOCOL
+            ):
+                selected = candidate["id"]
+                break
+    if selected is None:
+        raise ControlError(
+            "scout_cache_miss",
+            "No intact completed scout matches the exact cache inputs; create one, select one "
+            "manually, or omit cached scout reuse.",
+        )
+    scout = _scout_provenance(store, selected, source_repo, pinned_commit, read_paths)
+    return {
+        **scout,
+        "reuse": {
+            "mode": "cache",
+            "key_sha256": key,
+            "inputs": inputs,
+        },
+    }
 
 
 def create(
@@ -279,9 +443,11 @@ def create(
     dispatch_window_seconds=900,
     reviewer_effort=None,
     scout_workspace=None,
+    scout_cache_assignment=None,
     leader_spec=None,
     critic_assignment=None,
     test_contract=None,
+    routing_metadata=None,
 ):
     """Create a composition, recovering a previously created P4 child by operation ID."""
     _require(store)
@@ -289,6 +455,7 @@ def create(
     composition_id = _composition_id(store, operation_id)
     pinned_commit = _pin_source(store, composition_id, source_repo, ref)
     editor = _canonical_assignment(store, editor_assignment, role=("executor",))
+    routing = _normalize_routing(store, routing_metadata, composition_id, editor)
     reviewer = _canonical_assignment(
         store, reviewer_assignment, role=("critic", "verifier"), model="fable"
     )
@@ -346,8 +513,27 @@ def create(
     if editor_policy["role"] != "executor":
         raise ControlError("invalid_composition", "The editor policy must use the executor role.")
     test_contract = _normalize_test_contract(test_contract, editor_policy)
+    if scout_workspace is not None and scout_cache_assignment is not None:
+        raise ControlError(
+            "invalid_composition", "Choose a manual scout or cached scout lookup, not both."
+        )
     scout = None
-    if scout_workspace is not None:
+    if scout_cache_assignment is not None:
+        cache_assignment = _canonical_assignment(
+            store, scout_cache_assignment, role=("researcher",), model="sonnet"
+        )
+        if cache_assignment["project"] != source_repo:
+            raise ControlError(
+                "invalid_composition", "The cached scout assignment must use the source repository."
+            )
+        scout = _cached_scout_provenance(
+            store,
+            cache_assignment,
+            source_repo,
+            pinned_commit,
+            editor_policy["read_paths"],
+        )
+    elif scout_workspace is not None:
         scout = _scout_provenance(
             store,
             scout_workspace,
@@ -355,13 +541,22 @@ def create(
             pinned_commit,
             editor_policy["read_paths"],
         )
+        scout = {**scout, "reuse": {"mode": "manual", "key_sha256": None, "inputs": None}}
+    if scout is not None:
         planning = dict(planning)
         planning["context"] = (
             planning["context"]
             + "\n\nTrusted read-only scout evidence follows. Cite its file:line evidence and "
             "identify any missing source context before planning.\n" + contract.canonical(scout)
         )
-        planning = _canonical_assignment(store, planning, role=("planner", "architect", "executor"))
+        planning = _canonical_assignment(
+            store,
+            planning,
+            role=("critic",)
+            if planning_mode == "leader_spec"
+            else ("planner", "architect", "executor"),
+            model="fable" if planning_mode == "leader_spec" else None,
+        )
     policy = {
         "version": 1,
         "planning_mode": planning_mode,
@@ -376,6 +571,7 @@ def create(
         "reviewer_assignment": reviewer,
         "reviewer_policy": _reviewer_policy(editor_policy),
         "test_contract": test_contract,
+        "routing": routing,
         "scout": scout,
         "workflow": {
             "max_revisions": 0 if planning_mode == "leader_spec" else max_revisions,
@@ -1052,6 +1248,129 @@ def run(store, composition_id, *, once=False, max_seconds=30):
                 time.sleep(min(0.2, max(0, deadline - time.monotonic())))
                 continue
             return {**output, "started": started, "loop_reason": reason}
+
+
+def _dispatch_selection(store, composition_ids):
+    with store.db() as db:
+        if composition_ids is None:
+            return [
+                row[0]
+                for row in db.execute(
+                    "SELECT id FROM compositions WHERE state='active' ORDER BY created,id"
+                )
+            ]
+        if not composition_ids or len(set(composition_ids)) != len(composition_ids):
+            raise ControlError(
+                "invalid_arguments", "Composition selections must be nonempty and unique."
+            )
+        placeholders = ",".join("?" for _ in composition_ids)
+        found = {
+            row[0]
+            for row in db.execute(
+                f"SELECT id FROM compositions WHERE id IN ({placeholders})",
+                tuple(composition_ids),
+            )
+        }
+    missing = [value for value in composition_ids if value not in found]
+    if missing:
+        raise ControlError("composition_not_found", "Unknown composition UUID: " + missing[0])
+    return list(composition_ids)
+
+
+def dispatch(store, composition_ids=None, *, once=False, max_seconds=30):
+    """Advance a finite composition snapshot fairly while child workers run in parallel."""
+    _require(store)
+    if (
+        isinstance(max_seconds, bool)
+        or not isinstance(max_seconds, (int, float))
+        or not math.isfinite(max_seconds)
+        or not 0 <= max_seconds <= 3600
+    ):
+        raise ControlError("invalid_composition", "max-seconds must be finite, 0..3600.")
+    selected = _dispatch_selection(store, composition_ids)
+    lock_context = file_lock(
+        store.path / "composition-dispatch.lock", exclusive=True, blocking=False
+    )
+    try:
+        lock_context.__enter__()
+    except BlockingIOError:
+        raise ControlError(
+            "composition_dispatch_busy", "Another multi-composition dispatcher is active."
+        ) from None
+    deadline = None if once else time.monotonic() + max_seconds
+    started = {composition_id: [] for composition_id in selected}
+    skipped = {}
+    errors = {}
+    snapshots = []
+    try:
+        while True:
+            for composition_id in selected:
+                if composition_id in skipped or composition_id in errors:
+                    continue
+                with store.db() as db:
+                    state = _get(db, composition_id)["state"]
+                if state not in ("active", "stopping"):
+                    continue
+                if not once and time.monotonic() >= deadline:
+                    break
+                try:
+                    output = run(store, composition_id, once=True)
+                    started[composition_id].extend(output["started"])
+                except ControlError as exc:
+                    if exc.code == "composition_busy":
+                        skipped[composition_id] = exc.code
+                    else:
+                        errors[composition_id] = {"code": exc.code, "message": str(exc)}
+                except (OSError, ValueError, KeyError, TypeError, sqlite3.IntegrityError) as exc:
+                    errors[composition_id] = {
+                        "code": "composition_dispatch_failed",
+                        "message": str(exc),
+                    }
+            snapshots = []
+            pending = []
+            for composition_id in selected:
+                output = status(store, composition_id)
+                snapshots.append(
+                    {
+                        "id": composition_id,
+                        "state": output["state"],
+                        "reason": output["reason"],
+                        "phase": output["phase"],
+                    }
+                )
+                if (
+                    composition_id not in skipped
+                    and composition_id not in errors
+                    and output["state"] in ("active", "stopping")
+                ):
+                    pending.append(composition_id)
+            if once:
+                loop_reason = "once"
+                break
+            if not pending:
+                loop_reason = (
+                    "needs_attention"
+                    if any(item["state"] == "awaiting_codex" for item in snapshots)
+                    or skipped
+                    or errors
+                    else "idle"
+                )
+                break
+            if time.monotonic() >= deadline:
+                loop_reason = "deadline"
+                break
+            time.sleep(min(0.2, max(0, deadline - time.monotonic())))
+    finally:
+        lock_context.__exit__(None, None, None)
+    return {
+        "selection": "all_active" if composition_ids is None else "explicit",
+        "selected": selected,
+        "started": started,
+        "skipped": skipped,
+        "errors": errors,
+        "compositions": snapshots,
+        "loop_reason": loop_reason,
+    }
 
 
 def _finish_stop(store, composition_id):

@@ -5,7 +5,7 @@ description: Manage multiple persistent Claude Code sessions on the current Linu
 
 # Claude Control
 
-Use the bundled `../../scripts/claude_control_cli.py`, resolving that path from this skill's directory. Public commands return JSON except the explicit TUI. Python 3.10+ and locally authenticated Claude Code are prerequisites; run `--help` for flags. Version 0.14 supports Linux and Windows supplied-text delegation, JSON-schema task reports, base-hashed patch operations, one bounded format repair, reviewer vetoes, typed acceptance evidence, finite plan/edit/review compositions, guarded apply, read-only scout context, telemetry and live monitoring. Claude native tools and MCP are disabled, with CLI safe mode and empty setting sources. The project-hook nonexecution test passed; administrator-managed policy still applies. For proposals, supply source text and inspect returned edits. For authorized file work, read [the workspace reference](references/workspaces.md) before creating a policy. The controller executes structured read/write/patch/named-check requests on private copies; source integration remains a Codex action.
+Use the bundled `../../scripts/claude_control_cli.py`, resolving that path from this skill's directory. Public commands return JSON except the explicit TUI. Python 3.10+ and locally authenticated Claude Code are prerequisites; run `--help` for flags. Version 0.16 supports Linux and Windows supplied-text delegation, JSON-schema task reports, base-hashed patch operations, one bounded format repair, reviewer vetoes, typed acceptance evidence, finite plan/edit/review compositions, routing provenance, fair multi-composition dispatch, verified scout reuse, guarded apply, telemetry and live monitoring. Claude native tools and MCP are disabled, with CLI safe mode and empty setting sources. The project-hook nonexecution test passed; administrator-managed policy still applies. For proposals, supply source text and inspect returned edits. For authorized file work, read [the workspace reference](references/workspaces.md) before creating a policy. The controller executes structured read/write/patch/named-check requests on private copies; source integration remains a Codex action.
 
 ## Execution settings
 
@@ -279,6 +279,11 @@ baseline evidence and requires named-check receipts on the final tree. The
 controller derives a read-only verifier policy with the same readable paths.
 Creation makes no model call.
 
+When routing provenance is available, pass `--routing-metadata-file` with version,
+task type, R0/R1/R2 risk, policy version, selection reason and optional verified
+parent escalation. Use `--scout-cache-assignment-file` only when exact completed
+scout reuse is intended; a miss is an error and never silently drops scout context.
+
 Drive the named composition with `composition run --composition <UUID> --once`
 or `--until-idle --max-seconds <0..3600>`. It uses the existing child engines and
 persists exact task/revision/run/result and frozen-export provenance. The P4
@@ -291,7 +296,13 @@ accepts the exact editor result. Status derives `accepted` from that ledger reco
 Use `composition evaluate --all` or repeat `--composition <UUID>` to measure
 terminal readiness, acceptance, unassisted success, complete provider telemetry
 and complete-case cost per success. This command is read-only and does not impute
-missing costs or tokens.
+missing costs or tokens. Repeat `--stratify` to group by recorded routing fields,
+editor model/effort, origin or outcome; legacy missing values remain `unrecorded`.
+
+Use `composition dispatch --all --once` or a finite `--until-idle --max-seconds`
+to advance multiple compositions fairly. Repeated `--composition` selects an
+explicit ordered set. The foreground dispatcher respects global capacity,
+isolates busy/failed compositions and never retries, accepts or applies results.
 
 The composition never retries malformed, failed or unknown execution, changes a
 model or session, repairs a report, accepts a result, merges, pushes or wakes Codex.

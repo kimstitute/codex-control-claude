@@ -78,6 +78,7 @@ class CompositionTests(ControllerTestCase):
         *,
         plan_fixture: dict | None = None,
         reviewer_fixture: dict | None = None,
+        routing_metadata: dict | None = None,
     ) -> dict:
         self.sequence += 1
         return composition.create(
@@ -91,6 +92,7 @@ class CompositionTests(ControllerTestCase):
             f"composition-create-{self.sequence}",
             repo=str(self.repo),
             reviewer_effort="high",
+            routing_metadata=routing_metadata,
         )
 
     def run_once(self, composition_id: str) -> dict:
@@ -181,6 +183,94 @@ class CompositionTests(ControllerTestCase):
             self.assertEqual(
                 db.execute("SELECT count(*) FROM composition_members").fetchone()[0], 0
             )
+
+    def test_routing_metadata_records_valid_escalation_lineage(self) -> None:
+        root = self.create(
+            "routing-root",
+            routing_metadata={
+                "version": 1,
+                "task_type": "bugfix",
+                "risk_class": "R1",
+                "routing_policy_version": "manual.v1",
+                "model_selection_reason": "Routine bounded implementation.",
+                "parent": None,
+            },
+        )
+        child = self.create(
+            "routing-child",
+            routing_metadata={
+                "version": 1,
+                "task_type": "bugfix",
+                "risk_class": "R2",
+                "routing_policy_version": "manual.v1",
+                "model_selection_reason": "Escalated after the recorded parent attempt.",
+                "parent": {
+                    "composition_id": root["id"],
+                    "attempt": 2,
+                    "escalation": {
+                        "from_model": "sonnet",
+                        "to_model": "sonnet",
+                        "reason": "Preserve the model while tightening review.",
+                    },
+                },
+            },
+        )
+
+        policy = composition.status(Store(self.state), child["id"])["policy"]
+        self.assertEqual(policy["routing"]["risk_class"], "R2")
+        self.assertEqual(policy["routing"]["parent"]["composition_id"], root["id"])
+        self.assertEqual(policy["routing"]["parent"]["attempt"], 2)
+
+        invalid = {
+            "version": 1,
+            "task_type": "bugfix",
+            "risk_class": "R1",
+            "routing_policy_version": "manual.v1",
+            "model_selection_reason": "Missing the required parent field.",
+        }
+        self.assert_error(
+            "invalid_composition",
+            self.create,
+            "routing-invalid",
+            routing_metadata=invalid,
+        )
+
+    def test_dispatch_advances_fifo_and_isolates_busy_composition(self) -> None:
+        first = self.create("dispatch-first")["id"]
+        second = self.create("dispatch-second")["id"]
+        third = self.create("dispatch-third")["id"]
+        states = {value: "active" for value in (first, second, third)}
+        calls = []
+
+        def fake_run(_store, composition_id, *, once):
+            self.assertTrue(once)
+            calls.append(composition_id)
+            if composition_id == first:
+                raise ControlError("composition_busy", "busy")
+            states[composition_id] = "awaiting_codex"
+            return {"started": [composition_id + "-run"]}
+
+        def fake_status(_store, composition_id):
+            return {
+                "id": composition_id,
+                "state": states[composition_id],
+                "reason": "plan_acceptance_required"
+                if states[composition_id] != "active"
+                else None,
+                "phase": "plan",
+            }
+
+        with (
+            mock.patch.object(composition, "run", side_effect=fake_run),
+            mock.patch.object(composition, "status", side_effect=fake_status),
+        ):
+            result = composition.dispatch(Store(self.state), once=True)
+
+        self.assertEqual(calls, [first, second, third])
+        self.assertEqual(result["skipped"], {first: "composition_busy"})
+        self.assertEqual(result["started"][second], [second + "-run"])
+        self.assertEqual(result["started"][third], [third + "-run"])
+        self.assertEqual(result["loop_reason"], "once")
 
     def test_leader_spec_is_critiqued_before_editor_and_test_gate_passes(self) -> None:
         (self.repo / "TEST.txt").write_text("frozen\n", encoding="utf-8")
@@ -344,6 +434,12 @@ class CompositionTests(ControllerTestCase):
             "max_actions": 4,
             "max_calls": 4,
         }
+        scout_assignment = self.assignment(
+            "composition-scout",
+            role="researcher",
+            model="sonnet",
+            fixture={"workspace_operations": [[{"op": "read", "path": "README.md"}], []]},
+        )
         with mock.patch.object(workspace.sandbox, "require"):
             scout = workspace.create(
                 Store(self.state),
@@ -355,12 +451,7 @@ class CompositionTests(ControllerTestCase):
             workspace.bind(
                 Store(self.state),
                 scout["id"],
-                self.assignment(
-                    "composition-scout",
-                    role="researcher",
-                    model="sonnet",
-                    fixture={"workspace_operations": [[{"op": "read", "path": "README.md"}], []]},
-                ),
+                scout_assignment,
                 "composition-scout-bind",
             )
             finished = workspace.run(Store(self.state), scout["id"], max_seconds=8)
@@ -393,9 +484,66 @@ class CompositionTests(ControllerTestCase):
                 ).fetchone()["prompt"]
             )
         self.assertEqual(policy["scout"]["workspace_id"], scout["id"])
+        self.assertEqual(policy["scout"]["reuse"]["mode"], "manual")
         self.assertEqual(policy["scout"]["report"]["status"], "complete")
         self.assertIn("claude-control.scout.v1", prompt["assignment"]["context"])
         self.assertIn("Fixture report for researcher", prompt["assignment"]["context"])
+
+        cached = composition.create(
+            Store(self.state),
+            self.assignment("cached-plan", role="planner", model="fable"),
+            self.assignment("cached-edit", role="executor", model="sonnet"),
+            self.editor_policy(),
+            self.assignment("cached-review", role="verifier", model="fable"),
+            "cached-composition-create",
+            repo=str(self.repo),
+            reviewer_effort="high",
+            scout_cache_assignment=scout_assignment,
+        )
+        cached_policy = composition.status(Store(self.state), cached["id"])["policy"]
+        self.assertEqual(cached_policy["scout"]["workspace_id"], scout["id"])
+        self.assertEqual(cached_policy["scout"]["reuse"]["mode"], "cache")
+        self.assertEqual(len(cached_policy["scout"]["reuse"]["key_sha256"]), 64)
+
+        leader_editor = self.assignment("cached-leader-edit", role="executor", model="sonnet")
+        cached_leader = composition.create(
+            Store(self.state),
+            None,
+            leader_editor,
+            self.editor_policy(),
+            self.assignment("cached-leader-review", role="verifier", model="fable"),
+            "cached-leader-composition-create",
+            repo=str(self.repo),
+            reviewer_effort="high",
+            scout_cache_assignment=scout_assignment,
+            leader_spec={
+                "version": 1,
+                "id": "cached-leader-spec",
+                "name": "Cached leader spec",
+                "objective": "Use verified scout evidence.",
+                "context": "The scout and specification remain separate evidence.",
+                "scope": ["Use the bounded repository context."],
+                "acceptance_criteria": leader_editor["acceptance_criteria"],
+                "implementation_plan": ["Apply the accepted specification."],
+            },
+            critic_assignment=self.assignment("cached-leader-critic", role="critic", model="fable"),
+        )
+        leader_policy = composition.status(Store(self.state), cached_leader["id"])["policy"]
+        self.assertEqual(leader_policy["planning_mode"], "leader_spec")
+        self.assertEqual(leader_policy["scout"]["reuse"]["mode"], "cache")
+
+        self.assert_error(
+            "scout_cache_miss",
+            composition.create,
+            Store(self.state),
+            self.assignment("miss-plan", role="planner", model="fable"),
+            self.assignment("miss-edit", role="executor", model="sonnet"),
+            self.editor_policy(),
+            self.assignment("miss-review", role="verifier", model="fable"),
+            "miss-composition-create",
+            repo=str(self.repo),
+            scout_cache_assignment={**scout_assignment, "id": "different-scout"},
+        )
 
     def test_create_recovers_child_workflow_after_outer_transaction_crash(self) -> None:
         planning = self.assignment("crash-plan", role="planner", model="fable")

@@ -46,7 +46,7 @@ class EvaluationTests(ControllerTestCase):
             "timeout": 10,
         }
 
-    def create(self, label):
+    def create(self, label, routing_metadata=None):
         self.sequence += 1
         return composition.create(
             Store(self.state),
@@ -63,6 +63,7 @@ class EvaluationTests(ControllerTestCase):
             f"evaluate-create-{self.sequence}",
             repo=str(self.project),
             reviewer_effort="high",
+            routing_metadata=routing_metadata,
         )
 
     def assert_control_error(self, code, call, *args):
@@ -145,6 +146,45 @@ class EvaluationTests(ControllerTestCase):
         )
         self.assert_control_error(
             "composition_not_found", evaluation.evaluate, Store(self.state), ["missing"]
+        )
+
+    def test_stratification_preserves_recorded_and_unrecorded_routes(self) -> None:
+        routed = self.create(
+            "routed",
+            routing_metadata={
+                "version": 1,
+                "task_type": "bugfix",
+                "risk_class": "R1",
+                "routing_policy_version": "manual.v1",
+                "model_selection_reason": "A bounded routine implementation.",
+                "parent": None,
+            },
+        )["id"]
+        legacy = self.create("legacy")["id"]
+
+        report = evaluation.evaluate(Store(self.state), stratify=["risk_class", "task_type"])
+
+        groups = report["stratification"]["groups"]
+        self.assertEqual(report["stratification"]["fields"], ["risk_class", "task_type"])
+        self.assertEqual(
+            [group["values"] for group in groups],
+            [
+                {"risk_class": "R1", "task_type": "bugfix"},
+                {"risk_class": "unrecorded", "task_type": "unrecorded"},
+            ],
+        )
+        self.assertEqual(groups[0]["composition_ids"], [routed])
+        self.assertEqual(groups[1]["composition_ids"], [legacy])
+        self.assertEqual(sum(group["summary"]["selected"] for group in groups), 2)
+        entries = {entry["id"]: entry for entry in report["compositions"]}
+        self.assertEqual(entries[routed]["routing"]["routing_policy_version"], "manual.v1")
+        self.assertIsNone(entries[legacy]["routing"])
+        self.assert_control_error(
+            "invalid_arguments",
+            evaluation.evaluate,
+            Store(self.state),
+            None,
+            ["risk_class", "risk_class"],
         )
 
     def test_telemetry_requires_cost_and_all_exact_token_fields(self) -> None:

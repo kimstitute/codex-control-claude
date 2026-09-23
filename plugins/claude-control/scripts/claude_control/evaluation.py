@@ -6,7 +6,16 @@ import math
 from .store import ControlError
 from .workspace import FORMAT_REPAIR_SCOPE
 
-ATTRIBUTION_VERSION = "composition-runs.v1"
+ATTRIBUTION_VERSION = "composition-runs.v2"
+STRATIFY_FIELDS = (
+    "task_type",
+    "risk_class",
+    "routing_policy_version",
+    "origin",
+    "editor_model",
+    "editor_effort",
+    "outcome",
+)
 TOKEN_KEYS = (
     "input_tokens",
     "output_tokens",
@@ -173,10 +182,15 @@ def _entry(db, row):
         and workflow_row["round"] == 0
         and not _format_repaired(db, row["id"])
     )
+    routing = policy.get("routing")
+    editor = policy.get("editor_assignment", {})
     return {
         "id": row["id"],
         "name": row["name"],
         "origin": "leader_spec" if policy.get("planning_mode") == "leader_spec" else "planned",
+        "routing": routing,
+        "editor_model": editor.get("model"),
+        "editor_effort": editor.get("effort"),
         "outcome": outcome,
         "gate": _gate(db, row, policy),
         "unassisted_success": unassisted,
@@ -187,31 +201,7 @@ def _entry(db, row):
     }
 
 
-def evaluate(store, composition_ids=None):
-    """Evaluate all or an explicit list without refreshing or mutating the store."""
-    if composition_ids is not None:
-        if not composition_ids or len(set(composition_ids)) != len(composition_ids):
-            raise ControlError(
-                "invalid_arguments", "Composition selections must be nonempty and unique."
-            )
-    with store.db() as db:
-        if composition_ids is None:
-            rows = db.execute("SELECT * FROM compositions ORDER BY created,id").fetchall()
-        else:
-            placeholders = ",".join("?" for _ in composition_ids)
-            found = db.execute(
-                f"SELECT * FROM compositions WHERE id IN ({placeholders}) ORDER BY created,id",
-                tuple(composition_ids),
-            ).fetchall()
-            by_id = {row["id"]: row for row in found}
-            missing = [value for value in composition_ids if value not in by_id]
-            if missing:
-                raise ControlError(
-                    "composition_not_found", "Unknown composition UUID: " + missing[0]
-                )
-            rows = [by_id[value] for value in composition_ids]
-        entries = [_entry(db, row) for row in rows]
-
+def _aggregate(entries):
     counts = {name: 0 for name in ("in_progress", "failed", "ready", "accepted")}
     telemetry_counts = {name: 0 for name in ("measured", "partial", "missing")}
     for entry in entries:
@@ -225,8 +215,6 @@ def evaluate(store, composition_ids=None):
     measured_cost = sum(entry["provider_cost_usd"] for entry in measured)
     token_totals = {key: sum(entry["tokens"][key] for entry in measured) for key in TOKEN_KEYS}
     return {
-        "schema_version": store.config["schema"],
-        "attribution_version": ATTRIBUTION_VERSION,
         "summary": {
             "selected": len(entries),
             "terminal": terminal,
@@ -245,6 +233,75 @@ def evaluate(store, composition_ids=None):
             "cost_per_success_usd": (
                 measured_cost / measured_successes if measured_successes else None
             ),
+        },
+    }
+
+
+def _stratum_value(entry, field):
+    if field in ("task_type", "risk_class", "routing_policy_version"):
+        routing = entry["routing"]
+        return routing[field] if routing else "unrecorded"
+    value = entry[field]
+    return value if value is not None else "unrecorded"
+
+
+def _strata(entries, fields):
+    grouped = {}
+    for entry in entries:
+        key = tuple(_stratum_value(entry, field) for field in fields)
+        grouped.setdefault(key, []).append(entry)
+    output = []
+    for key in sorted(grouped):
+        values = {field: value for field, value in zip(fields, key)}
+        members = grouped[key]
+        output.append(
+            {
+                "values": values,
+                "composition_ids": [entry["id"] for entry in members],
+                **_aggregate(members),
+            }
+        )
+    return output
+
+
+def evaluate(store, composition_ids=None, stratify=None):
+    """Evaluate all or an explicit list without refreshing or mutating the store."""
+    if composition_ids is not None:
+        if not composition_ids or len(set(composition_ids)) != len(composition_ids):
+            raise ControlError(
+                "invalid_arguments", "Composition selections must be nonempty and unique."
+            )
+    fields = list(stratify or [])
+    if len(set(fields)) != len(fields) or any(field not in STRATIFY_FIELDS for field in fields):
+        raise ControlError(
+            "invalid_arguments", "Stratification fields must be unique and supported."
+        )
+    with store.db() as db:
+        if composition_ids is None:
+            rows = db.execute("SELECT * FROM compositions ORDER BY created,id").fetchall()
+        else:
+            placeholders = ",".join("?" for _ in composition_ids)
+            found = db.execute(
+                f"SELECT * FROM compositions WHERE id IN ({placeholders}) ORDER BY created,id",
+                tuple(composition_ids),
+            ).fetchall()
+            by_id = {row["id"]: row for row in found}
+            missing = [value for value in composition_ids if value not in by_id]
+            if missing:
+                raise ControlError(
+                    "composition_not_found", "Unknown composition UUID: " + missing[0]
+                )
+            rows = [by_id[value] for value in composition_ids]
+        entries = [_entry(db, row) for row in rows]
+
+    aggregated = _aggregate(entries)
+    return {
+        "schema_version": store.config["schema"],
+        "attribution_version": ATTRIBUTION_VERSION,
+        **aggregated,
+        "stratification": {
+            "fields": fields,
+            "groups": _strata(entries, fields) if fields else [],
         },
         "compositions": entries,
     }

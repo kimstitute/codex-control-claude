@@ -283,3 +283,18 @@ Python 컴파일, `git diff --check`도 통과했습니다.
 읽기 전용 검토자 정책 테스트, 스냅샷 복사 이전의 P5 내보내기 검증으로
 커버됩니다. 이 릴리스에서는 실제 프로젝트 실행이 수행되지 않았는데, 이는
 별개의 파일럿 범위이기 때문입니다.
+
+## 버전 0.16 라우팅·dispatch·scout cache 검증
+
+최종 Python 3.14 전체 suite는 **414개 시험을 통과**했고, 이 호스트의 격리 경계로
+인한 기존 Bubblewrap namespace 시험 1개가 생략됐습니다. composition/evaluation
+집중 시험 25개는 불변 routing 계보, 과거 기록을 `unrecorded`로 보존하는 결정적
+층화, FIFO 다중 composition 진행, busy 격리, 정확한 scout cache hit/miss,
+generated plan과 leader spec에서의 scout 재사용을 다룹니다. CLI help/version,
+manifest JSON, 변경 파일 Ruff/format, `git diff --check`를 통과했습니다. 저장소 전체
+Ruff에는 이번 변경 밖의 기존 import-order 3건이 남아 있습니다.
+
+Fable high가 schema 13 유지 설계를 검토했습니다. Sonnet medium은 지정 소스를
+읽었지만 구현 턴이 600초 제한에 도달해 재시도하거나 완료된 편집으로 취급하지
+않았습니다. Codex가 승인된 설계를 구현하고 검증했으며 자동 재시도·승인·원본
+apply 경계는 바꾸지 않았습니다.

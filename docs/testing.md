@@ -251,3 +251,19 @@ items are covered by the composition-owned acceptance query, the derived read-on
 reviewer policy test, and P5's export verification before snapshot copying. No
 real-project execution was performed for this release because that is a separate
 pilot scope.
+
+## Version 0.16 routing, dispatch and scout-cache verification
+
+The final Python 3.14 suite passed **414 tests** with one existing Bubblewrap
+namespace skip caused by this host's isolation boundary. The 25 focused
+composition/evaluation tests cover immutable routing lineage, deterministic
+stratification with `unrecorded` legacy values, FIFO multi-composition advancement,
+busy isolation, exact scout-cache hit/miss behavior and scout reuse with both
+generated planning and leader-authored specifications. CLI help/version, manifest
+JSON, changed-file Ruff/format and `git diff --check` passed. Repository-wide
+Ruff still reports three pre-existing import-order findings outside this change.
+
+Fable high reviewed the schema-13 design. Sonnet medium read the bounded source
+set but its implementation turn reached the 600-second limit; it was not retried
+or presented as a completed edit. Codex implemented and verified the accepted
+design without changing automatic retry, acceptance or source-apply boundaries.

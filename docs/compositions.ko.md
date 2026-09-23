@@ -53,6 +53,56 @@ digest를 확인한 뒤 `task accept`를 기록하세요. 이후의 경계 지�
 composition run)은 그 검증된 계획 보고서와 출처(provenance)를 편집자 할당에
 복사한 다음 편집자 워크스페이스를 생성합니다.
 
+완료된 scout를 UUID로 직접 선택하는 대신 동일한 scout assignment를 캐시 키로
+사용할 수도 있습니다. `--scout-cache-assignment-file`은 `--scout-workspace`와 함께
+쓸 수 없습니다.
+
+```bash
+claude_control composition create \
+  --scout-cache-assignment-file /absolute/path/scout.json \
+  ...
+```
+
+캐시 조회는 assignment 전체(모델·effort 포함), source repository, 고정 Git 커밋,
+editor의 정확한 읽기 경로, workspace task protocol이 모두 같은 완료된 scout만
+선택합니다. 후보의 frozen manifest와 결과 digest도 다시 검증합니다. 일치 항목이
+없으면 `scout_cache_miss`로 실패하며 새 scout를 자동 실행하거나 scout 없이 계속하지
+않습니다. 캐시는 명시적으로 요청했을 때만 사용됩니다.
+
+### 라우팅 출처 기록
+
+`--routing-metadata-file`은 모델을 선택한 정책과 승격 계보를 composition의 불변
+policy에 저장합니다. 기존 composition과 이 옵션을 생략한 새 composition은 그대로
+지원되며 평가 결과에서 `unrecorded`로 구분됩니다.
+
+```json
+{
+  "version": 1,
+  "task_type": "bugfix",
+  "risk_class": "R1",
+  "routing_policy_version": "manual.v1",
+  "model_selection_reason": "범위가 작은 일반 코드 변경이다.",
+  "parent": null
+}
+```
+
+승격한 새 composition은 `parent`에 이전 composition과 연속 attempt를 기록합니다.
+
+```json
+{
+  "composition_id": "<이전-composition-uuid>",
+  "attempt": 2,
+  "escalation": {
+    "from_model": "sonnet",
+    "to_model": "fable",
+    "reason": "첫 시도가 검증 게이트를 통과하지 못했다."
+  }
+}
+```
+
+컨트롤러는 부모 존재 여부, 연속 attempt, 이전·현재 editor 모델과 escalation 모델의
+일치를 확인합니다. 과거 policy를 수정하지 않으며 실패한 실행을 재시도하지 않습니다.
+
 ### 리더 작성 명세
 
 0.15부터는 명세 작성자를 Codex 리더로 고정할 수 있습니다. planning assignment
@@ -115,12 +165,35 @@ provenance로 받습니다.
 claude_control composition evaluate --all
 claude_control composition evaluate \
   --composition <uuid> --composition <uuid>
+claude_control composition evaluate --all \
+  --stratify risk_class --stratify editor_model
 ```
 
 평가는 SELECT만 사용합니다. terminal readiness, acceptance, unassisted-success 비율과
 95% Wilson 구간을 반환합니다. 비용과 네 가지 provider token 필드는 해당 composition의
 모든 run에 완전한 telemetry가 있을 때만 합산하고 partial/missing을 분리합니다.
 complete-case 성공당 비용의 분자에는 측정된 실패 시도의 비용도 포함합니다.
+층화 필드는 `task_type`, `risk_class`, `routing_policy_version`, `origin`,
+`editor_model`, `editor_effort`, `outcome`입니다. 그룹은 결정적인 순서로 반환되고
+각 그룹은 같은 summary와 telemetry 계약을 사용합니다.
+
+### 여러 composition 진행
+
+```bash
+claude_control composition dispatch --all --once
+claude_control composition dispatch --all --until-idle --max-seconds 60
+claude_control composition dispatch \
+  --composition <uuid-a> --composition <uuid-b> --once
+```
+
+dispatcher는 시작 시 선택한 composition을 생성 시각과 UUID 순서로 한 번씩 공정하게
+진행합니다. 명시적 선택은 전달한 순서를 유지합니다. 각 호출은 기존
+`composition run --once`를 사용하므로 실제 Claude worker는 저장소의 전역
+`max_parallel` 한도 안에서 동시에 실행될 수 있습니다. 하나가 busy이거나 실패해도
+다른 선택 항목은 계속 진행하며 결과의 `skipped`와 `errors`에 분리해 기록합니다.
+dispatcher 자체는 foreground이고 유한하며, daemon·자동 재시도·자동 승인·apply를
+추가하지 않습니다. 같은 state store에서는 한 번에 하나의 multi-composition
+dispatcher만 실행됩니다.
 
 편집자가 최종 익스포트를 고정(freeze)하면, 다음 구성 단계는 그 고정된 트리로부터
 별도의 검토자 워크스페이스를 자동으로 생성합니다. 이는 라이브 저장소나 변경 가능한
@@ -153,9 +226,9 @@ claude_control composition stop --composition <uuid> --operation-id stop-001
 
 ## 출처(provenance)와 호환성
 
-스키마 10은 구성(composition), 멤버(member), 정확한 결과(exact-result) 테이블만
-추가합니다. 이는 기존 워크플로, 워크스페이스, 작업, 결정(decision), 세션, 실행
-행(row)을 다시 작성하지 않습니다. 각 단계는 작업, 리비전, 실행, 결과 digest를
-고정합니다. 워크스페이스 단계는 고정된 매니페스트와 트리 digest도 함께
-고정합니다. 유휴 상태의 스키마 9 저장소는 일반적인 검증된 `migrate --offline`
-절차로 업그레이드하세요.
+스키마 10은 구성(composition), 멤버(member), 정확한 결과(exact-result) 테이블을
+도입했고 현재 저장소 스키마는 13입니다. 0.16의 routing, dispatcher, scout cache는
+새 테이블이나 migration 없이 기존 불변 composition policy와 검증된 workspace
+원장을 사용합니다. 각 단계는 작업, 리비전, 실행, 결과 digest를 고정하고 workspace
+단계는 frozen manifest와 tree digest도 함께 고정합니다. 오래된 저장소는 유휴 상태에서
+일반적인 검증된 `migrate --offline` 절차로 현재 스키마까지 업그레이드하세요.

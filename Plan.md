@@ -1,6 +1,6 @@
 # OMX 기능 도입 계획
 
-작성: 2026-09-20 · 갱신: 2026-09-23 · 기준: v0.15.0 · 상태: P1–P5 및 리더 명세·테스트 게이트·평가 구현
+작성: 2026-09-20 · 갱신: 2026-09-23 · 기준: v0.16.0 · 상태: P1–P5 및 라우팅·다중 composition·scout 재사용 구현
 
 이 문서는 도입 당시의 설계와 단계별 통과 조건을 보존한다. 단계별 구현 상태는 문서 끝의 진행 기록을 따른다. P5는 기존 Claude 도구 비활성화를 유지하는 컨트롤러 작업 요청 방식으로 구체화했다.
 
@@ -674,3 +674,35 @@ P4의 제한된 검토·수정 반복과 재접속 요약은 아래 기록대로
 - Python 3.14 전체 회귀 시험 411개가 통과했고 1개는 현재 호스트가 Bubblewrap
   namespace를 허용하지 않아 명시적으로 생략됐다. 변경 파일 Ruff 검사와 포맷 검사,
   `git diff --check`, 빈 실제 저장소에 대한 read-only 평가 smoke도 통과했다.
+
+## 24. 라우팅 출처·다중 composition·scout 재사용 — v0.16.0
+
+이번 단계는 실증 데이터의 해석 가능성과 여러 composition의 처리량을 높이되 기존
+승인·재시도·격리 경계를 바꾸지 않는다.
+
+1. **불변 라우팅 기록:** 선택적인 version 1 metadata에 task type, R0/R1/R2,
+   routing policy version, model 선택 사유와 parent escalation을 저장한다. 부모
+   composition, 연속 attempt, 이전·현재 editor model 일치를 생성 시 검증한다.
+2. **층화 평가:** 기존 SELECT-only 평가에 routing, editor model/effort, 명세 origin,
+   outcome별 결정적 그룹을 추가한다. metadata가 없는 과거 기록은 추정하지 않고
+   `unrecorded`로 표시한다.
+3. **다중 dispatcher:** 시작 시 선택한 composition 스냅샷을 FIFO sweep으로 진행한다.
+   기존 `composition run --once`와 전역 `max_parallel`을 재사용해 worker가 겹쳐 실행될
+   수 있게 한다. 전역 dispatcher lock, busy 격리, composition별 오류 분리를 적용한다.
+4. **검증된 scout cache:** 완전한 정규화 assignment, source repo, 고정 commit,
+   read paths, workspace task protocol을 cache identity로 사용한다. hit도 frozen export와
+   digest를 다시 검증하며 miss는 `scout_cache_miss`로 멈춘다. 자동 scout 실행과
+   암묵적 context 생략은 없다.
+5. **호환성:** schema 13을 유지한다. routing은 불변 composition policy에 저장하고
+   dispatcher와 평가·cache lookup은 기존 원장을 사용한다. 옵션을 생략한 동작은
+   v0.15와 같다.
+
+설계 단계는 로컬 Fable high가 schema 13 유지, 명시적 cache, foreground dispatcher를
+검토했다. Sonnet medium은 지정한 소스 파일을 읽은 뒤 구현 호출이 600초 제한으로
+종료되어 자동 재시도하지 않았고, Codex가 같은 승인 범위에서 구현·통합했다.
+
+검증은 새 composition/evaluation 25개 focused 시험과 Python 3.14 전체 414개 시험을
+통과했다. 전체 suite의 1개 생략은 현재 호스트가 Bubblewrap namespace를 허용하지 않는
+기존 환경 경계다. 변경 파일 Ruff 검사·포맷, CLI help/version, JSON manifest와
+`git diff --check`도 통과했다. 저장소 전체 Ruff에는 이번 diff 밖의 기존 import-order
+3건이 남아 있어 변경 파일 검사와 구분해 기록한다.

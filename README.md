@@ -46,6 +46,13 @@ SHA-256으로 고정한 `ccc-win-supervisor.exe`가 관리하며, Windows worksp
 WSL2 안의 Bubblewrap으로만 실행됩니다. AppContainer와 비격리 대체 실행은
 포함하지 않습니다.
 
+0.15 버전은 Codex 리더가 작성한 불변 명세, 편집자가 쓸 수 없는 동결 테스트,
+최종 트리에 묶인 검사 gate와 read-only composition 평가를 추가합니다.
+
+0.16 버전은 task 유형·위험도·라우팅 정책·모델 선택 사유·승격 계보를 불변
+기록으로 남기고, 여러 composition을 전역 동시 실행 한도 안에서 공정하게 진행하며,
+정확히 일치하고 다시 검증된 Sonnet scout 결과를 선택적으로 재사용합니다.
+
 ## 어떤 명령을 선택해야 하나요?
 
 | 원하는 일 | 사용할 기능 | 추가되는 보장 |
@@ -438,7 +445,8 @@ claude_control composition create \
   --max-revisions 2 \
   --max-calls 6 \
   --dispatch-window-seconds 900 \
-  --reviewer-effort high
+  --reviewer-effort high \
+  --routing-metadata-file /tmp/claude-composition/routing.json
 ```
 
 생성은 Git 커밋과 P4 workflow를 기록할 뿐 모델을 호출하지 않습니다.
@@ -449,11 +457,24 @@ claude_control composition create \
 `--test-contract-file`은 editor binding 전 baseline 기대값을 확인하고, 동결한
 테스트 경로가 그대로이며 모든 필수 검사가 최종 트리에서 통과했을 때만 reviewer를
 엽니다. 전체 JSON 형식과 예제는 [composition 가이드](docs/compositions.ko.md)에
-있습니다. 실제 기록의 성공률·비용은 다음과 같이 읽습니다.
+있습니다.
+
+완료된 scout를 정확한 입력으로 재사용하려면 UUID 대신
+`--scout-cache-assignment-file /tmp/claude-composition/scout.json`을 사용합니다.
+일치하는 frozen 결과가 없으면 명시적으로 실패합니다. 여러 composition은 다음처럼
+foreground dispatcher로 진행합니다.
+
+```bash
+claude_control composition dispatch --all --once
+claude_control composition dispatch --all --until-idle --max-seconds 60
+```
+
+실제 기록의 성공률·비용과 라우팅별 차이는 다음과 같이 읽습니다.
 
 ```bash
 claude_control composition evaluate --all
 claude_control composition evaluate --composition <uuid> --composition <uuid>
+claude_control composition evaluate --all --stratify risk_class --stratify editor_model
 ```
 
 평가 명령은 원장을 변경하지 않으며, 누락된 비용이나 토큰을 추정하지 않습니다.
@@ -750,9 +771,10 @@ ruff format --check .
 
 ## 현재 범위
 
-0.14 버전은 Linux와 Windows 10/11에서 텍스트 위임, 영속 세션,
+0.16 버전은 Linux와 Windows 10/11에서 텍스트 위임, 영속 세션,
 검토·승인 가능한 task 개정, 유한 대기열과 workflow, 명시적
-계획·편집·검토 composition, read-only 실시간 TUI를 지원합니다. Linux
+계획·편집·검토 composition, 다중 composition dispatch, 라우팅 출처와 평가,
+검증된 scout 재사용, read-only 실시간 TUI를 지원합니다. Linux
 workspace는 네이티브 Bubblewrap, Windows workspace는 WSL2 내부 Bubblewrap을
 사용합니다. Claude의 직접 파일·shell 도구, 임의 기존 세션 인수, 대화 fork,
 macOS, AppContainer, MCP adapter, 서버 간 전달, Codex 자동 깨우기는 현재

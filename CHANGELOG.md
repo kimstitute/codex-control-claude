@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.16.0 — 2026-09-23
+
+- Add optional immutable routing metadata to composition policy: task type, risk
+  class, routing-policy version, model-selection reason and verified escalation
+  lineage. Read-only evaluation can stratify recorded outcomes by these fields,
+  editor settings, origin or outcome while marking legacy records `unrecorded`.
+- Add a foreground multi-composition dispatcher with deterministic FIFO sweeps,
+  global single-dispatcher exclusion, per-composition busy isolation and the
+  existing global worker-capacity limit. It does not retry, accept or apply work.
+- Add opt-in scout reuse by exact normalized assignment, source commit, readable
+  paths and workspace task protocol. Cache hits are reverified from frozen
+  artifacts; misses fail explicitly and default composition behavior is unchanged.
+- Keep store schema 13. All new provenance lives in immutable composition policy
+  or is derived with read-only queries, so no database migration is required.
+
 ## 0.15.0 — 2026-09-23
 
 - Add immutable leader-authored composition specifications. Fable is restricted

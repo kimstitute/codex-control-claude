@@ -337,6 +337,11 @@ telemetry; the controller does not estimate missing prices.
 ## Compositions
 
 `composition create/run/status/stop` connects the existing bounded planning
-workflow to controlled editor and frozen reviewer workspaces. It requires schema
-10 and keeps plan and final-result acceptance explicit. See the
-[composition guide](compositions.md) for files, ordering and recovery behavior.
+workflow to controlled editor and frozen reviewer workspaces. `create` accepts
+optional `--routing-metadata-file`, manual `--scout-workspace`, or exact-match
+`--scout-cache-assignment-file`. `composition dispatch` finitely advances an
+explicit set or all active compositions; `composition evaluate` accepts repeated
+`--stratify` fields for routing/model/outcome groups. The current store schema is
+13 and version 0.16 needs no additional migration. Plan and final-result
+acceptance remain explicit. See the [composition guide](compositions.md) for
+files, ordering and recovery behavior.

@@ -21,6 +21,7 @@ def register(commands):
     create.add_argument("--editor-policy-file", type=Path, required=True)
     create.add_argument("--reviewer-assignment-file", type=Path, required=True)
     create.add_argument("--test-contract-file", type=Path)
+    create.add_argument("--routing-metadata-file", type=Path)
     create.add_argument("--repo", required=True)
     create.add_argument("--ref", default="HEAD")
     create.add_argument("--operation-id", required=True)
@@ -28,7 +29,9 @@ def register(commands):
     create.add_argument("--max-calls", type=int, default=6)
     create.add_argument("--dispatch-window-seconds", type=float, default=900)
     create.add_argument("--reviewer-effort", choices=("low", "medium", "high", "xhigh", "max"))
-    create.add_argument("--scout-workspace")
+    scout = create.add_mutually_exclusive_group()
+    scout.add_argument("--scout-workspace")
+    scout.add_argument("--scout-cache-assignment-file", type=Path)
 
     run = sub.add_parser("run")
     run.add_argument("--composition", required=True)
@@ -36,6 +39,15 @@ def register(commands):
     mode.add_argument("--once", action="store_true")
     mode.add_argument("--until-idle", action="store_true")
     run.add_argument("--max-seconds", type=float)
+
+    dispatch = sub.add_parser("dispatch")
+    dispatch_selection = dispatch.add_mutually_exclusive_group(required=True)
+    dispatch_selection.add_argument("--all", action="store_true")
+    dispatch_selection.add_argument("--composition", action="append")
+    dispatch_mode = dispatch.add_mutually_exclusive_group(required=True)
+    dispatch_mode.add_argument("--once", action="store_true")
+    dispatch_mode.add_argument("--until-idle", action="store_true")
+    dispatch.add_argument("--max-seconds", type=float)
 
     status = sub.add_parser("status")
     status.add_argument("--composition", required=True)
@@ -48,6 +60,7 @@ def register(commands):
     selection = evaluate.add_mutually_exclusive_group(required=True)
     selection.add_argument("--all", action="store_true")
     selection.add_argument("--composition", action="append")
+    evaluate.add_argument("--stratify", action="append", choices=evaluation.STRATIFY_FIELDS)
 
 
 def _policy(path):
@@ -92,12 +105,22 @@ def execute(args):
             dispatch_window_seconds=args.dispatch_window_seconds,
             reviewer_effort=args.reviewer_effort,
             scout_workspace=args.scout_workspace,
+            scout_cache_assignment=(
+                load_assignment(args.scout_cache_assignment_file)
+                if args.scout_cache_assignment_file
+                else None
+            ),
             leader_spec=leader_spec,
             critic_assignment=critic,
             test_contract=(_policy(args.test_contract_file) if args.test_contract_file else None),
+            routing_metadata=(
+                _policy(args.routing_metadata_file) if args.routing_metadata_file else None
+            ),
         )
     if command == "evaluate":
-        return evaluation.evaluate(store, None if args.all else args.composition)
+        return evaluation.evaluate(
+            store, None if args.all else args.composition, stratify=args.stratify
+        )
     if command == "status":
         return composition.status(store, args.composition)
     if command == "stop":
@@ -112,4 +135,15 @@ def execute(args):
         if not math.isfinite(args.max_seconds) or not 0 <= args.max_seconds <= 3600:
             raise ControlError("invalid_arguments", "--max-seconds must be finite, 0..3600")
         return composition.run(store, args.composition, once=False, max_seconds=args.max_seconds)
+    if command == "dispatch":
+        selection = None if args.all else args.composition
+        if args.once:
+            if args.max_seconds is not None:
+                raise ControlError("invalid_arguments", "--once does not accept --max-seconds")
+            return composition.dispatch(store, selection, once=True)
+        if args.max_seconds is None:
+            raise ControlError("invalid_arguments", "--until-idle requires --max-seconds")
+        if not math.isfinite(args.max_seconds) or not 0 <= args.max_seconds <= 3600:
+            raise ControlError("invalid_arguments", "--max-seconds must be finite, 0..3600")
+        return composition.dispatch(store, selection, max_seconds=args.max_seconds)
     raise ControlError("invalid_command", f"unsupported composition command: {command}")
