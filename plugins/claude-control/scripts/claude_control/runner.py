@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 
 from .execution_settings import binary_identity, validate_effort
+from .platform.environment import select_environment
 from .platform.locks import file_lock
 from .protocol import build_argv, parse_stream
 from .store import (
@@ -61,7 +62,7 @@ def child_environment():
         "http_proxy",
         "no_proxy",
     )
-    return {name: os.environ[name] for name in names if name in os.environ}
+    return select_environment(os.environ, names, case_insensitive=os.name == "nt")
 
 
 def worker_environment():

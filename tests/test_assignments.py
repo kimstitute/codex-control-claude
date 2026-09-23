@@ -130,7 +130,7 @@ class AssignmentCommandTests(ControllerTestCase):
         self.assertEqual(recorded[recorded.index("--mcp-config") + 1], '{"mcpServers":{}}')
         self.assertEqual(recorded[recorded.index("--tools") + 1], "")
         self.assertEqual(recorded[recorded.index("--permission-mode") + 1], "dontAsk")
-        self.assertEqual(recorded[recorded.index("--permission-prompts") + 1], "none")
+        self.assertNotIn("--permission-prompts", recorded)
         self.assertEqual(recorded[recorded.index("--session-id") + 1], created["backend_id"])
         self.assertEqual(recorded[-4:], ["--output-format", "stream-json", "--verbose", "-p"])
 

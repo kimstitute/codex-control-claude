@@ -135,7 +135,6 @@ def doctor(store, check_auth, check_platform=False):
         "--session-id",
         "--resume",
         "--tools",
-        "--permission-prompts",
         "--output-format",
         "--disable-slash-commands",
         "--mcp-config",

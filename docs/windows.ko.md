@@ -1,9 +1,11 @@
 # Windows 설치와 운영
 
-0.14.0은 Windows 10/11에서 같은 사용자로 로그인한 Claude Code 세션과
-task, workflow, composition, provider 한도 모니터를 지원합니다. Windows
-지원은 beta입니다. 단위 테스트와 Windows용 Rust 빌드는 자동화되어 있지만,
-실제 Windows·WSL2 호스트의 통합 검증은 아직 남아 있습니다.
+0.14.1은 Windows 10/11에서 같은 사용자로 로그인한 Claude Code 세션과
+task, workflow, composition, provider 한도 모니터를 지원합니다. 네이티브
+helper, supervisor protocol, suspended child 신원 기록·재개와 Job Object 실행은
+실제 Windows x64에서 smoke test를 통과했습니다. 실제 모델 호출에는 유효한
+Claude 로그인이 필요하고, WSL2 workspace smoke는 WSL 서비스에 접근할 수 있는
+Windows 사용자 환경에서 실행해야 합니다.
 
 ## 지원 구조
 
@@ -101,9 +103,10 @@ push는 하지 않습니다. Windows에서 새 executable 파일은 worktree가 
 | 증상 | 확인할 항목 |
 |---|---|
 | session control 비활성 | helper 아키텍처, 설치 manifest, 실제 파일 SHA-256 |
+| `401 OAuth access token has expired` | 같은 Windows 사용자의 일반 터미널에서 `claude auth login` 실행 |
+| WSL `E_ACCESSDENIED` | 제한된 앱 sandbox 밖의 일반 사용자 터미널에서 WSL 서비스 접근 확인 |
 | `workspace doctor`가 WSL 실패 | `wsl.exe --status`, 기본/선택 배포판 실행 여부 |
 | `bwrap`을 찾지 못함 | 같은 WSL 배포판에 Bubblewrap 설치 |
 | state 경로 거절 | `/mnt` 밖의 WSL ext4 경로 사용 |
 | reparse/DACL 오류 | junction·symlink를 제거하고 현재 사용자 전용 디렉터리 사용 |
 | apply mode 오류 | 새 executable 추가를 Linux에서 적용하거나 파일을 일반 mode로 유지 |
-

@@ -1,9 +1,11 @@
 # Windows setup and operations
 
-Version 0.14.0 supports same-user Claude Code sessions, tasks, workflows,
-compositions and provider-limit monitoring on Windows 10/11. Windows support is
-beta: unit tests and the Windows Rust build are automated, but a live Windows and
-WSL2 integration run has not yet been completed.
+Version 0.14.1 supports same-user Claude Code sessions, tasks, workflows,
+compositions and provider-limit monitoring on Windows 10/11. The native helper,
+supervisor protocol, suspended-child identity sequence and Job Object execution
+have passed a physical Windows x64 smoke test. A live model request needs a valid
+Claude login, and the WSL2 workspace smoke must run from a Windows account that
+can access the WSL service.
 
 ## Architecture and boundary
 
@@ -91,9 +93,10 @@ because a native worktree cannot faithfully create its Git mode.
 | Symptom | Check |
 |---|---|
 | Session control disabled | Helper architecture, install manifest and file SHA-256 |
+| `401 OAuth access token has expired` | Run `claude auth login` in a normal terminal for the same Windows user |
+| WSL reports `E_ACCESSDENIED` | Run from a normal same-user terminal with WSL service access; restricted app sandboxes may block it |
 | WSL workspace probe fails | `wsl.exe --status` and the selected/default distribution |
 | `bwrap` missing | Install Bubblewrap inside that WSL distribution |
 | State path rejected | Use a WSL ext4 path outside `/mnt` |
 | Reparse/DACL error | Remove junctions/symlinks and use a current-user-only directory |
 | Apply mode error | Apply new executables on Linux or keep the new file non-executable |
-

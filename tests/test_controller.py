@@ -34,6 +34,38 @@ from claude_control.store import (  # noqa: E402
 TERMINAL = {"completed", "failed", "cancelled", "launch_failed", "interrupted"}
 
 
+class EnvironmentSelectionTests(unittest.TestCase):
+    def test_windows_child_environment_has_no_case_insensitive_duplicates(self) -> None:
+        source = {
+            "SYSTEMROOT": r"C:\Windows",
+            "SystemRoot": r"C:\Windows",
+            "COMSPEC": r"C:\Windows\System32\cmd.exe",
+            "ComSpec": r"C:\Windows\System32\cmd.exe",
+            "HTTPS_PROXY": "upper",
+            "https_proxy": "lower",
+        }
+        with mock.patch.object(runner.os, "name", "nt"), mock.patch.dict(
+            runner.os.environ, source, clear=True
+        ):
+            environment = runner.child_environment()
+
+        folded = [name.casefold() for name in environment]
+        self.assertEqual(len(folded), len(set(folded)))
+        self.assertEqual(environment["SYSTEMROOT"], r"C:\Windows")
+        self.assertEqual(environment["COMSPEC"], r"C:\Windows\System32\cmd.exe")
+        self.assertEqual(environment["HTTPS_PROXY"], "upper")
+
+    def test_non_windows_child_environment_preserves_distinct_case(self) -> None:
+        source = {"HTTPS_PROXY": "upper", "https_proxy": "lower"}
+        with mock.patch.object(runner.os, "name", "posix"), mock.patch.dict(
+            runner.os.environ, source, clear=True
+        ):
+            environment = runner.child_environment()
+
+        self.assertEqual(environment["HTTPS_PROXY"], "upper")
+        self.assertEqual(environment["https_proxy"], "lower")
+
+
 class ControllerTestCase(unittest.TestCase):
     max_parallel = 2
 

@@ -23,6 +23,7 @@ import uuid
 from pathlib import Path
 
 from . import windows_process, workspace_files
+from .platform.environment import select_environment
 from .store import ControlError
 from .workspace_files import MAX_TOTAL_BYTES as _MAX_TREE_BYTES
 
@@ -371,7 +372,7 @@ _RESULT_KEYS = {
 def _windows_environment(environ):
     """Give wsl.exe only the Windows runtime variables it needs, never provider secrets."""
     names = ("SystemRoot", "SYSTEMROOT", "WINDIR", "PATH", "PATHEXT", "TEMP", "TMP")
-    return {name: environ[name] for name in names if name in environ}
+    return select_environment(environ, names, case_insensitive=True)
 
 
 def _validated_result(raw, exit_code, duration):
@@ -549,7 +550,10 @@ def execute(directory, argv, timeout, *, cancelled=lambda: False, started=lambda
 
 def probe():
     distro = os.environ.get("CLAUDE_CONTROL_WSL_DISTRO")
-    with tempfile.TemporaryDirectory(prefix="ccc-wsl-probe-") as directory:
+    with tempfile.TemporaryDirectory(prefix="ccc-wsl-probe-") as root:
+        directory = Path(root) / "scratch"
+        directory.mkdir()
+        workspace_files._write_modes(directory, {})
         try:
             result = execute(directory, ["/usr/bin/true"], 5)
         except (ControlError, OSError) as exc:

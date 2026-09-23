@@ -57,8 +57,6 @@ def build_argv(
         "",
         "--permission-mode",
         "dontAsk",
-        "--permission-prompts",
-        "none",
         *session_flag,
         "--output-format",
         "stream-json",

@@ -2,21 +2,23 @@
 
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import subprocess
 import sys
 import tempfile
 import unittest
-from types import SimpleNamespace
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "plugins/claude-control/scripts"))
 
-from claude_control import windows_wsl_sandbox as wsl  # noqa: E402
 from claude_control import windows_process  # noqa: E402
+from claude_control import windows_wsl_sandbox as wsl  # noqa: E402
 from claude_control.store import ControlError  # noqa: E402
+
+
 class FakeHelperClient:
     def __init__(self, exit_code=0, result=None, uncertain=False):
         self.exit_code = exit_code
@@ -208,6 +210,37 @@ class ProbeTests(unittest.TestCase):
             self.assertEqual(report["backend"], "wsl2-bubblewrap")
             self.assertEqual(report["distro"], "Ubuntu")
             self.assertIsNone(report["reason"])
+
+    def test_windows_probe_creates_and_cleans_empty_mode_metadata(self):
+        observed = []
+
+        def execute(directory, _argv, _timeout):
+            sidecar = Path(directory).with_name(Path(directory).name + ".modes.json")
+            observed.append(sidecar)
+            self.assertEqual(json.loads(sidecar.read_text()), {})
+            return _result_body()
+
+        with mock.patch.object(wsl.workspace_files, "_ON_WINDOWS", True), mock.patch.object(
+            wsl, "execute", side_effect=execute
+        ):
+            report = wsl.probe()
+
+        self.assertTrue(report["ready"])
+        self.assertEqual(len(observed), 1)
+        self.assertFalse(observed[0].exists())
+
+    def test_windows_runtime_environment_has_no_case_insensitive_duplicates(self):
+        environment = wsl._windows_environment(
+            {
+                "SystemRoot": r"C:\Windows",
+                "SYSTEMROOT": r"C:\Windows",
+                "PATH": r"C:\Windows\System32",
+            }
+        )
+        folded = [name.casefold() for name in environment]
+        self.assertEqual(len(folded), len(set(folded)))
+        self.assertIn("SystemRoot", environment)
+        self.assertNotIn("SYSTEMROOT", environment)
 
 
 class HelperSourceBoundaryTests(unittest.TestCase):

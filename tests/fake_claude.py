@@ -249,7 +249,7 @@ def _run(arguments: list[str]) -> int:
         print(
             "fake Claude CLI: --model --effort --safe-mode --setting-sources "
             "--strict-mcp-config --session-id --resume --tools "
-            "--permission-prompts --output-format --disable-slash-commands "
+            "--output-format --disable-slash-commands "
             "--mcp-config --permission-mode --json-schema --verbose -p"
         )
         return 0

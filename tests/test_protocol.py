@@ -71,7 +71,7 @@ class BuildArgvTests(unittest.TestCase):
         self.assertNotIn("--resume", argv)
         self.assertEqual(argv[argv.index("--tools") + 1], "")
         self.assertEqual(argv[argv.index("--permission-mode") + 1], "dontAsk")
-        self.assertEqual(argv[argv.index("--permission-prompts") + 1], "none")
+        self.assertNotIn("--permission-prompts", argv)
         self.assertEqual(argv[argv.index("--mcp-config") + 1], '{"mcpServers":{}}')
         for required_flag in (
             "--safe-mode",
