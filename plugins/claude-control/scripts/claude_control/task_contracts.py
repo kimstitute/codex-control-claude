@@ -29,6 +29,14 @@ def _nonempty_string():
     return {"type": "string", "minLength": 1}
 
 
+def _workspace_read_path_schema(paths):
+    """Describe read requests without treating directory authorities as files."""
+    schema = {"type": "string", "minLength": 1, "maxLength": 240}
+    if not any(value == "." or value.endswith("/") for value in paths):
+        schema["enum"] = paths
+    return schema
+
+
 def report_schema(snapshot):
     """Return the exact Claude CLI structured-output schema for a frozen task prompt."""
     properties = {
@@ -126,7 +134,7 @@ def report_schema(snapshot):
                     "required": ["op", "path"],
                     "properties": {
                         "op": {"type": "string", "const": "read"},
-                        "path": {"type": "string", "enum": policy["read_paths"]},
+                        "path": _workspace_read_path_schema(policy["read_paths"]),
                     },
                 }
             )

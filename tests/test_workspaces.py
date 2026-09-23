@@ -780,6 +780,16 @@ class WorkspaceTests(ControllerTestCase):
         self.assertEqual(result["state"], "finished")
         self.assertEqual(result["task"]["runs"][-1]["actual_models"], ["claude-opus-test"])
 
+    def test_report_schema_allows_concrete_files_under_directory_read_authority(self) -> None:
+        schema = task_contracts._workspace_read_path_schema(["src/"])
+
+        self.assertNotIn("enum", schema)
+        self.assertEqual((schema["minLength"], schema["maxLength"]), (1, 240))
+        self.assertEqual(
+            task_contracts._workspace_read_path_schema(["README.md"])["enum"],
+            ["README.md"],
+        )
+
     def test_stop_leaves_source_and_working_tree_unchanged(self) -> None:
         created = self.create(policy=self.policy(write=["README.md"]))
         self.bind(created, self.assignment("stopped"))
