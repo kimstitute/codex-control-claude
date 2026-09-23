@@ -56,11 +56,12 @@ including structured follow-ups. Existing delegate and unstructured commands kee
 
 ### Delegate with a role and an output contract
 
-`roles` lists the bundled role instructions and resolved default models without
+`roles` lists the bundled role instructions and compatible built-in models without
 requiring an initialized store:
 
 ```bash
 claude_control roles
+claude_control models show
 ```
 
 | Role | Default model | Supplied-text task |
@@ -98,7 +99,7 @@ claude_control delegate --assignment-file /absolute/path/to/assignment.json \
 `model` and `timeout` are optional; defaults are the role's model and 300 seconds.
 Optional `effort` accepts `low`, `medium`, `high`, `xhigh` or `max`; omission preserves
 CLI behavior, while JSON null is invalid. See [execution settings](execution-settings.md).
-An explicit `"model": "sonnet"` or `"model": "fable"` overrides the preset. The
+An explicit family alias or exact `claude-...` model ID overrides the role setting. The
 resolved model is always passed explicitly to Claude. There is no automatic
 classifier or model fallback. All other fields are required. `context` may be
 empty; scope and acceptance criteria must be nonempty string lists. IDs match
@@ -323,7 +324,8 @@ make no model calls. Delivery receipts bind only at explicit submit or dispatch.
 `start`, `followup`, `resume` and `restart` accept `--effort <level>`.
 An existing session pins its original setting, including omission; a different
 explicit value is rejected. Structured assignments use the optional `effort` key.
-`workflow create --reviewer-effort high` pins the independent reviewer setting.
+`workflow create --reviewer-model <selector> --reviewer-effort high` overrides
+the independent reviewer settings; omission uses the critic role defaults.
 `doctor` reports `effort_supported`; this checks CLI flag availability, not model
 support for every effort value. Explicit effort requires schema 9.
 

@@ -195,7 +195,7 @@ def execute(args):
     sub = args.task_command
 
     if sub == "create":
-        assignment = load_assignment(args.assignment_file)
+        assignment = load_assignment(args.assignment_file, role_defaults=store.role_defaults())
         return tasks.create(
             store,
             assignment,
@@ -209,7 +209,7 @@ def execute(args):
     if sub == "show":
         return tasks.show(store, args.task)
     if sub == "revise":
-        assignment = load_assignment(args.assignment_file)
+        assignment = load_assignment(args.assignment_file, role_defaults=store.role_defaults())
         return tasks.revise(
             store,
             args.task,

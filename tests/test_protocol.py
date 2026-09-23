@@ -98,9 +98,16 @@ class BuildArgvTests(unittest.TestCase):
             '{"required":["status"],"type":"object"}',
         )
 
-    def test_rejects_unknown_model_alias(self) -> None:
+    def test_accepts_supported_family_alias_and_exact_model(self) -> None:
+        opus = build_argv("claude", "opus", SESSION_ID)
+        exact = build_argv("claude", "claude-opus-5", SESSION_ID)
+
+        self.assertEqual(opus[opus.index("--model") + 1], "opus")
+        self.assertEqual(exact[exact.index("--model") + 1], "claude-opus-5")
+
+    def test_rejects_unknown_model_selector(self) -> None:
         with self.assertRaises(ValueError):
-            build_argv("claude", "opus", SESSION_ID)
+            build_argv("claude", "latest-best", SESSION_ID)
 
     def test_rejects_non_uuid_session_identifier(self) -> None:
         with self.assertRaises(ValueError):
@@ -122,9 +129,7 @@ class ParseStreamTests(unittest.TestCase):
         self.assertIs(parsed["result_is_error"], False)
         self.assertEqual(parsed["errors"], [])
         self.assertEqual(parsed["usage"], {"input_tokens": 2, "output_tokens": 1})
-        self.assertEqual(
-            parsed["model_usage"], {"claude-auxiliary-test": {"inputTokens": 1}}
-        )
+        self.assertEqual(parsed["model_usage"], {"claude-auxiliary-test": {"inputTokens": 1}})
         self.assertEqual(parsed["provider_cost_usd"], 0.0125)
         self.assertEqual(parsed["duration_api_ms"], 321.0)
         self.assertIs(parsed["validated_success"], True)
@@ -145,9 +150,7 @@ class ParseStreamTests(unittest.TestCase):
         events[-1]["structured_output"] = {"status": "complete", "revision": 1}
         with tempfile.TemporaryDirectory() as temp:
             path = _write_events(Path(temp), events)
-            parsed = parse_stream(
-                path, "sonnet", SESSION_ID, expect_structured_output=True
-            )
+            parsed = parse_stream(path, "sonnet", SESSION_ID, expect_structured_output=True)
 
         self.assertEqual(parsed["response"], '{"revision":1,"status":"complete"}')
         self.assertEqual(parsed["structured_output"], {"status": "complete", "revision": 1})
@@ -164,9 +167,7 @@ class ParseStreamTests(unittest.TestCase):
         events[-1]["structured_output"] = {"status": "complete", "revision": 1}
         with tempfile.TemporaryDirectory() as temp:
             path = _write_events(Path(temp), events)
-            parsed = parse_stream(
-                path, "sonnet", SESSION_ID, expect_structured_output=True
-            )
+            parsed = parse_stream(path, "sonnet", SESSION_ID, expect_structured_output=True)
 
         self.assertEqual(parsed["tool_use_count"], 1)
         self.assertTrue(parsed["errors"])
@@ -174,9 +175,7 @@ class ParseStreamTests(unittest.TestCase):
     def test_structured_run_rejects_missing_structured_output(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             path = _write_events(Path(temp), _success_events())
-            parsed = parse_stream(
-                path, "sonnet", SESSION_ID, expect_structured_output=True
-            )
+            parsed = parse_stream(path, "sonnet", SESSION_ID, expect_structured_output=True)
 
         self.assertIn("terminal result missing structured_output object", parsed["errors"][0])
         self.assertIs(parsed["validated_success"], False)
@@ -197,6 +196,17 @@ class ParseStreamTests(unittest.TestCase):
 
             parsed = parse_stream(path, "sonnet", SESSION_ID)
 
+        self.assertTrue(parsed["errors"])
+
+    def test_exact_model_identifier_requires_exact_provider_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            matching = _write_events(Path(temp), _success_events(assistant_model="claude-opus-5"))
+            parsed = parse_stream(matching, "claude-opus-5", SESSION_ID)
+        self.assertEqual(parsed["errors"], [])
+
+        with tempfile.TemporaryDirectory() as temp:
+            mismatch = _write_events(Path(temp), _success_events(assistant_model="claude-opus-5-1"))
+            parsed = parse_stream(mismatch, "claude-opus-5", SESSION_ID)
         self.assertTrue(parsed["errors"])
 
     def test_rejects_synthetic_assistant_model(self) -> None:

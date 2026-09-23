@@ -239,16 +239,11 @@ def bind(store, workspace_id, assignment, operation_id):
             "scout": ("researcher",),
             "verifier": ("critic", "verifier"),
         }[policy["role"]]
-        expected_model = "sonnet" if policy["role"] == "scout" else (
-            "fable" if policy["role"] == "verifier" else None
-        )
-        if assignment["role"] not in allowed or (
-            expected_model is not None and assignment["model"] != expected_model
-        ):
+        if assignment["role"] not in allowed:
             raise ControlError(
                 "workspace_role",
-                "Use an executor, a read-only Sonnet researcher scout, or an independent "
-                "Fable critic/verifier snapshot reviewer.",
+                "Use an executor, a read-only researcher scout, or an independent "
+                "critic/verifier snapshot reviewer.",
             )
         fingerprint, prior = tasks._operation(
             db,
@@ -694,9 +689,7 @@ def _coordinator(store, workspace_id):
     try:
         lock_context.__enter__()
     except BlockingIOError:
-        raise ControlError(
-            "workspace_busy", "Another coordinator owns this workspace."
-        ) from None
+        raise ControlError("workspace_busy", "Another coordinator owns this workspace.") from None
     try:
         yield
     finally:
@@ -920,7 +913,9 @@ def _verify_applied_source(repo, base_commit, manifest, frozen_tree):
     expected = {change["path"] for change in manifest["changes"]}
     observed = {path for _, path in _source_status(repo)}
     if observed != expected:
-        raise ControlError("workspace_conflict", "Applied source paths differ from the frozen patch.")
+        raise ControlError(
+            "workspace_conflict", "Applied source paths differ from the frozen patch."
+        )
     for change in manifest["changes"]:
         relative = change["path"]
         target = os.path.join(repo, relative)
@@ -932,25 +927,38 @@ def _verify_applied_source(repo, base_commit, manifest, frozen_tree):
             info = os.lstat(target)
             frozen_data = (Path(frozen_tree) / relative).read_bytes()
         except OSError as exc:
-            raise ControlError("workspace_conflict", f"Cannot verify applied path: {relative}") from exc
+            raise ControlError(
+                "workspace_conflict", f"Cannot verify applied path: {relative}"
+            ) from exc
         if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-            raise ControlError("workspace_conflict", f"Applied path is not a private regular file: {relative}")
+            raise ControlError(
+                "workspace_conflict", f"Applied path is not a private regular file: {relative}"
+            )
         if info.st_size > files.MAX_TEXT_BYTES:
-            raise ControlError("workspace_conflict", f"Applied path exceeds the text limit: {relative}")
+            raise ControlError(
+                "workspace_conflict", f"Applied path exceeds the text limit: {relative}"
+            )
         if (
             len(frozen_data) > files.MAX_TEXT_BYTES
             or hashlib.sha256(frozen_data).hexdigest() != change["after_sha256"]
         ):
-            raise ControlError("workspace_conflict", f"Frozen path differs from its manifest: {relative}")
+            raise ControlError(
+                "workspace_conflict", f"Frozen path differs from its manifest: {relative}"
+            )
         if _canonical_blob(repo, relative, data=frozen_data) != _canonical_blob(
             repo, relative, path=target
         ):
-            raise ControlError("workspace_conflict", f"Applied path hash differs from frozen result: {relative}")
+            raise ControlError(
+                "workspace_conflict", f"Applied path hash differs from frozen result: {relative}"
+            )
         if os.name != "nt":
             executable = bool(stat.S_IMODE(info.st_mode) & 0o111)
             expected_executable = manifest["files"][relative]["mode"] == "100755"
             if executable != expected_executable:
-                raise ControlError("workspace_conflict", f"Applied path mode differs from frozen result: {relative}")
+                raise ControlError(
+                    "workspace_conflict",
+                    f"Applied path mode differs from frozen result: {relative}",
+                )
 
 
 def apply(store, workspace_id, operation_id):
@@ -983,11 +991,15 @@ def apply(store, workspace_id, operation_id):
             "SELECT * FROM workspace_applications WHERE workspace_id=?", (workspace_id,)
         ).fetchone()
         if existing:
-            raise ControlError("workspace_already_applied", "Frozen workspace already has an apply attempt.")
+            raise ControlError(
+                "workspace_already_applied", "Frozen workspace already has an apply attempt."
+            )
         repo, base_commit = row["source_repo"], row["base_commit"]
     _preflight_apply(repo, base_commit, manifest)
     if _source_head(repo) != base_commit:
-        raise ControlError("workspace_conflict", "Source HEAD no longer matches the frozen base commit.")
+        raise ControlError(
+            "workspace_conflict", "Source HEAD no longer matches the frozen base commit."
+        )
     if _source_status(repo):
         raise ControlError("workspace_conflict", "Source worktree must be clean before apply.")
     patch_path = directory(store, workspace_id) / "frozen" / "patch.diff"

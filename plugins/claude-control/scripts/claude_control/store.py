@@ -13,6 +13,8 @@ from contextlib import closing, contextmanager
 from pathlib import Path
 
 from .execution_settings import binary_identity, probe_effort, validate_effort
+from .model_settings import CONTRACT as MODEL_SETTINGS_CONTRACT
+from .model_settings import built_in_defaults, normalize_defaults, validate_model
 from .platform import host as _host
 from .platform.locks import file_lock
 from .schema import (
@@ -193,15 +195,57 @@ class Store:
         with self.db():
             pass
 
+    def _read_role_defaults(self):
+        settings = self.path / "role-models.json"
+        if not settings.exists():
+            return built_in_defaults(), "built_in"
+        verify_private_entry(settings)
+        try:
+            document = json.loads(settings.read_text(encoding="utf-8"))
+            return normalize_defaults(document)["roles"], "configured"
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            raise ControlError("invalid_model_settings", str(exc)) from None
+
+    def role_defaults(self):
+        """Read effective role defaults; absence preserves the historical routing."""
+        with file_lock(self.path / "role-models.lock", exclusive=False):
+            roles, _ = self._read_role_defaults()
+            return roles
+
+    def role_defaults_report(self):
+        with file_lock(self.path / "role-models.lock", exclusive=False):
+            roles, source = self._read_role_defaults()
+            return {"contract": MODEL_SETTINGS_CONTRACT, "roles": roles, "source": source}
+
+    def configure_role_defaults(self, document):
+        try:
+            normalized = normalize_defaults(document)
+        except ValueError as exc:
+            raise ControlError("invalid_model_settings", str(exc)) from None
+        with file_lock(self.path / "role-models.lock", exclusive=True):
+            write_json(self.path / "role-models.json", normalized)
+        return {**normalized, "source": "configured"}
+
+    def reset_role_defaults(self):
+        with file_lock(self.path / "role-models.lock", exclusive=True):
+            settings = self.path / "role-models.json"
+            if settings.exists():
+                verify_private_entry(settings)
+                settings.unlink()
+                flush_directory(self.path)
+        return {
+            "contract": MODEL_SETTINGS_CONTRACT,
+            "roles": built_in_defaults(),
+            "source": "built_in",
+        }
+
     @contextmanager
     def db(self, write=False):
         # New clients take a shared lifecycle lock; migration excludes all DB operations.
         # Schema-3 clients predating this lock must be stopped by the offline operator.
         with file_lock(self.path / "lifecycle.lock", exclusive=False):
             config = json.loads((self.path / "config.json").read_text())
-            if config != self.config or config.get("schema") not in tuple(
-                range(3, VERSION + 1)
-            ):
+            if config != self.config or config.get("schema") not in tuple(range(3, VERSION + 1)):
                 raise ControlError("schema_mismatch", "State changed; reopen or finish migrate.")
             db = sqlite3.connect(self.path / "state.sqlite3", timeout=10, isolation_level=None)
             db.row_factory = sqlite3.Row
@@ -460,9 +504,13 @@ class Store:
             model, role = session["model"], session["role"]
         else:
             project = self.project(project)
-            if model not in ("sonnet", "fable") or not name or len(name) > 120 or not role:
+            try:
+                model = validate_model(model)
+            except ValueError as exc:
+                raise ControlError("invalid_session", str(exc)) from None
+            if not name or len(name) > 120 or not role:
                 raise ControlError(
-                    "invalid_session", "A name, role and explicit sonnet/fable model are required."
+                    "invalid_session", "A name, role and explicit valid model are required."
                 )
         if effort is not None:
             if self.config["schema"] < 9:

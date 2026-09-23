@@ -12,6 +12,7 @@ import os
 import re
 
 from .execution_settings import validate_effort
+from .model_settings import LEGACY_DEFAULTS, validate_model
 from .store import ControlError
 
 CONTRACT = "claude-control.assignment.v1"
@@ -36,7 +37,7 @@ OPTIONAL_FIELDS = {"model", "timeout", "effort"}
 ROLE_PRESETS = {
     "executor": {
         "version": 1,
-        "model": "sonnet",
+        "model": LEGACY_DEFAULTS["executor"]["model"],
         "instructions": (
             "You are the Executor. Produce the requested code or configuration "
             "changes as plain text in your response. Do not modify files, run "
@@ -46,7 +47,7 @@ ROLE_PRESETS = {
     },
     "researcher": {
         "version": 1,
-        "model": "sonnet",
+        "model": LEGACY_DEFAULTS["researcher"]["model"],
         "instructions": (
             "You are the Researcher. Summarize only the sources and context "
             "explicitly supplied in this assignment. Do not invent facts or cite "
@@ -57,7 +58,7 @@ ROLE_PRESETS = {
     },
     "planner": {
         "version": 1,
-        "model": "fable",
+        "model": LEGACY_DEFAULTS["planner"]["model"],
         "instructions": (
             "You are the Planner. Break the objective into a concrete, ordered "
             "plan grounded only in the supplied context. Do not execute any part "
@@ -66,7 +67,7 @@ ROLE_PRESETS = {
     },
     "architect": {
         "version": 1,
-        "model": "fable",
+        "model": LEGACY_DEFAULTS["architect"]["model"],
         "instructions": (
             "You are the Architect. Propose a technical design that satisfies "
             "the objective and acceptance criteria, based only on the supplied "
@@ -75,7 +76,7 @@ ROLE_PRESETS = {
     },
     "critic": {
         "version": 1,
-        "model": "fable",
+        "model": LEGACY_DEFAULTS["critic"]["model"],
         "instructions": (
             "You are the Critic. Review the supplied material against the "
             "objective and acceptance criteria, identifying risks, gaps and "
@@ -85,7 +86,7 @@ ROLE_PRESETS = {
     },
     "verifier": {
         "version": 1,
-        "model": "fable",
+        "model": LEGACY_DEFAULTS["verifier"]["model"],
         "instructions": (
             "You are the Verifier. Check the supplied material and any supplied "
             "test evidence against the acceptance criteria. Clearly distinguish "
@@ -221,12 +222,13 @@ def _normalize_model(value, error_code, *, default):
         if default is None:
             raise ControlError(error_code, "model is required")
         return default
-    if value not in ("sonnet", "fable"):
-        raise ControlError(error_code, 'model must be "sonnet" or "fable"')
-    return value
+    try:
+        return validate_model(value)
+    except ValueError as exc:
+        raise ControlError(error_code, str(exc)) from None
 
 
-def load_assignment(path):
+def load_assignment(path, role_defaults=None):
     try:
         with open(path, "rb") as handle:
             raw = handle.read(MAX_BYTES + 1)
@@ -242,10 +244,10 @@ def load_assignment(path):
     except UnicodeDecodeError:
         raise ControlError("invalid_assignment", "assignment file must be UTF-8 text") from None
 
-    return normalize_assignment(strict_json(text))
+    return normalize_assignment(strict_json(text), role_defaults=role_defaults)
 
 
-def normalize_assignment(data):
+def normalize_assignment(data, role_defaults=None):
     if not isinstance(data, dict):
         raise ControlError("invalid_assignment", "assignment must be a JSON object")
 
@@ -287,16 +289,19 @@ def normalize_assignment(data):
         data["acceptance_criteria"], "acceptance_criteria", "invalid_assignment"
     )
 
+    defaults = (role_defaults or LEGACY_DEFAULTS)[role]
     model = _normalize_model(
-        data.get("model", ROLE_PRESETS[role]["model"]), "invalid_assignment", default=None
+        data.get("model", defaults["model"]), "invalid_assignment", default=None
     )
     timeout = _normalize_timeout(data.get("timeout", 300.0), "invalid_assignment", required=True)
 
-    if "effort" in data:
-        if data["effort"] is None:
+    effort_present = "effort" in data or "effort" in defaults
+    effort_value = data.get("effort", defaults.get("effort"))
+    if effort_present:
+        if effort_value is None:
             raise ControlError("invalid_assignment", "effort cannot be null")
         try:
-            effort = validate_effort(data["effort"])
+            effort = validate_effort(effort_value)
         except ValueError as exc:
             raise ControlError("invalid_assignment", str(exc)) from None
 
@@ -313,7 +318,7 @@ def normalize_assignment(data):
         "model": model,
         "timeout": timeout,
     }
-    if "effort" in data:
+    if effort_present:
         normalized["effort"] = effort
     return normalized
 

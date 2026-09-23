@@ -46,7 +46,7 @@ claude_control composition status --composition <uuid>
 생성 과정은 요청된 Git ref를 하나의 불변(immutable) 커밋으로 해석하고, 구성과
 P4 워크플로를 기록하며, 모델을 호출하지 않습니다. 이후 저장소가 이동하더라도
 편집자 스냅샷을 다시 타겟팅할 수 없습니다. 선택적 scout는 동일 커밋과 동일
-읽기 경로를 사용해 완료된 read-only Sonnet researcher workspace여야 합니다.
+읽기 경로를 사용해 완료된 read-only researcher workspace여야 합니다.
 검증된 scout 보고서와 정확한 provenance가 계획자 context에 고정됩니다. 계획 워크플로는
 `approve_recommended`에서 멈춥니다. 정확한 워커 작업, 리비전, 실행, 결과
 digest를 확인한 뒤 `task accept`를 기록하세요. 이후의 경계 지정 구성 실행(bounded
@@ -106,7 +106,7 @@ policy에 저장합니다. 기존 composition과 이 옵션을 생략한 새 com
 ### 리더 작성 명세
 
 0.15부터는 명세 작성자를 Codex 리더로 고정할 수 있습니다. planning assignment
-대신 엄격한 leader-spec 문서와 Fable critic assignment를 전달합니다.
+대신 엄격한 leader-spec 문서와 critic assignment를 전달합니다.
 
 ```json
 {
@@ -132,7 +132,8 @@ claude_control composition create \
   --operation-id feature-composition-001 --reviewer-effort high
 ```
 
-critic은 Fable과 `critic` 역할이어야 합니다. 불변 명세를 대신 작성하거나 수정하지
+critic은 `critic` 역할이어야 합니다. 모델은 역할 설정 또는 assignment의 명시적
+선택자를 사용합니다. 불변 명세를 대신 작성하거나 수정하지
 않으며 critic revision도 허용하지 않습니다. 명세 수정이 필요하면 리더가 새 문서와
 composition을 만듭니다. 편집은 독립 비평의 승인 권고와 정확한 Codex accept가 모두
 기록된 뒤에만 열립니다. editor는 리더 명세, digest, 승인한 비평을 서로 구분된
@@ -141,7 +142,7 @@ provenance로 받습니다.
 ### 동결 테스트 계약
 
 `--test-contract-file`을 추가하면 editor binding 전에 컨트롤러가 baseline 검사를
-실행하고, 최종 트리와 일치하는 검사 영수증이 있어야 frozen Fable reviewer를 만듭니다.
+실행하고, 최종 트리와 일치하는 검사 영수증이 있어야 frozen reviewer를 만듭니다.
 
 ```json
 {

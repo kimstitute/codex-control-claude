@@ -53,7 +53,10 @@ def execute(args):
         )
     if command == "task":
         return workspace.bind(
-            store, args.workspace, load_assignment(args.assignment_file), args.operation_id
+            store,
+            args.workspace,
+            load_assignment(args.assignment_file, role_defaults=store.role_defaults()),
+            args.operation_id,
         )
     if command == "run":
         if (args.once and args.max_seconds is not None) or (

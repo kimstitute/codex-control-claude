@@ -281,21 +281,33 @@ def create(
     max_calls=6,
     dispatch_window_seconds=900,
     reviewer_effort=None,
+    reviewer_model=None,
 ):
     _require(store)
     assignment = tasks._assignment(store, assignment)
     recorded = tasks._operation_recorded(store, operation_id)
     if "effort" in assignment and not recorded:
         store.preflight_effort(assignment["effort"])
-    if reviewer_effort is not None:
+    reviewer_defaults = store.role_defaults()["critic"]
+    reviewer_model = reviewer_defaults["model"] if reviewer_model is None else reviewer_model
+    effective_reviewer_effort = (
+        reviewer_effort if reviewer_effort is not None else reviewer_defaults.get("effort")
+    )
+    from .model_settings import validate_model
+
+    try:
+        reviewer_model = validate_model(reviewer_model)
+    except ValueError as exc:
+        raise ControlError("invalid_workflow", str(exc)) from None
+    if effective_reviewer_effort is not None:
         from .execution_settings import validate_effort
 
         try:
-            validate_effort(reviewer_effort)
+            validate_effort(effective_reviewer_effort)
         except ValueError as exc:
             raise ControlError("invalid_workflow", str(exc)) from None
         if not recorded:
-            store.preflight_effort(reviewer_effort)
+            store.preflight_effort(effective_reviewer_effort)
     if assignment["role"] not in ("executor", "planner", "architect", "critic"):
         raise ControlError(
             "invalid_workflow",
@@ -320,11 +332,11 @@ def create(
         max_calls=max_calls,
         dispatch_window_seconds=dispatch_window_seconds,
         worker_assignment=assignment,
-        reviewer_model="fable",
+        reviewer_model=reviewer_model,
         reviewer_role="critic",
     )
-    if reviewer_effort is not None:
-        policy["reviewer_effort"] = reviewer_effort
+    if effective_reviewer_effort is not None:
+        policy["reviewer_effort"] = effective_reviewer_effort
     with store.db(write=True) as db:
         fingerprint, prior = tasks._operation(
             db, operation_id, dict(kind="workflow_create", policy=policy)
@@ -338,7 +350,7 @@ def create(
             {key: value for key, value in assignment.items() if key != "effort"},
             id="review-" + workflow_id,
             name="Review: " + assignment["name"][:110],
-            model="fable",
+            model=reviewer_model,
             role="critic",
             objective="Find the message whose id equals workflow.source.message_id and review its source.report against workflow.criteria. "
             "Pin review.target to workflow.source identity fields. "
@@ -349,8 +361,8 @@ def create(
                 "Review every frozen workflow criterion against the exact source and return a structured recommendation."
             ],
         )
-        if reviewer_effort is not None:
-            review_assignment["effort"] = reviewer_effort
+        if effective_reviewer_effort is not None:
+            review_assignment["effort"] = effective_reviewer_effort
         reviewer = tasks.create_in(store, db, review_assignment, prefix + ":reviewer")
         db.execute(
             "INSERT INTO workflows VALUES(?,?,?,?,?,'active',NULL,'worker',0,NULL,?)",

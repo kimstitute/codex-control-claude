@@ -56,12 +56,13 @@ after its durable reservation can appear as `preparing` with
 `creation_incomplete`. Inspect it; do not automatically replay or create a
 replacement workspace.
 
-## Create a read-only Sonnet scout
+## Create a read-only researcher scout
 
-Before creating a composition, a Sonnet researcher can inspect the exact source
+Before creating a composition, a researcher can inspect the exact source
 commit through the same controller loop. Use role `scout`, the editor policy's
 exact `read_paths`, and no writes or checks. Bind a `researcher` assignment with
-model `sonnet`; ask for a compact brief with `file:line` citations. Run it to a
+configured role model or an explicit model selector; ask for a compact brief with
+`file:line` citations. Run it to a
 finished frozen export, then pass its UUID to composition creation:
 
 ```bash

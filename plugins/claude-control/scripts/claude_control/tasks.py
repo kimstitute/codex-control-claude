@@ -74,10 +74,22 @@ def _revision(db, task_id, revision):
     return row
 
 
-def _assignment(store, assignment):
-    assignment = normalize_assignment(assignment)
+def _assignment(store, assignment, *, role_defaults=None):
+    assignment = normalize_assignment(
+        assignment, role_defaults=role_defaults or store.role_defaults()
+    )
     assignment["project"] = store.project(assignment["project"])
     return assignment
+
+
+def _revision_role_defaults(store, db, task_id, revision):
+    previous = contract.read(_revision(db, task_id, revision)["prompt"])["assignment"]
+    defaults = store.role_defaults()
+    frozen = {"model": previous["model"]}
+    if "effort" in previous:
+        frozen["effort"] = previous["effort"]
+    defaults[previous["role"]] = frozen
+    return defaults
 
 
 def _context(store, db, session_id, parent, assignment, *, inherit_effort):
@@ -209,7 +221,10 @@ def revise(
     message_ids=None,
     redeliver_messages=False,
 ):
-    assignment = _assignment(store, assignment)
+    _require_schema(store)
+    with store.db() as db:
+        role_defaults = _revision_role_defaults(store, db, task_id, base_revision)
+    assignment = _assignment(store, assignment, role_defaults=role_defaults)
     if "effort" in assignment and not _operation_recorded(store, operation_id):
         store.preflight_effort(assignment["effort"])
     store.refresh()
@@ -244,7 +259,11 @@ def revise_in(
     workspace_id=None,
 ):
     _require_schema(store)
-    assignment = _assignment(store, assignment)
+    assignment = _assignment(
+        store,
+        assignment,
+        role_defaults=_revision_role_defaults(store, db, task_id, base_revision),
+    )
     intent = dict(
         kind="revise",
         task=task_id,
@@ -484,14 +503,14 @@ def submit_in(store, db, task_id, revision, operation_id, *, retry=False, worksp
 def _evidence(evidence, criteria):
     required = {str(i + 1) for i in range(len(criteria))}
     if not isinstance(evidence, dict) or set(evidence) != required:
-        raise ControlError(
-            "invalid_evidence", "Supply evidence for every 1-based criterion ID."
-        )
+        raise ControlError("invalid_evidence", "Supply evidence for every 1-based criterion ID.")
     normalized = {}
     for criterion_id, supplied in evidence.items():
         items = supplied if isinstance(supplied, list) else [supplied]
         if not items:
-            raise ControlError("invalid_evidence", "Each criterion needs at least one evidence item.")
+            raise ControlError(
+                "invalid_evidence", "Each criterion needs at least one evidence item."
+            )
         normalized[criterion_id] = []
         for item in items:
             if isinstance(item, str):
@@ -552,9 +571,11 @@ def _verify_evidence(store, db, evidence):
                     "JOIN workspace_receipts r USING(run_id,seq) WHERE q.run_id=? AND q.seq=?",
                     (item["run_id"], item["seq"]),
                 ).fetchone()
-                if not row or json.loads(row["action"]).get("op") != "run_check" or contract.digest(
-                    row["result"]
-                ) != item["receipt_sha256"]:
+                if (
+                    not row
+                    or json.loads(row["action"]).get("op") != "run_check"
+                    or contract.digest(row["result"]) != item["receipt_sha256"]
+                ):
                     raise ControlError("invalid_evidence", "Check receipt is missing or changed.")
                 continue
             if kind == "diff_hunk":
@@ -576,8 +597,7 @@ def _verify_evidence(store, db, evidence):
                 ).fetchone()
                 if not saved or saved["manifest_sha256"] != item["manifest_sha256"]:
                     raise ControlError("invalid_evidence", "Frozen diff evidence is missing.")
-                from . import workspace
-                from . import workspace_files
+                from . import workspace, workspace_files
 
                 workspace_row = workspace._get(db, item["workspace_id"])
                 manifest = workspace_files.verify_frozen(
@@ -591,7 +611,9 @@ def _verify_evidence(store, db, evidence):
                     "after_sha256": item["after_sha256"],
                 }
                 if expected not in manifest["changes"]:
-                    raise ControlError("invalid_evidence", "Frozen diff entry is missing or changed.")
+                    raise ControlError(
+                        "invalid_evidence", "Frozen diff entry is missing or changed."
+                    )
                 continue
             if (
                 not isinstance(item["task_id"], str)
@@ -619,7 +641,9 @@ def _verify_evidence(store, db, evidence):
             checked = contract.inspect_run(store, db, reviewed_run)
             review = checked["report"].get("review") if checked["report"] else None
             if not review or review.get("recommendation") != item["recommendation"]:
-                raise ControlError("invalid_evidence", "Review recommendation is missing or changed.")
+                raise ControlError(
+                    "invalid_evidence", "Review recommendation is missing or changed."
+                )
 
 
 def _decision(

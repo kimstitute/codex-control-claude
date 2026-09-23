@@ -29,6 +29,7 @@ def register(commands):
     create.add_argument("--max-calls", type=int, default=6)
     create.add_argument("--dispatch-window-seconds", type=float, default=900)
     create.add_argument("--reviewer-effort", choices=("low", "medium", "high", "xhigh", "max"))
+    create.add_argument("--workflow-reviewer-model")
     scout = create.add_mutually_exclusive_group()
     scout.add_argument("--scout-workspace")
     scout.add_argument("--scout-cache-assignment-file", type=Path)
@@ -77,7 +78,9 @@ def execute(args):
     if command == "create":
         leader_spec = _policy(args.leader_spec_file) if args.leader_spec_file else None
         critic = (
-            load_assignment(args.critic_assignment_file) if args.critic_assignment_file else None
+            load_assignment(args.critic_assignment_file, role_defaults=store.role_defaults())
+            if args.critic_assignment_file
+            else None
         )
         if leader_spec is not None and critic is None:
             raise ControlError(
@@ -90,13 +93,13 @@ def execute(args):
         return composition.create(
             store,
             (
-                load_assignment(args.planning_assignment_file)
+                load_assignment(args.planning_assignment_file, role_defaults=store.role_defaults())
                 if args.planning_assignment_file
                 else None
             ),
-            load_assignment(args.editor_assignment_file),
+            load_assignment(args.editor_assignment_file, role_defaults=store.role_defaults()),
             _policy(args.editor_policy_file),
-            load_assignment(args.reviewer_assignment_file),
+            load_assignment(args.reviewer_assignment_file, role_defaults=store.role_defaults()),
             args.operation_id,
             repo=args.repo,
             ref=args.ref,
@@ -104,9 +107,12 @@ def execute(args):
             max_calls=args.max_calls,
             dispatch_window_seconds=args.dispatch_window_seconds,
             reviewer_effort=args.reviewer_effort,
+            reviewer_model=args.workflow_reviewer_model,
             scout_workspace=args.scout_workspace,
             scout_cache_assignment=(
-                load_assignment(args.scout_cache_assignment_file)
+                load_assignment(
+                    args.scout_cache_assignment_file, role_defaults=store.role_defaults()
+                )
                 if args.scout_cache_assignment_file
                 else None
             ),

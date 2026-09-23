@@ -14,11 +14,34 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "plugins/claude-con
 
 from claude_control import orchestration, tasks
 from claude_control.assignments import ROLE_PRESETS
+from claude_control.model_settings import CONTRACT as MODEL_SETTINGS_CONTRACT
+from claude_control.model_settings import ROLES
 from claude_control.store import CLAIM_SECONDS, ControlError, Store
 from test_controller import ControllerTestCase
 
 
 class TaskTests(ControllerTestCase):
+    def test_revision_omission_keeps_frozen_model_after_role_default_changes(self):
+        task = self.create()
+        store = Store(self.state)
+        document = {
+            "contract": MODEL_SETTINGS_CONTRACT,
+            "roles": {role: {"model": "claude-opus-5"} for role in ROLES},
+        }
+        store.configure_role_defaults(document)
+
+        revised = tasks.revise(
+            store,
+            task["id"],
+            1,
+            self.assignment(context="Changed after routing update"),
+            "revise-after-routing-update",
+        )
+        snapshot = json.loads(tasks.show(store, task["id"])["revisions"][-1]["prompt"])
+
+        self.assertEqual(revised["current_revision"], 2)
+        self.assertEqual(snapshot["assignment"]["model"], "sonnet")
+
     def test_missing_result_is_integrity_failure_in_task_view_before_status_read(self):
         task, run = self.completed()
         store = Store(self.state)

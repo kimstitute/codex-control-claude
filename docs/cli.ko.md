@@ -55,10 +55,12 @@ TUI는 graph, agents, history, provider limits 화면을 제공하며 원장을 
 
 ### 역할과 출력 계약으로 위임하기
 
-`roles`는 초기화된 저장소 없이도 번들된 역할 지침과 해석된 기본 모델 목록을 보여줍니다.
+`roles`는 초기화된 저장소 없이도 번들된 역할 지침과 호환 기본 모델을 보여줍니다.
+현재 호스트에 설정한 역할별 모델과 effort는 `models show`로 확인합니다.
 
 ```bash
 claude_control roles
+claude_control models show
 ```
 
 | 역할 | 기본 모델 | 제공 텍스트 작업 |
@@ -93,7 +95,7 @@ claude_control delegate --assignment-file /absolute/path/to/assignment.json \
   --request-id parser-review-001
 ```
 
-`model`과 `timeout`은 선택 사항이며, 기본값은 해당 역할의 모델과 300초입니다. 선택적 `effort`는 `low`, `medium`, `high`, `xhigh`, `max`를 받으며, 생략하면 CLI 동작이 유지되지만 JSON null은 유효하지 않습니다. [실행 설정](execution-settings.ko.md)을 참고하세요. 명시적으로 `"model": "sonnet"` 또는 `"model": "fable"`을 지정하면 프리셋을 재정의합니다. 해석된 모델은 항상 Claude에 명시적으로 전달됩니다. 자동 분류기나 모델 폴백은 없습니다. 나머지 모든 필드는 필수입니다. `context`는 비어 있을 수 있으며, scope와 acceptance criteria는 비어 있지 않은 문자열 목록이어야 합니다. ID는 `[a-z0-9][a-z0-9_-]{0,63}`와 일치해야 하며, 이름은 비어 있지 않고 120자 이하여야 합니다. Timeout은 1~3600초 사이의 유한한 숫자여야 합니다. 알 수 없는 필드, 중복된 JSON 키, null 옵션, 잘못된 타입은 거부됩니다.
+`model`과 `timeout`은 선택 사항이며, 기본값은 해당 역할 설정과 300초입니다. `model`은 `sonnet`, `opus`, `haiku`, `fable` 별칭 또는 정확한 `claude-...` ID를 받습니다. 선택적 `effort`는 `low`, `medium`, `high`, `xhigh`, `max`를 받으며 JSON null은 유효하지 않습니다. [역할별 모델 설정](models.ko.md)과 [실행 설정](execution-settings.ko.md)을 참고하세요. assignment의 명시적 값은 해당 작업에서만 역할 기본값을 덮어씁니다. 해석된 모델은 항상 Claude에 명시적으로 전달되며 자동 폴백은 없습니다. 나머지 모든 필드는 필수입니다. `context`는 비어 있을 수 있으며, scope와 acceptance criteria는 비어 있지 않은 문자열 목록이어야 합니다. ID는 `[a-z0-9][a-z0-9_-]{0,63}`와 일치해야 하며, 이름은 비어 있지 않고 120자 이하여야 합니다. Timeout은 1~3600초 사이의 유한한 숫자여야 합니다. 알 수 없는 필드, 중복된 JSON 키, null 옵션, 잘못된 타입은 거부됩니다.
 
 각 delegate는 **새로운 명명된 세션**을 만듭니다. request ID와 입력이 일치하면 원래 run을 반환하며, 기존 이름에 다른 요청을 보내면 거부됩니다. context, timeout, model 또는 번들된 역할 지침의 변경은 기존 request ID와 충돌합니다. 절대 프로젝트 경로는 렌더링 전에 검사되고 정규화됩니다. assignment 파일과 렌더링된 프롬프트는 모두 1MiB 이내여야 하며, JSON 이스케이핑과 역할 지침은 후자에 포함됩니다. context는 제공된 텍스트일 뿐, 컨트롤러가 다른 파일을 읽도록 하는 지시가 아닙니다.
 
@@ -275,7 +277,7 @@ Dependency JSON은 정확한 `task_id`/`revision` 참조의 배열입니다. 승
 
 ## 명시적 실행 설정
 
-`start`, `followup`, `resume`, `restart`는 `--effort <level>`을 받습니다. 기존 세션은 생략을 포함해 원래 설정을 고정합니다. 다른 명시적 값을 지정하면 거부됩니다. 구조화된 assignment는 선택적 `effort` 키를 사용합니다. `workflow create --reviewer-effort high`는 독립 reviewer 설정을 고정합니다. `doctor`는 `effort_supported`를 보고하지만, 이는 CLI 플래그 사용 가능 여부만 확인할 뿐 모든 effort 값에 대한 모델 지원 여부를 확인하지는 않습니다. 명시적 effort는 schema 9가 필요합니다.
+`start`, `followup`, `resume`, `restart`는 `--effort <level>`을 받습니다. 기존 세션은 생략을 포함해 원래 설정을 고정합니다. 다른 명시적 값을 지정하면 거부됩니다. 구조화된 assignment는 선택적 `effort` 키를 사용합니다. `workflow create --reviewer-model <selector> --reviewer-effort high`는 독립 reviewer 설정을 덮어쓰며, 생략하면 critic 역할 기본값을 사용합니다. `doctor`는 `effort_supported`를 보고하지만, 이는 CLI 플래그 사용 가능 여부만 확인할 뿐 모든 effort 값에 대한 모델 지원 여부를 확인하지는 않습니다. 명시적 effort는 schema 9가 필요합니다.
 
 [실행 설정과 호환성](execution-settings.ko.md)을 참고하세요.
 

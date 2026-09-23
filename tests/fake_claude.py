@@ -266,7 +266,8 @@ def _run(arguments: list[str]) -> int:
 
     model = _option(arguments, "--model")
     session_id = _option(arguments, "--session-id") or _option(arguments, "--resume")
-    if model not in {"sonnet", "fable"} or session_id is None:
+    aliases = {"sonnet", "fable", "opus", "haiku"}
+    if (model not in aliases and not str(model).startswith("claude-")) or session_id is None:
         print("fake Claude requires an explicit model and session", file=sys.stderr)
         return 2
     try:
@@ -305,7 +306,7 @@ def _run(arguments: list[str]) -> int:
         print("fixture process failure", file=sys.stderr)
         return 7
 
-    assistant_model = f"claude-{model}-test"
+    assistant_model = model if model.startswith("claude-") else f"claude-{model}-test"
     if behavior == "mismatch_model":
         assistant_model = "claude-fable-test" if model == "sonnet" else "claude-sonnet-test"
     elif behavior == "synthetic":
@@ -326,22 +327,22 @@ def _run(arguments: list[str]) -> int:
 
     is_error = behavior == "error"
     result = {
-            "type": "result",
-            "subtype": "error" if is_error else "success",
-            "session_id": response_session,
-            "is_error": is_error,
-            "result": "fixture error" if is_error else text,
-            "usage": {"input_tokens": 4, "output_tokens": 2},
-            "modelUsage": {
-                f"claude-{model}-test": {
-                    "inputTokens": 4,
-                    "outputTokens": 2,
-                    "costUSD": 0.001,
-                }
-            },
-            "total_cost_usd": 0.001,
-            "duration_api_ms": 25,
-        }
+        "type": "result",
+        "subtype": "error" if is_error else "success",
+        "session_id": response_session,
+        "is_error": is_error,
+        "result": "fixture error" if is_error else text,
+        "usage": {"input_tokens": 4, "output_tokens": 2},
+        "modelUsage": {
+            assistant_model: {
+                "inputTokens": 4,
+                "outputTokens": 2,
+                "costUSD": 0.001,
+            }
+        },
+        "total_cost_usd": 0.001,
+        "duration_api_ms": 25,
+    }
     if not is_error and _option(arguments, "--json-schema") is not None:
         try:
             result["structured_output"] = json.loads(text)

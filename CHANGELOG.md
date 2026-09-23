@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.17.0 — 2026-09-23
+
+- Add atomic host-local model and effort defaults for executor, researcher,
+  planner, architect, critic and verifier roles.
+- Accept Sonnet, Opus, Haiku and Fable family aliases plus exact versioned
+  `claude-...` model IDs. Exact selectors require exact provider identity;
+  family aliases still reject cross-family substitution.
+- Resolve role defaults before task/session creation while preserving explicit
+  assignment overrides and immutable existing work. Unsupported model/effort
+  combinations fail without fallback.
+- Remove Sonnet/Fable family requirements from scout, verifier, reviewer and
+  leader-critic phases while retaining their role and sandbox constraints.
+- Add `models show/configure/reset`, workflow reviewer model overrides, tests,
+  and Korean/English model configuration documentation.
+
 ## 0.16.0 — 2026-09-23
 
 - Add optional immutable routing metadata to composition policy: task type, risk

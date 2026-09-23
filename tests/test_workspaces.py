@@ -367,9 +367,7 @@ class WorkspaceTests(ControllerTestCase):
         digest = hashlib.sha256(frozen).hexdigest()
         (frozen_tree / "README.md").write_bytes(frozen)
         manifest = {
-            "files": {
-                "README.md": {"sha256": digest, "size": len(frozen), "mode": "100644"}
-            },
+            "files": {"README.md": {"sha256": digest, "size": len(frozen), "mode": "100644"}},
             "changes": [
                 {
                     "path": "README.md",
@@ -386,9 +384,7 @@ class WorkspaceTests(ControllerTestCase):
             with self.subTest(core_autocrlf=setting):
                 self.git("config", "core.autocrlf", setting)
                 (self.repo / "README.md").write_bytes(working)
-                workspace._verify_applied_source(
-                    str(self.repo), base_commit, manifest, frozen_tree
-                )
+                workspace._verify_applied_source(str(self.repo), base_commit, manifest, frozen_tree)
 
         (self.repo / "README.md").write_bytes(b"line one\nDIFFERENT\n")
         self.assert_error(
@@ -403,9 +399,7 @@ class WorkspaceTests(ControllerTestCase):
     def test_windows_rejects_only_new_executable_files(self) -> None:
         base_commit = self.git("rev-parse", "HEAD")
         existing = {
-            "files": {
-                "README.md": {"sha256": "0" * 64, "size": 1, "mode": "100644"}
-            },
+            "files": {"README.md": {"sha256": "0" * 64, "size": 1, "mode": "100644"}},
             "changes": [
                 {
                     "path": "README.md",
@@ -417,9 +411,7 @@ class WorkspaceTests(ControllerTestCase):
         workspace._preflight_apply(str(self.repo), base_commit, existing)
 
         added = {
-            "files": {
-                "script.sh": {"sha256": "0" * 64, "size": 1, "mode": "100755"}
-            },
+            "files": {"script.sh": {"sha256": "0" * 64, "size": 1, "mode": "100755"}},
             "changes": [
                 {
                     "path": "script.sh",
@@ -539,7 +531,9 @@ class WorkspaceTests(ControllerTestCase):
         self.assertEqual(receipts[0]["result"]["content"], "base\n")
         self.assertEqual(receipts[0]["result"]["outcome"], "ok")
         self.assertIn("controller-mediated workspace", invocation["prompt"]["instructions"])
-        self.assertIn("requesting controller operations", invocation["prompt"]["role"]["instructions"])
+        self.assertIn(
+            "requesting controller operations", invocation["prompt"]["role"]["instructions"]
+        )
         self.assertNotIn("cannot execute code", invocation["prompt"]["instructions"])
 
     def test_invalid_operation_batch_has_no_file_effect(self) -> None:
@@ -953,6 +947,22 @@ class WorkspaceTests(ControllerTestCase):
         self.assertEqual(result["task"]["id"], bound["task_id"])
         self.assertEqual(result["receipts"][0]["result"]["content"], "base\n")
         self.assertEqual(result["export"]["manifest"]["changes"], [])
+
+    def test_scout_role_accepts_a_version_pinned_model(self) -> None:
+        scout = self.create(policy=self.policy(role="scout", read=["README.md"]))
+
+        bound = self.bind(
+            scout,
+            self.assignment(
+                "versioned-scout",
+                role="researcher",
+                model="claude-haiku-4-5-20251001",
+            ),
+        )
+
+        task = tasks.show(Store(self.state), bound["task_id"])
+        assignment = json.loads(task["revisions"][0]["prompt"])["assignment"]
+        self.assertEqual(assignment["model"], "claude-haiku-4-5-20251001")
 
     def test_invalid_snapshot_reviewer_policy_has_no_durable_side_effect(self) -> None:
         source = self.create()

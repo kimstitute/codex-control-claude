@@ -12,8 +12,9 @@ Choose a bounded timeout and explicit effort for new work:
 
 These are fields added to a complete assignment, not a complete assignment file.
 Raw sessions accept `start --model sonnet --effort medium --timeout 300` alongside
-usual identity/project/prompt flags. For research design or consequential review,
-use Fable with an explicitly chosen effort, commonly `high`.
+usual identity/project/prompt flags. Model selectors may be the `sonnet`, `opus`,
+`haiku`, or `fable` family alias, or an exact `claude-...` model ID. Use `models
+show/configure/reset` for host-local role defaults; see `docs/models.md`.
 
 ## Persistent settings
 
@@ -40,9 +41,9 @@ work, hashes, reports and idempotency records remain interpretable.
 
 ## Independent reviewer
 
-`workflow create --assignment-file task.json --reviewer-effort high --operation-id <id>`
-records the reviewer's own effort. Without `--reviewer-effort`, its setting stays
-omitted even when the worker has an explicit effort. Workflow revisions retain
+`workflow create --assignment-file task.json --reviewer-model claude-opus-5
+--reviewer-effort high --operation-id <id>` records the reviewer's own settings.
+Without overrides, the reviewer uses the configured critic defaults. Workflow revisions retain
 both independent settings. Workspace turns retain their original assignment
 setting; workspace policies do not grant new effort-changing authority.
 

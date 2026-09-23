@@ -25,6 +25,7 @@ def register(commands):
     create.add_argument("--max-calls", type=int, default=6)
     create.add_argument("--dispatch-window-seconds", type=float, default=900)
     create.add_argument("--reviewer-effort", choices=("low", "medium", "high", "xhigh", "max"))
+    create.add_argument("--reviewer-model")
 
     run = sub.add_parser(
         "run",
@@ -69,7 +70,7 @@ def execute(args):
         return workflow.overview(store, attention=args.attention)
 
     if args.workflow_command == "create":
-        assignment = load_assignment(args.assignment_file)
+        assignment = load_assignment(args.assignment_file, role_defaults=store.role_defaults())
         return workflow.create(
             store,
             assignment,
@@ -78,6 +79,7 @@ def execute(args):
             max_calls=args.max_calls,
             dispatch_window_seconds=args.dispatch_window_seconds,
             reviewer_effort=args.reviewer_effort,
+            reviewer_model=args.reviewer_model,
         )
 
     if args.workflow_command == "run":

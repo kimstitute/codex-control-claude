@@ -11,6 +11,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "plugins/claude-control/scripts"))
 
 from claude_control import messages, scheduler, tasks, workflow, workflow_contracts  # noqa: E402
+from claude_control.model_settings import CONTRACT as MODEL_SETTINGS_CONTRACT  # noqa: E402
+from claude_control.model_settings import ROLES
 from claude_control.store import ControlError, Store  # noqa: E402
 from test_controller import ControllerTestCase  # noqa: E402
 
@@ -320,6 +322,20 @@ class WorkflowTests(ControllerTestCase):
         self.assertNotEqual(worker_run["session_id"], reviewer_run["session_id"])
         self.assertNotEqual(worker_run["backend_id"], reviewer_run["backend_id"])
         self.assertEqual((worker_session["model"], reviewer_session["model"]), ("sonnet", "fable"))
+
+    def test_configured_critic_model_and_effort_drive_internal_reviewer(self) -> None:
+        document = {
+            "contract": MODEL_SETTINGS_CONTRACT,
+            "roles": {role: {"model": "sonnet"} for role in ROLES},
+        }
+        document["roles"]["critic"] = {"model": "claude-opus-5", "effort": "xhigh"}
+        Store(self.state).configure_role_defaults(document)
+
+        created = self.create("configured-reviewer")
+        reviewer = tasks.show(Store(self.state), created["reviewer_task_id"])
+        assignment = json.loads(reviewer["revisions"][0]["prompt"])["assignment"]
+
+        self.assertEqual((assignment["model"], assignment["effort"]), ("claude-opus-5", "xhigh"))
 
     def test_explicit_fable_worker_is_allowed_but_still_separate_from_reviewer(self) -> None:
         assignment = self.assignment("fable-worker", role="planner", model="fable")

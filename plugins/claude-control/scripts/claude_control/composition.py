@@ -328,7 +328,7 @@ def _scout_provenance(store, workspace_id, source_repo, pinned_commit, read_path
         ):
             raise ControlError(
                 "invalid_composition",
-                "Scout must be a finished read-only Sonnet workspace at the exact source commit "
+                "Scout must be a finished read-only researcher workspace at the exact source commit "
                 "with the editor's readable paths.",
             )
         run = db.execute("SELECT * FROM runs WHERE id=?", (saved["run_id"],)).fetchone()
@@ -345,8 +345,8 @@ def _scout_provenance(store, workspace_id, source_repo, pinned_commit, read_path
                 "invalid_composition", "Scout snapshot unexpectedly contains changes."
             )
         assignment = json.loads(binding["assignment"])
-        if assignment["role"] != "researcher" or assignment["model"] != "sonnet":
-            raise ControlError("invalid_composition", "Scout must use the Sonnet researcher role.")
+        if assignment["role"] != "researcher":
+            raise ControlError("invalid_composition", "Scout must use the researcher role.")
         execution = db.execute(
             "SELECT prompt FROM execution_inputs WHERE run_id=?", (saved["run_id"],)
         ).fetchone()
@@ -442,6 +442,7 @@ def create(
     max_calls=6,
     dispatch_window_seconds=900,
     reviewer_effort=None,
+    reviewer_model=None,
     scout_workspace=None,
     scout_cache_assignment=None,
     leader_spec=None,
@@ -456,8 +457,11 @@ def create(
     pinned_commit = _pin_source(store, composition_id, source_repo, ref)
     editor = _canonical_assignment(store, editor_assignment, role=("executor",))
     routing = _normalize_routing(store, routing_metadata, composition_id, editor)
-    reviewer = _canonical_assignment(
-        store, reviewer_assignment, role=("critic", "verifier"), model="fable"
+    reviewer = _canonical_assignment(store, reviewer_assignment, role=("critic", "verifier"))
+    critic_defaults = store.role_defaults()["critic"]
+    workflow_reviewer_model = critic_defaults["model"] if reviewer_model is None else reviewer_model
+    workflow_reviewer_effort = (
+        critic_defaults.get("effort") if reviewer_effort is None else reviewer_effort
     )
     if (planning_assignment is None) == (leader_spec is None):
         raise ControlError(
@@ -469,10 +473,10 @@ def create(
     if planning_mode == "leader_spec":
         if critic_assignment is None:
             raise ControlError(
-                "invalid_composition", "Leader specifications require a Fable critic assignment."
+                "invalid_composition", "Leader specifications require a critic assignment."
             )
         spec, spec_sha256 = _leader_spec(leader_spec)
-        planning = _canonical_assignment(store, critic_assignment, role=("critic",), model="fable")
+        planning = _canonical_assignment(store, critic_assignment, role=("critic",))
         if editor["acceptance_criteria"] != spec["acceptance_criteria"]:
             raise ControlError(
                 "invalid_composition",
@@ -491,7 +495,7 @@ def create(
                 }
             )
         )
-        planning = _canonical_assignment(store, planning, role=("critic",), model="fable")
+        planning = _canonical_assignment(store, planning, role=("critic",))
     else:
         if critic_assignment is not None:
             raise ControlError(
@@ -520,7 +524,7 @@ def create(
     scout = None
     if scout_cache_assignment is not None:
         cache_assignment = _canonical_assignment(
-            store, scout_cache_assignment, role=("researcher",), model="sonnet"
+            store, scout_cache_assignment, role=("researcher",)
         )
         if cache_assignment["project"] != source_repo:
             raise ControlError(
@@ -555,7 +559,6 @@ def create(
             role=("critic",)
             if planning_mode == "leader_spec"
             else ("planner", "architect", "executor"),
-            model="fable" if planning_mode == "leader_spec" else None,
         )
     policy = {
         "version": 1,
@@ -577,7 +580,8 @@ def create(
             "max_revisions": 0 if planning_mode == "leader_spec" else max_revisions,
             "max_calls": max_calls,
             "dispatch_window_seconds": dispatch_window_seconds,
-            "reviewer_effort": reviewer_effort,
+            "reviewer_model": workflow_reviewer_model,
+            "reviewer_effort": workflow_reviewer_effort,
         },
     }
     intent = {"kind": "composition_create", "policy": policy}
@@ -593,7 +597,8 @@ def create(
         max_revisions=0 if planning_mode == "leader_spec" else max_revisions,
         max_calls=max_calls,
         dispatch_window_seconds=dispatch_window_seconds,
-        reviewer_effort=reviewer_effort,
+        reviewer_effort=workflow_reviewer_effort,
+        reviewer_model=workflow_reviewer_model,
     )
     with store.db(write=True) as db:
         fingerprint, prior = tasks._operation(db, operation_id, intent)

@@ -22,8 +22,8 @@ their standalone behavior.
 Prepare four JSON files: the planning assignment, editor assignment, editor
 workspace policy and reviewer assignment. The reviewer policy is derived from
 the editor policy with the same readable paths, no writable paths, no checks and
-the verifier role. The reviewer assignment must use Fable with role `critic` or
-`verifier`.
+the verifier role. The reviewer assignment must use role `critic` or `verifier`;
+its model may come from the role settings or an explicit assignment selector.
 
 ```bash
 claude_control composition create \
@@ -46,7 +46,7 @@ claude_control composition status --composition <uuid>
 Creation resolves the requested Git ref to one immutable commit, records the
 composition and P4 workflow, and makes no model call. Later repository movement
 cannot retarget the editor snapshot. The optional scout must be a finished
-read-only Sonnet researcher workspace with the same commit and readable paths.
+read-only researcher workspace with the same commit and readable paths.
 Its validated report and exact provenance are copied into the planner context.
 The
 planning workflow stops at `approve_recommended`. Inspect its exact worker task,
@@ -110,7 +110,7 @@ rewrite prior policy or retry a failed run.
 ### Leader-authored specification
 
 Version 0.15 can keep specification authorship with the Codex leader. Replace
-the planning assignment with a strict leader-spec document and a Fable critic
+the planning assignment with a strict leader-spec document and a critic
 assignment:
 
 ```json
@@ -137,7 +137,7 @@ claude_control composition create \
   --operation-id feature-composition-001 --reviewer-effort high
 ```
 
-The critic must use Fable and the `critic` role. It cannot replace the immutable
+The critic must use the `critic` role. It cannot replace the immutable
 specification. Its bounded workflow permits no critic revision; a requested spec
 change requires a new leader document and composition. Editing still waits for
 the independent critique recommendation and exact Codex acceptance. The editor
@@ -148,7 +148,7 @@ separate provenance.
 
 Add `--test-contract-file` to run controller-owned baseline checks before the
 editor is bound and require matching check receipts on the final tree before the
-frozen Fable reviewer is created:
+frozen reviewer is created:
 
 ```json
 {

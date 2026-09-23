@@ -1,17 +1,16 @@
 ---
 name: claude-control
-description: Manage multiple persistent Claude Code sessions on the current Linux or Windows host from Codex. Use for delegating supplied-text implementation, research planning, verification or critique to local Sonnet/Fable, performing bounded edits and checks in explicit private workspaces, inspecting managed work, and stopping or resuming an identified session.
+description: Manage multiple persistent Claude Code sessions on the current Linux or Windows host from Codex. Use for delegating supplied-text implementation, research planning, verification or critique to role-configured Claude models, performing bounded edits and checks in explicit private workspaces, inspecting managed work, and stopping or resuming an identified session.
 ---
 
 # Claude Control
 
-Use the bundled `../../scripts/claude_control_cli.py`, resolving that path from this skill's directory. Public commands return JSON except the explicit TUI. Python 3.10+ and locally authenticated Claude Code are prerequisites; run `--help` for flags. Version 0.16 supports Linux and Windows supplied-text delegation, JSON-schema task reports, base-hashed patch operations, one bounded format repair, reviewer vetoes, typed acceptance evidence, finite plan/edit/review compositions, routing provenance, fair multi-composition dispatch, verified scout reuse, guarded apply, telemetry and live monitoring. Claude native tools and MCP are disabled, with CLI safe mode and empty setting sources. The project-hook nonexecution test passed; administrator-managed policy still applies. For proposals, supply source text and inspect returned edits. For authorized file work, read [the workspace reference](references/workspaces.md) before creating a policy. The controller executes structured read/write/patch/named-check requests on private copies; source integration remains a Codex action.
+Use the bundled `../../scripts/claude_control_cli.py`, resolving that path from this skill's directory. Public commands return JSON except the explicit TUI. Python 3.10+ and locally authenticated Claude Code are prerequisites; run `--help` for flags. Version 0.17 supports Linux and Windows supplied-text delegation, per-role versioned model and effort settings, JSON-schema task reports, base-hashed patch operations, one bounded format repair, reviewer vetoes, typed acceptance evidence, finite plan/edit/review compositions, routing provenance, fair multi-composition dispatch, verified scout reuse, guarded apply, telemetry and live monitoring. Claude native tools and MCP are disabled, with CLI safe mode and empty setting sources. The project-hook nonexecution test passed; administrator-managed policy still applies. For proposals, supply source text and inspect returned edits. For authorized file work, read [the workspace reference](references/workspaces.md) before creating a policy. The controller executes structured read/write/patch/named-check requests on private copies; source integration remains a Codex action.
 
 ## Execution settings
 
-For new routine Sonnet work, explicitly choose `effort: "medium"`; for new Fable
-design or consequential review choose `effort: "high"`, unless the user specifies
-another supported setting. Choose a bounded `timeout` (1–3600 seconds) for each
+Inspect `models show` and follow the configured role model and effort unless the
+user requests an explicit assignment override. Choose a bounded `timeout` (1–3600 seconds) for each
 run; a timeout is an unsuccessful execution, not permission to retry. Effort is
 pinned to the session and task. Raw `start` accepts `--effort`; continuation flags
 only assert the existing value. Omission inherits on continuation. Never reinterpret
@@ -21,8 +20,9 @@ Supported values: low, medium, high, xhigh, max. JSON null is invalid. `doctor`
 reports `effort_supported`; unsupported settings fail without fallback. `requested_effort`
 in invocation/report evidence records what was sent, not independently measured
 model reasoning. Parent `CLAUDE_CODE_EFFORT_LEVEL` is excluded from the child environment.
-For a new Fable review workflow, explicitly pass `--reviewer-effort high`; worker
-effort never supplies the reviewer default. P5 workspace turns reuse the frozen
+Internal workflow reviewers use the critic role defaults. Explicit
+`--reviewer-model` and `--reviewer-effort` override them for one workflow; worker
+settings never supply reviewer settings. P5 workspace turns reuse the frozen
 assignment setting. Read [execution settings](references/execution-settings.md).
 
 ## First use
@@ -139,9 +139,9 @@ within 1 MiB; overflow creates no run or receipt. Use event cursors, not timesta
 ## Run a bounded proposal/review workflow
 
 Use `workflow create --assignment-file <file> --operation-id <stable-id>` when Codex
-has authorized the fixed proposal → independent Fable review → optional revision
-flow. Worker role is executor/planner/architect; choose Sonnet for routine proposals
-and Fable for planning/design. Reviewer is fixed Fable/critic in a separate session.
+has authorized the fixed proposal → independent critic review → optional revision
+flow. Worker role is executor/planner/architect. The reviewer uses the configured
+critic model in a separate session unless explicitly overridden at creation.
 Creation makes no model call. Save workflow and both member task UUIDs.
 
 Freeze limits at creation: `--max-revisions` (default 2, 0..10), `--max-calls`
@@ -183,16 +183,17 @@ runs remain quarantined until existing `reconcile --run` proves execution is dea
 
 The legacy `delegate` path remains available for a new bounded assignment:
 
-1. Run `roles` to inspect versioned role instructions. `executor` and `researcher`
-   default to Sonnet; `planner`, `architect`, `critic`, and `verifier` default to
-   Fable. Researcher only summarizes supplied sources; important research planning
+1. Run `roles` to inspect versioned role instructions and `models show` for effective
+   model/effort settings. The built-in compatibility defaults use Sonnet for
+   executor/researcher and Fable for the other roles. Researcher only summarizes supplied sources; important research planning
    belongs to planner/architect. An explicit assignment `model` overrides the
    preset. Do not silently substitute an unavailable model.
 2. Write JSON with required `id`, `name`, `role`, absolute `project`, `objective`,
    `context`, `scope`, `acceptance_criteria`, and `deliverable`. `scope` and
    `acceptance_criteria` are nonempty string lists. `context` is supplied text,
    not a path to auto-read. IDs match `[a-z0-9][a-z0-9_-]{0,63}`; names are at most
-   120 characters. Optional `model` is sonnet/fable and `timeout` is 1–3600 seconds
+   120 characters. Optional `model` is a supported family alias or exact `claude-...`
+   model ID, and `timeout` is 1–3600 seconds
    (default 300). Raw input and rendered prompt must each fit within 1 MiB.
 3. Run `delegate --assignment-file <path> --request-id <stable ID>`. This creates
    one new named session, injects the complete role instructions and report
@@ -220,7 +221,7 @@ contract; their `report` is unsupported and their text remains available through
 The unstructured path remains available. `start --role` is metadata only and does
 not inject role instructions:
 
-1. Choose explicit `--model sonnet` for routine implementation or small tasks; choose `--model fable` for research/experiment design, architecture, consequential review or critique. Record a concise role with `--role`. The model choice is fixed for the session; actual assistant model IDs are recorded per run. Never silently substitute a model.
+1. Choose an explicit family alias or exact `claude-...` version ID with `--model`. Use `models show/configure/reset` for structured role defaults. Record a concise role with `--role`. The model choice is fixed for the session; actual assistant model IDs are recorded per run. Never silently substitute a model.
 2. Put a bounded prompt in a file. State the task, expected output, relevant supplied context, and how you will verify it. Prompts are at most 1 MiB. Do not supply credentials. Give a stable unique `--request-id` to the logical request and keep it if a response is lost.
 3. Start with `start --name <display-name> --model <alias> --role <role> --project <absolute path> --prompt-file <path> --request-id <id> --timeout 300`. Save both returned `id` (run) and `session_id` (managed conversation). A returned run means accepted, not completed. Independent sessions can run concurrently up to the configured limit.
 4. Use `status --run <run UUID>`, bounded `wait --run <UUID> --seconds 30`, and `logs --run <UUID>` for progress. Use `result --run <UUID>` to retrieve the answer and verification metadata. `completed` requires valid stream, matching session/model, exit 0 and a verified result artifact. It does not mean the answer itself is correct; verify the substance before integration.
@@ -265,15 +266,15 @@ apply anything.
 
 ## Work in an explicit workspace
 
-Read [workspaces](references/workspaces.md) for policy, lifecycle, scout, frozen review, guarded apply and recovery. Use an immutable Git commit snapshot, bounded readable paths, exact writable files and named check argv authorized for the task. Run `workspace doctor` first. Bind an executor, a read-only Sonnet researcher scout, or a read-only Fable critic/verifier; drive `workspace run` with an explicit finite budget. Never enable native Claude tools to satisfy a workspace request. A completed report and frozen export still require Codex verification and explicit acceptance. `workspace apply` is an explicit operation and never commits, merges, or pushes.
+Read [workspaces](references/workspaces.md) for policy, lifecycle, scout, frozen review, guarded apply and recovery. Use an immutable Git commit snapshot, bounded readable paths, exact writable files and named check argv authorized for the task. Run `workspace doctor` first. Bind an executor, a read-only researcher scout, or a read-only critic/verifier using the configured or explicitly selected model; drive `workspace run` with an explicit finite budget. Never enable native Claude tools to satisfy a workspace request. A completed report and frozen export still require Codex verification and explicit acceptance. `workspace apply` is an explicit operation and never commits, merges, or pushes.
 
 ## Compose a plan, controlled edit and frozen review
 
 Use `composition create` only when Codex has authorized the full fixed chain:
 bounded P4 plan/review, exact plan acceptance, P5 editor, frozen snapshot reviewer,
 and exact final editor acceptance. Supply either a planning assignment, or a
-leader-authored specification plus a Fable critic assignment. Also supply the
-editor and Fable reviewer assignments plus one editor workspace policy. An
+leader-authored specification plus a critic assignment. Also supply the
+editor and reviewer assignments plus one editor workspace policy. An
 optional test contract freezes selected test paths, records controller-run
 baseline evidence and requires named-check receipts on the final tree. The
 controller derives a read-only verifier policy with the same readable paths.

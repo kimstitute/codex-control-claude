@@ -1,6 +1,6 @@
 # OMX 기능 도입 계획
 
-작성: 2026-09-20 · 갱신: 2026-09-23 · 기준: v0.16.0 · 상태: P1–P5 및 라우팅·다중 composition·scout 재사용 구현
+작성: 2026-09-20 · 갱신: 2026-09-23 · 기준: v0.17.0 · 상태: P1–P5 및 역할별 버전 모델·effort 설정 구현
 
 이 문서는 도입 당시의 설계와 단계별 통과 조건을 보존한다. 단계별 구현 상태는 문서 끝의 진행 기록을 따른다. P5는 기존 Claude 도구 비활성화를 유지하는 컨트롤러 작업 요청 방식으로 구체화했다.
 
@@ -706,3 +706,20 @@ P4의 제한된 검토·수정 반복과 재접속 요약은 아래 기록대로
 기존 환경 경계다. 변경 파일 Ruff 검사·포맷, CLI help/version, JSON manifest와
 `git diff --check`도 통과했다. 저장소 전체 Ruff에는 이번 diff 밖의 기존 import-order
 3건이 남아 있어 변경 파일 검사와 구분해 기록한다.
+
+## 25. 역할별 버전 모델·effort 설정 — v0.17.0
+
+- executor, researcher, planner, architect, critic, verifier의 모델과 선택적 effort를
+  호스트 전용 JSON 문서로 설정한다. 문서는 완전 교체 방식으로 검증 후 원자 저장한다.
+- `sonnet`, `opus`, `haiku`, `fable` 별칭은 실제 응답의 모델 계열을 검증하고,
+  `claude-...` 전체 ID는 정확히 일치해야 한다. 모델이나 effort 폴백은 없다.
+- assignment의 명시적 값은 역할 기본값보다 우선한다. 해석된 값은 task/session 생성
+  시점에 동결되어 이후 설정 변경이 기존 revision, retry, resume에 영향을 주지 않는다.
+- scout, verifier, workflow reviewer, leader critic의 모델 계열 강제를 제거하고 역할과
+  sandbox 경계는 유지한다. 내부 reviewer는 critic 기본값 또는 명시적 override를 쓴다.
+- `models show/configure/reset`, 한국어·영문 설정 문서, exact-ID 검증과 호환 기본값
+  회귀 시험을 추가한다. schema 13은 유지한다.
+
+검증은 Python 3.14 전체 424개 시험을 통과했고, 1개는 현재 호스트의 Bubblewrap
+namespace 제약으로 생략됐다. 변경 파일 Ruff, plugin-creator 검증, manifest JSON,
+`git diff --check`도 통과했다.

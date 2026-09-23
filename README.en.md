@@ -16,9 +16,9 @@
 
 Codex Control Claude is a Codex plugin and local controller for delegating work
 to Claude Code. It keeps conversations, runs, task revisions, evidence and
-approval decisions in a durable host-local store. Codex can use Sonnet for
-routine implementation, Fable for planning or review, and preserve the exact
-session instead of treating every request as a new conversation.
+approval decisions in a durable host-local store. Each role can use a Sonnet,
+Opus, Haiku or Fable family alias or an exact versioned model ID with an optional
+effort level while preserving the exact conversation session.
 
 Version 0.9 adds an explicit **plan → review → accept → edit → frozen review →
 accept** composition. It connects the existing bounded planning workflow to a
@@ -53,6 +53,9 @@ Version 0.16 records task type, risk, routing policy, model-selection reason and
 escalation lineage; fairly advances multiple compositions within the global
 concurrency limit; and optionally reuses exact, reverified Sonnet scout results.
 
+Version 0.17 adds host-local per-role model and effort settings, exact version ID
+pinning, and strict verification of the provider-reported model identity.
+
 ## Choose the right workflow
 
 | Goal | Use | What it adds |
@@ -66,6 +69,7 @@ concurrency limit; and optionally reuses exact, reverified Sonnet scout results.
 | Schedule dependent tasks | `task enqueue` + `dispatch` | FIFO admission and exact accepted-parent gates |
 | Save instructions for the next turn | `message` | Explicit next-revision delivery and result handoff |
 | Observe agents and account limits | `monitor tui` | Role/model/work graph, run tokens and Codex/Claude/Gemini/Cursor limits |
+| Configure model and effort per role | `models show/configure/reset` | Aliases, exact version IDs, atomic replacement and frozen existing work |
 
 If you use Codex interactively, ask Codex to apply the installed
 `$claude-control` skill. Use the CLI directly when you want to inspect or operate
@@ -77,6 +81,8 @@ claude_control monitor limits
 ```
 
 See the [live monitor guide](docs/monitor.md) for keys and token semantics.
+See the [model settings guide](docs/models.md) for per-role defaults, exact
+version pinning and assignment overrides.
 
 ## Safety model
 
@@ -130,9 +136,9 @@ for the exact setup and support boundary.
 Run `workspace doctor` before the first controlled edit. The controller refuses
 workspace work if isolation is unavailable; it has no unconfined fallback.
 
-The supported model aliases are `sonnet` and `fable`. Availability depends on
-your Claude account. The controller reports an error instead of silently
-substituting another model.
+Supported family aliases are `sonnet`, `opus`, `haiku`, and `fable`; exact
+`claude-...` model IDs pin a version. Availability depends on your Claude account.
+The controller reports an error instead of silently substituting another model.
 
 ## Install
 
@@ -545,7 +551,7 @@ claude_control composition status --composition <composition-uuid>
 ```
 
 After plan acceptance, the coordinator creates the editor from the commit pinned
-at creation. A finished editor is frozen before the read-only Fable reviewer is
+at creation. A finished editor is frozen before the read-only configured reviewer is
 created from that frozen tree. Continue bounded runs until status reaches:
 
 ```text

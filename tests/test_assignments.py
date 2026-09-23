@@ -13,6 +13,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "plugins/claude-con
 
 from claude_control import orchestration
 from claude_control.assignments import CONTRACT, MAX_BYTES, ROLE_PRESETS, render_assignment
+from claude_control.model_settings import CONTRACT as MODEL_SETTINGS_CONTRACT
+from claude_control.model_settings import ROLES
 from claude_control.store import ControlError, Store
 from test_controller import FAKE, ControllerTestCase
 
@@ -106,6 +108,58 @@ class AssignmentCommandTests(ControllerTestCase):
             session = Store(self.state).session(created["session_id"])
             self.assertEqual(session["model"], expected_model)
             self.assertEqual(session["role"], role)
+
+    def test_role_model_settings_apply_to_new_work_and_explicit_assignment_wins(self) -> None:
+        configured = {
+            "contract": MODEL_SETTINGS_CONTRACT,
+            "roles": {role: {"model": "claude-opus-5", "effort": "high"} for role in ROLES},
+        }
+        configured["roles"]["researcher"] = {"model": "claude-haiku-4-5-20251001"}
+        path = self.root / "role-models.json"
+        path.write_text(json.dumps(configured), encoding="utf-8")
+
+        result = self.cli("models", "configure", "--file", str(path))
+        self.assertEqual(
+            (result["source"], result["roles"]["executor"]),
+            (
+                "configured",
+                {"model": "claude-opus-5", "effort": "high"},
+            ),
+        )
+        self.assertEqual(self.cli("models", "show"), result)
+
+        defaulted = self.completed_assignment(
+            self.assignment(task_id="configured-default", name="configured-default"),
+            "configured-default",
+        )
+        defaulted_session = Store(self.state).session(defaulted["session_id"])
+        self.assertEqual(
+            (defaulted_session["model"], defaulted_session["effort"]),
+            ("claude-opus-5", "high"),
+        )
+
+        overridden = self.completed_assignment(
+            self.assignment(
+                task_id="configured-override",
+                name="configured-override",
+                model="haiku",
+                effort="low",
+            ),
+            "configured-override",
+        )
+        overridden_session = Store(self.state).session(overridden["session_id"])
+        self.assertEqual(
+            (overridden_session["model"], overridden_session["effort"]), ("haiku", "low")
+        )
+
+        reset = self.cli("models", "reset")
+        self.assertEqual(
+            (reset["source"], reset["roles"]["executor"]),
+            (
+                "built_in",
+                {"model": "sonnet"},
+            ),
+        )
 
     def test_delegate_sends_canonical_role_prompt_on_stdin_and_preserves_locked_argv(self) -> None:
         payload = self.assignment(task_id="stdin-envelope", name="stdin-envelope")

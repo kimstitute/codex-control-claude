@@ -21,7 +21,7 @@ from . import (
     workflow_cli,
     workspace_cli,
 )
-from .assignments import CONTRACT, ROLE_PRESETS, load_assignment, render_assignment
+from .assignments import CONTRACT, ROLE_PRESETS, load_assignment, render_assignment, strict_json
 from .execution_settings import EFFORTS
 from .orchestration import observe, report
 from .platform import capability_report, default_state_dir
@@ -55,6 +55,12 @@ def parser():
     )
     commands.add_parser("list")
     commands.add_parser("roles")
+    models = commands.add_parser("models", help="Show or replace per-role model defaults.")
+    model_commands = models.add_subparsers(dest="models_command", required=True)
+    model_commands.add_parser("show")
+    configure = model_commands.add_parser("configure")
+    configure.add_argument("--file", required=True, type=Path)
+    model_commands.add_parser("reset")
     delegate = commands.add_parser("delegate")
     delegate.add_argument("--assignment-file", type=Path, required=True)
     delegate.add_argument("--request-id", required=True)
@@ -65,7 +71,7 @@ def parser():
         cmd = commands.add_parser(name)
         if name == "start":
             cmd.add_argument("--name", required=True)
-            cmd.add_argument("--model", choices=("sonnet", "fable"), required=True)
+            cmd.add_argument("--model", required=True)
             cmd.add_argument("--role", required=True)
             cmd.add_argument("--project", required=True)
         else:
@@ -213,8 +219,26 @@ def execute(args):
         return doctor(store, args.auth, args.platform)
     if args.command == "list":
         return store.list_all()
+    if args.command == "models":
+        if args.models_command == "show":
+            return store.role_defaults_report()
+        if args.models_command == "reset":
+            return store.reset_role_defaults()
+        try:
+            raw = args.file.read_bytes()
+        except OSError as exc:
+            raise ControlError("invalid_model_settings", str(exc)) from None
+        if len(raw) > 65536:
+            raise ControlError("invalid_model_settings", "Model settings file exceeds 64 KiB.")
+        try:
+            document = strict_json(raw.decode("utf-8"))
+        except UnicodeDecodeError:
+            raise ControlError(
+                "invalid_model_settings", "Model settings must be UTF-8 JSON."
+            ) from None
+        return store.configure_role_defaults(document)
     if args.command == "delegate":
-        assignment = load_assignment(args.assignment_file)
+        assignment = load_assignment(args.assignment_file, role_defaults=store.role_defaults())
         assignment["project"] = store.project(assignment["project"])
         prompt = render_assignment(assignment)
         run_id, created = store.reserve(

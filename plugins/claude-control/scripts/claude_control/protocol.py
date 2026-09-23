@@ -11,9 +11,9 @@ import uuid
 from pathlib import Path
 
 from .execution_settings import validate_effort
+from .model_settings import model_matches, validate_model
 
 MAX_STREAM_BYTES = 16 * 1024 * 1024
-_ALIAS_TO_PREFIX = {"sonnet": "claude-sonnet-", "fable": "claude-fable-"}
 
 
 def build_argv(
@@ -26,8 +26,7 @@ def build_argv(
     json_schema: dict | None = None,
 ) -> list[str]:
     """Build argv for a locked-down, non-interactive Claude CLI session invocation."""
-    if model not in ("sonnet", "fable"):
-        raise ValueError(f"unsupported model alias: {model!r}")
+    validate_model(model)
     try:
         uuid.UUID(session_id)
     except ValueError as exc:
@@ -108,9 +107,7 @@ def parse_stream(
     if len(data) > MAX_STREAM_BYTES:
         raise ValueError(f"stream file exceeds {MAX_STREAM_BYTES} bytes")
 
-    expected_prefix = _ALIAS_TO_PREFIX.get(expected_model)
-    if expected_prefix is None:
-        raise ValueError(f"unsupported expected_model: {expected_model!r}")
+    validate_model(expected_model)
 
     errors: list[str] = []
     actual_models: set[str] = set()
@@ -164,7 +161,7 @@ def parse_stream(
             if isinstance(model, str) and model:
                 if model.startswith("claude-"):
                     actual_models.add(model)
-                if not model.startswith(expected_prefix):
+                if not model_matches(expected_model, model):
                     bad_models.add(model)
             else:
                 errors.append(f"line {lineno}: missing assistant model")
@@ -204,7 +201,9 @@ def parse_stream(
                 if isinstance(value, dict):
                     structured_output = value
                 else:
-                    errors.append(f"line {lineno}: terminal result missing structured_output object")
+                    errors.append(
+                        f"line {lineno}: terminal result missing structured_output object"
+                    )
             result_usage = event.get("usage")
             if isinstance(result_usage, dict):
                 usage = result_usage
@@ -230,9 +229,7 @@ def parse_stream(
     if not actual_models:
         errors.append("missing actual assistant model")
     for model in sorted(bad_models):
-        errors.append(
-            f"model mismatch: {model!r} does not match expected prefix {expected_prefix!r}"
-        )
+        errors.append(f"model mismatch: {model!r} does not match selector {expected_model!r}")
     if tool_use_count:
         errors.append(f"tool_use blocks present: {tool_use_count}")
     for sid in sorted(bad_sessions):
