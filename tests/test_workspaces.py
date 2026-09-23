@@ -771,6 +771,15 @@ class WorkspaceTests(ControllerTestCase):
         self.assertEqual((result["state"], result["reason"]), ("awaiting_codex", "model_mismatch"))
         self.assertEqual(result["calls_used"], 1)
 
+    def test_context_window_selector_completes_workspace(self) -> None:
+        created = self.create()
+        self.bind(created, self.assignment("context-window", model="opus[1m]"))
+
+        result = self.run_workspace(created["id"])
+
+        self.assertEqual(result["state"], "finished")
+        self.assertEqual(result["task"]["runs"][-1]["actual_models"], ["claude-opus-test"])
+
     def test_stop_leaves_source_and_working_tree_unchanged(self) -> None:
         created = self.create(policy=self.policy(write=["README.md"]))
         self.bind(created, self.assignment("stopped"))

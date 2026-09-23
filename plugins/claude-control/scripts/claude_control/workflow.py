@@ -9,6 +9,7 @@ import uuid
 from . import messages, scheduler, tasks
 from . import task_contracts as contract
 from .assignments import MAX_BYTES
+from .model_settings import model_matches
 from .store import ACTIVE, ControlError, alive, execution_alive
 from .workflow_contracts import PROTOCOL, envelope
 
@@ -171,7 +172,7 @@ def _complete(store, db, run):
                     "SELECT model FROM sessions WHERE id=?", (run["session_id"],)
                 ).fetchone()
                 if any(
-                    not model.startswith("claude-" + session[0] + "-")
+                    not model_matches(session[0], model)
                     for model in json.loads(run["actual_models"])
                 ):
                     reason = "model_mismatch"

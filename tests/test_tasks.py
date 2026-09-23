@@ -104,6 +104,12 @@ class TaskTests(ControllerTestCase):
             )
         self.assertEqual(tasks.show(store, task["id"])["reason"], "model_mismatch")
 
+    def test_context_window_selector_accepts_provider_model_identity(self):
+        task, run = self.completed(model="opus[1m]")
+
+        self.assertEqual(run["status"], "completed")
+        self.assertEqual(tasks.show(Store(self.state), task["id"])["state"], "awaiting_review")
+
     def test_late_worker_cannot_claim_after_deadline_without_prior_refresh(self):
         task = self.create()
         store = Store(self.state)

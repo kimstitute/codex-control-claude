@@ -7,6 +7,7 @@ import uuid
 
 from . import task_contracts as contract
 from .assignments import MAX_BYTES, normalize_assignment
+from .model_settings import model_matches
 from .store import ACTIVE, ControlError, alive, boot_id, pid_namespace
 
 
@@ -844,7 +845,7 @@ def _state(store, db, task, runs):
             "SELECT model FROM sessions WHERE id=?", (row["session_id"],)
         ).fetchone()[0]
         wrong_models = any(
-            not value.startswith("claude-" + model + "-")
+            not model_matches(model, value)
             for value in json.loads(row["actual_models"])
         )
         if wrong_models or "model mismatch" in reason:

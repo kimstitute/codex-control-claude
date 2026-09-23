@@ -18,6 +18,7 @@ from . import tasks
 from . import workspace_files as files
 from . import workspace_sandbox as sandbox
 from .assignments import MAX_BYTES
+from .model_settings import model_matches
 from .platform.locks import file_lock
 from .runner import launch_worker
 from .store import ACTIVE, ControlError, alive, boot_id, pid_namespace, private_dir, proc_identity
@@ -583,7 +584,7 @@ def _advance(store, workspace_id):
         if run["status"] != "completed":
             requested = json.loads(binding["assignment"])["model"]
             mismatch = any(
-                not model.startswith("claude-" + requested + "-")
+                not model_matches(requested, model)
                 for model in json.loads(run["actual_models"])
             )
             raise ControlError(

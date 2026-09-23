@@ -9,14 +9,15 @@ from .assignments import (
 )
 from .assignments import MAX_BYTES, _strip_fence, read_snapshot, render_assignment, strict_json
 from .assignments import validate_report as validate_legacy_report
+from .model_settings import model_matches
 from .store import ControlError
 from .workflow_contracts import PROTOCOL as WORKFLOW_CONTRACT
 from .workflow_contracts import validate_review
 from .workspace_contracts import LEGACY_PROTOCOL as LEGACY_WORKSPACE_CONTRACT
-from .workspace_contracts import operation_contract, review_contract as workspace_review_contract
-from .workspace_contracts import validate_envelope, validate_operations
-from .workspace_contracts import validate_review as validate_workspace_review
 from .workspace_contracts import PROTOCOL as WORKSPACE_CONTRACT
+from .workspace_contracts import operation_contract, validate_envelope, validate_operations
+from .workspace_contracts import review_contract as workspace_review_contract
+from .workspace_contracts import validate_review as validate_workspace_review
 
 CONTRACT = "claude-control.task.v2"
 EXECUTION_CONTRACT = "claude-control.task.v3"
@@ -570,12 +571,11 @@ def inspect_run(store, db, row):
         if isinstance(row["actual_models"], str)
         else row["actual_models"]
     )
-    prefix = "claude-" + session["model"] + "-"
     if (
         not isinstance(result, dict)
         or result.get("validated_success") is not True
         or not models
-        or any(not m.startswith(prefix) for m in models)
+        or any(not model_matches(session["model"], model) for model in models)
         or result.get("actual_models") != models
         or result.get("observed_session_ids") != [row["backend_id"]]
         or result.get("tool_use_count") != 0
