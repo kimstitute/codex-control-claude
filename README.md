@@ -444,6 +444,20 @@ claude_control composition create \
 생성은 Git 커밋과 P4 workflow를 기록할 뿐 모델을 호출하지 않습니다.
 반환된 composition UUID를 보관하세요.
 
+리더가 직접 쓴 명세를 사용할 때는 `--planning-assignment-file` 대신
+`--leader-spec-file`과 Fable `--critic-assignment-file`을 전달합니다. 선택적인
+`--test-contract-file`은 editor binding 전 baseline 기대값을 확인하고, 동결한
+테스트 경로가 그대로이며 모든 필수 검사가 최종 트리에서 통과했을 때만 reviewer를
+엽니다. 전체 JSON 형식과 예제는 [composition 가이드](docs/compositions.ko.md)에
+있습니다. 실제 기록의 성공률·비용은 다음과 같이 읽습니다.
+
+```bash
+claude_control composition evaluate --all
+claude_control composition evaluate --composition <uuid> --composition <uuid>
+```
+
+평가 명령은 원장을 변경하지 않으며, 누락된 비용이나 토큰을 추정하지 않습니다.
+
 ### 7. 계획 승인 지점까지 실행
 
 ```bash

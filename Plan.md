@@ -1,6 +1,6 @@
 # OMX 기능 도입 계획
 
-작성: 2026-09-20 · 갱신: 2026-09-21 · 기준: v0.2.0 / `b23e8e2` · 상태: P1–P5 구현·검증·로컬 설치 완료
+작성: 2026-09-20 · 갱신: 2026-09-23 · 기준: v0.15.0 · 상태: P1–P5 및 리더 명세·테스트 게이트·평가 구현
 
 이 문서는 도입 당시의 설계와 단계별 통과 조건을 보존한다. 단계별 구현 상태는 문서 끝의 진행 기록을 따른다. P5는 기존 Claude 도구 비활성화를 유지하는 컨트롤러 작업 요청 방식으로 구체화했다.
 
@@ -599,3 +599,78 @@ P4의 제한된 검토·수정 반복과 재접속 요약은 아래 기록대로
 - schema 9→10은 composition/member/result 테이블만 추가한다. 기존 session/run/task/workflow/
   workspace/decision row와 effort 기록은 다시 쓰지 않는다.
 - 구조화 출력 호환성, 명시적 실패 복구, 실제 프로젝트 gate 재검증은 이번 범위에 포함하지 않는다.
+
+## 19. 구조화 출력과 편집 신뢰성 — v0.10.0
+
+- Claude Code JSON schema 출력을 structured task와 workspace에 적용했다.
+- 전체 파일 JSON 반환 대신 base SHA-256이 일치하는 line hunk patch를 추가했다.
+- 쓰기·검사 영수증이 없고 트리가 그대로인 형식 오류에만 같은 세션의 bounded repair
+  1회를 허용했다. 실행 여부가 불명확하거나 부작용이 있으면 재시도하지 않는다.
+- 최종 Fable reviewer의 `revise`와 `blocked` 권고에 거부권을 주고, 승인 근거를
+  `check_receipt`, `diff_hunk`, `review_result`, `free_text`로 구분했다.
+
+## 20. 실사용 증거와 반영 경계 — v0.11.0
+
+- 실제 Sonnet 편집·검사·freeze와 별도 Fable 검토 파일럿을 통과했다.
+- provider usage, model usage, 비용, API/전체 시간을 append-only telemetry에 저장했다.
+- 원본 HEAD, clean worktree, frozen manifest와 patch를 모두 확인하는 `workspace apply`를
+  추가했다. 적용은 명시적이고 commit·merge·push를 하지 않는다.
+- 동일 커밋을 읽는 Sonnet scout 결과를 계획 context에 provenance와 함께 고정한다.
+
+## 21. 관측과 quota — v0.12.0–v0.13.0
+
+- composition, workflow, workspace, task, session 관계를 graph로 보여주는 read-only TUI와
+  agent/history view를 추가했다.
+- 진행 중 stream token 추정치와 완료 후 provider 확정 telemetry를 구분했다.
+- Codex, Claude Code, Gemini CLI, Cursor의 provider-reported quota window를 표시한다.
+  공개되지 않은 절대 token ceiling이나 남은 token 수는 추정하지 않는다.
+
+## 22. Windows 포팅 — v0.14.0–v0.14.1
+
+- native Windows 세션은 pinned supervisor와 kill-on-close Job Object를 사용한다.
+- workspace는 WSL2 ext4와 기존 Bubblewrap 격리를 사용하며 unconfined fallback은 없다.
+- 실제 Windows에서 helper handshake, suspended child identity/resume, Claude 인증과
+  `claude-sonnet-5` 도구 없는 호출을 검증했다. Codex sandbox token의 WSL service
+  `E_ACCESSDENIED` 때문에 WSL2/Bubblewrap 물리 검증은 일반 터미널에서 남아 있다.
+
+## 23. 리더 명세·테스트 동결·실증 평가 구현 계획 — v0.15.0
+
+이번 단계는 검수 의견의 1, 2, 3, 6번을 다음 순서로 구현한다.
+
+1. **리더 명세 등록:** 엄격한 JSON leader spec을 composition 불변 policy에 digest와
+   함께 저장한다. Fable은 `critic` 역할로만 비평하며 명세를 생성하거나 수정하지 않는다.
+   기존 P4 독립 검토와 정확한 Codex accept 이후에만 editor를 연다.
+2. **테스트 계약:** 동결 테스트 경로, named check, baseline pass/fail, post pass를
+   고정한다. editor write와 동결 경로의 겹침을 생성 시 거절한다. controller가 editor
+   binding 전에 baseline을 실행하고 기존 멱등 operation 원장에 영수증을 기록한다.
+3. **최종 트리 게이트:** frozen export에서 동결 파일 해시를 다시 확인하고, export의
+   tree SHA-256과 일치하는 모든 필수 check 통과 영수증이 있어야 reviewer를 만든다.
+4. **실증 평가:** 기존 workflow/workspace/run/telemetry 관계만 SELECT하여 readiness,
+   acceptance, unassisted success와 95% Wilson 구간을 계산한다. 모든 run의 provider 비용과
+   네 token 필드가 완전한 composition만 비용·token 집계에 포함한다.
+5. **문서와 호환성:** schema 13을 유지한다. 기존 generated-plan composition은 policy에
+   새 필드가 없어도 기존 의미로 실행한다. 한국어/영문 가이드와 이 계획서를 갱신한다.
+
+### 설계 검토에서 수용한 부분
+
+- Fable과 Codex 모두 controller-owned baseline/post 검사, final-tree hash 결합,
+  Wilson 구간, telemetry missing/partial 분리를 타당한 핵심으로 보았다.
+- 별도 specification/critique/test table과 compositions 재구축은 채택하지 않았다.
+  현재 불변 composition policy, append-only workspace receipt, idempotent task operation이
+  같은 provenance와 replay 방지를 제공하므로 schema 14의 영구 이관 부채가 불필요했다.
+- test contract는 기존 사용자를 깨지 않도록 선택 사항으로 둔다. 지정한 composition에는
+  예외 없이 강제하며, 지정하지 않은 과거·신규 composition은 평가에서 `n/a`로 분리한다.
+- 외부 event bridge, ACP, 정책 자동 승인, 추가 provider/platform은 이번 범위에서 제외한다.
+
+### 구현 결과
+
+- `composition create`는 generated plan과 leader spec 중 정확히 하나를 받는다.
+- leader spec은 Fable critic workflow revision을 0으로 고정하고, editor 기준과 spec 기준의
+  정확한 일치를 요구한다.
+- baseline 불일치, 동결 파일 변경, 필수 check 누락·실패·stale tree receipt는 자동화가
+  멈추는 명시적 사유다. 실패를 성공으로 바꾸거나 자동 재시도하지 않는다.
+- `composition evaluate --all`과 반복 `--composition` 선택을 추가했다. zero denominator는
+  0으로 꾸미지 않고 null이며, 비용과 token 누락도 추정하지 않는다.
+- Python 3.14 전체 회귀 시험 411개가 통과했고 1개는 현재 호스트가 Bubblewrap
+  namespace를 허용하지 않아 명시적으로 생략됐다. 변경 파일 Ruff 검사와 포맷 검사,
+  `git diff --check`, 빈 실제 저장소에 대한 read-only 평가 smoke도 통과했다.

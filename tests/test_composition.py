@@ -182,6 +182,158 @@ class CompositionTests(ControllerTestCase):
                 db.execute("SELECT count(*) FROM composition_members").fetchone()[0], 0
             )
 
+    def test_leader_spec_is_critiqued_before_editor_and_test_gate_passes(self) -> None:
+        (self.repo / "TEST.txt").write_text("frozen\n", encoding="utf-8")
+        self.git("add", "TEST.txt")
+        self.git("commit", "-qm", "add frozen test input")
+        editor = self.assignment("leader-edit", role="executor", model="sonnet")
+        reviewer = self.assignment("leader-review", role="verifier", model="fable")
+        policy = self.editor_policy()
+        policy["checks"] = {"unit": {"argv": ["/usr/bin/true"], "timeout": 5}}
+        spec = {
+            "version": 1,
+            "id": "leader-feature",
+            "name": "Leader feature",
+            "objective": "Implement the leader-authored feature.",
+            "context": "The leader owns this specification.",
+            "scope": ["Only the selected files."],
+            "acceptance_criteria": editor["acceptance_criteria"],
+            "implementation_plan": ["Run the frozen check after the final edit."],
+        }
+        created = composition.create(
+            Store(self.state),
+            None,
+            editor,
+            policy,
+            reviewer,
+            "leader-composition-create",
+            repo=str(self.repo),
+            reviewer_effort="high",
+            leader_spec=spec,
+            critic_assignment=self.assignment("leader-critic", role="critic", model="fable"),
+            test_contract={
+                "version": 1,
+                "frozen_paths": ["TEST.txt"],
+                "checks": {"unit": {"baseline": "pass", "post": "pass"}},
+            },
+        )
+
+        initial = composition.status(Store(self.state), created["id"])
+        self.assertEqual(initial["policy"]["planning_mode"], "leader_spec")
+        self.assertEqual(initial["workflow"]["budget"]["max_revisions"], 0)
+        self.assertEqual(initial["members"], {})
+
+        self.accept_plan(created["id"])
+        baseline_receipt = {
+            "outcome": "ok",
+            "exit_code": 0,
+            "duration": 0.01,
+            "truncated": False,
+            "stdout": "",
+            "stderr": "",
+            "stdout_sha256": "0" * 64,
+            "stderr_sha256": "0" * 64,
+        }
+        with mock.patch.object(workspace.sandbox, "execute", return_value=baseline_receipt):
+            editor_state = self.run_once(created["id"])
+        editor_workspace = editor_state["members"]["editor"]["workspace_id"]
+        while True:
+            current = self.run_once(created["id"])
+            if current["members"]["editor"]["workspace"]["state"] == "finished":
+                break
+        exported = workspace.export(Store(self.state), editor_workspace)
+        final_run = current["members"]["editor"]["workspace"]["export"]["run_id"]
+        check_result = {
+            "outcome": "ok",
+            "tree_sha256": exported["manifest"]["tree_sha256"],
+        }
+        with Store(self.state).db(write=True) as db:
+            db.execute(
+                "INSERT INTO workspace_requests VALUES(?,?,?,?)",
+                (final_run, 0, json.dumps({"op": "run_check", "name": "unit"}), 1.0),
+            )
+            db.execute(
+                "INSERT INTO workspace_receipts VALUES(?,?,?,?)",
+                (final_run, 0, json.dumps(check_result), 1.0),
+            )
+        reviewing = self.reach_reviewer_member(created["id"])
+
+        self.assertEqual(reviewing["test_gates"]["baseline"]["status"], "passed")
+        self.assertEqual(reviewing["test_gates"]["post"]["status"], "passed")
+        with Store(self.state).db() as db:
+            assignment = json.loads(
+                db.execute(
+                    "SELECT assignment FROM workspace_tasks WHERE workspace_id=?",
+                    (reviewing["members"]["editor"]["workspace_id"],),
+                ).fetchone()[0]
+            )
+        self.assertIn("claude-control.leader-spec.v1", assignment["context"])
+        self.assertIn("claude-control.test-contract.v1", assignment["context"])
+
+    def test_test_contract_rejects_editor_write_overlap(self) -> None:
+        policy = self.editor_policy()
+        policy["checks"] = {"unit": {"argv": ["/usr/bin/true"], "timeout": 5}}
+
+        self.assert_error(
+            "invalid_composition",
+            composition.create,
+            Store(self.state),
+            self.assignment("overlap-plan", role="planner", model="fable"),
+            self.assignment("overlap-edit", role="executor", model="sonnet"),
+            policy,
+            self.assignment("overlap-review", role="verifier", model="fable"),
+            "overlap-composition-create",
+            repo=str(self.repo),
+            test_contract={
+                "version": 1,
+                "frozen_paths": ["README.md"],
+                "checks": {"unit": {"baseline": "pass", "post": "pass"}},
+            },
+        )
+
+    def test_missing_final_tree_check_blocks_reviewer_creation(self) -> None:
+        (self.repo / "TEST.txt").write_text("frozen\n", encoding="utf-8")
+        self.git("add", "TEST.txt")
+        self.git("commit", "-qm", "add frozen test input")
+        policy = self.editor_policy()
+        policy["checks"] = {"unit": {"argv": ["/usr/bin/true"], "timeout": 5}}
+        created = composition.create(
+            Store(self.state),
+            self.assignment("missing-check-plan", role="planner", model="fable"),
+            self.assignment("missing-check-edit", role="executor", model="sonnet"),
+            policy,
+            self.assignment("missing-check-review", role="verifier", model="fable"),
+            "missing-check-composition-create",
+            repo=str(self.repo),
+            reviewer_effort="high",
+            test_contract={
+                "version": 1,
+                "frozen_paths": ["TEST.txt"],
+                "checks": {"unit": {"baseline": "pass", "post": "pass"}},
+            },
+        )
+        self.accept_plan(created["id"])
+        baseline_receipt = {
+            "outcome": "ok",
+            "exit_code": 0,
+            "duration": 0.01,
+            "truncated": False,
+            "stdout": "",
+            "stderr": "",
+            "stdout_sha256": "0" * 64,
+            "stderr_sha256": "0" * 64,
+        }
+        with mock.patch.object(workspace.sandbox, "execute", return_value=baseline_receipt):
+            self.run_once(created["id"])
+
+        blocked = self.advance_until(
+            created["id"], lambda value: value["reason"] == "post_check_failed"
+        )
+
+        self.assertEqual(blocked["state"], "awaiting_codex")
+        self.assertEqual(set(blocked["members"]), {"editor"})
+        self.assertEqual(blocked["test_gates"]["post"]["status"], "failed")
+
     def test_finished_sonnet_scout_is_pinned_into_planning_context(self) -> None:
         scout_policy = {
             "version": 1,
@@ -207,9 +359,7 @@ class CompositionTests(ControllerTestCase):
                     "composition-scout",
                     role="researcher",
                     model="sonnet",
-                    fixture={
-                        "workspace_operations": [[{"op": "read", "path": "README.md"}], []]
-                    },
+                    fixture={"workspace_operations": [[{"op": "read", "path": "README.md"}], []]},
                 ),
                 "composition-scout-bind",
             )
@@ -229,7 +379,9 @@ class CompositionTests(ControllerTestCase):
         )
 
         with Store(self.state).db() as db:
-            row = db.execute("SELECT policy FROM compositions WHERE id=?", (created["id"],)).fetchone()
+            row = db.execute(
+                "SELECT policy FROM compositions WHERE id=?", (created["id"],)
+            ).fetchone()
             policy = json.loads(row["policy"])
             workflow_row = db.execute(
                 "SELECT worker_task_id FROM workflows WHERE id=?", (created["workflow_id"],)
@@ -492,9 +644,7 @@ class CompositionTests(ControllerTestCase):
         self.assertEqual(accepted["acceptance_decision_id"], decision["id"])
 
     def test_final_reviewer_revise_verdict_vetoes_editor_acceptance(self) -> None:
-        created = self.create(
-            "final-veto", reviewer_fixture={"workspace_recommendation": "revise"}
-        )
+        created = self.create("final-veto", reviewer_fixture={"workspace_recommendation": "revise"})
         self.accept_plan(created["id"])
         vetoed = self.advance_until(
             created["id"],

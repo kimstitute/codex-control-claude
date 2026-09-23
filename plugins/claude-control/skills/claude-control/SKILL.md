@@ -271,10 +271,13 @@ Read [workspaces](references/workspaces.md) for policy, lifecycle, scout, frozen
 
 Use `composition create` only when Codex has authorized the full fixed chain:
 bounded P4 plan/review, exact plan acceptance, P5 editor, frozen snapshot reviewer,
-and exact final editor acceptance. Supply separate planning, editor and Fable
-reviewer assignments plus one editor workspace policy. The controller derives a
-read-only verifier policy with the same readable paths. Creation makes no model
-call.
+and exact final editor acceptance. Supply either a planning assignment, or a
+leader-authored specification plus a Fable critic assignment. Also supply the
+editor and Fable reviewer assignments plus one editor workspace policy. An
+optional test contract freezes selected test paths, records controller-run
+baseline evidence and requires named-check receipts on the final tree. The
+controller derives a read-only verifier policy with the same readable paths.
+Creation makes no model call.
 
 Drive the named composition with `composition run --composition <UUID> --once`
 or `--until-idle --max-seconds <0..3600>`. It uses the existing child engines and
@@ -284,6 +287,11 @@ The reviewer is created automatically only after the editor export is frozen; it
 does not need or create editor acceptance. After its own frozen report, the
 composition stops at `awaiting_codex/final_review_ready`. Codex then independently
 accepts the exact editor result. Status derives `accepted` from that ledger record.
+
+Use `composition evaluate --all` or repeat `--composition <UUID>` to measure
+terminal readiness, acceptance, unassisted success, complete provider telemetry
+and complete-case cost per success. This command is read-only and does not impute
+missing costs or tokens.
 
 The composition never retries malformed, failed or unknown execution, changes a
 model or session, repairs a report, accepts a result, merges, pushes or wakes Codex.

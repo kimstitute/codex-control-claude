@@ -80,6 +80,14 @@ readable paths exactly match the composition. It pins the scout task, run,
 result, manifest and tree digests plus the validated report into the planning
 assignment. Composition creation still makes no model call.
 
+Alternatively, use `--leader-spec-file <json>` with
+`--critic-assignment-file <fable-critic.json>` instead of the planning assignment.
+The leader specification remains a separate immutable policy artifact; Fable only
+critiques it, and the editor receives both identities after exact Codex acceptance.
+Add `--test-contract-file <json>` to freeze selected test paths, record baseline
+pass/fail expectations and require final-tree named-check receipts before reviewer
+creation. See `docs/compositions.md` in the repository for both schemas.
+
 Policy schema version 1 requires `role`, `read_paths`, `write_paths`, and
 `checks`. It permits 1–64 readable paths, 0–64 writable paths, and at most
 eight named checks. Every writable path must also be readable. Paths and check

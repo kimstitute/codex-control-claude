@@ -54,6 +54,80 @@ revision, run and result digest, then record `task accept`. A later bounded
 composition run copies that verified plan report and provenance into the editor
 assignment before creating the editor workspace.
 
+### Leader-authored specification
+
+Version 0.15 can keep specification authorship with the Codex leader. Replace
+the planning assignment with a strict leader-spec document and a Fable critic
+assignment:
+
+```json
+{
+  "version": 1,
+  "id": "feature-spec",
+  "name": "Feature specification",
+  "objective": "Describe the required behavior.",
+  "context": "Relevant constraints and evidence.",
+  "scope": ["Allowed implementation scope."],
+  "acceptance_criteria": ["Observable criterion."],
+  "implementation_plan": ["Ordered implementation step."]
+}
+```
+
+```bash
+claude_control composition create \
+  --leader-spec-file /absolute/path/spec.json \
+  --critic-assignment-file /absolute/path/fable-critic.json \
+  --editor-assignment-file /absolute/path/editor.json \
+  --editor-policy-file /absolute/path/editor-policy.json \
+  --reviewer-assignment-file /absolute/path/reviewer.json \
+  --repo /absolute/path/repository --ref HEAD \
+  --operation-id feature-composition-001 --reviewer-effort high
+```
+
+The critic must use Fable and the `critic` role. It cannot replace the immutable
+specification. Its bounded workflow permits no critic revision; a requested spec
+change requires a new leader document and composition. Editing still waits for
+the independent critique recommendation and exact Codex acceptance. The editor
+then receives the leader specification, its digest and the accepted critique as
+separate provenance.
+
+### Frozen test contract
+
+Add `--test-contract-file` to run controller-owned baseline checks before the
+editor is bound and require matching check receipts on the final tree before the
+frozen Fable reviewer is created:
+
+```json
+{
+  "version": 1,
+  "frozen_paths": ["tests/test_feature.py", "tests/fixtures/"],
+  "checks": {
+    "unit": {"baseline": "fail", "post": "pass"}
+  }
+}
+```
+
+Every check name must already exist in the editor policy. `baseline` is `pass`
+for regression/refactor work or `fail` for a red test. `post` is always `pass`.
+Frozen paths must be readable and cannot overlap editor writes. The baseline
+receipt, frozen-file hashes and final-tree check receipts are recorded through
+the existing idempotent operation ledger. Missing, failed or stale final-tree
+receipts stop the composition before reviewer creation.
+
+### Evaluate recorded compositions
+
+```bash
+claude_control composition evaluate --all
+claude_control composition evaluate \
+  --composition <uuid> --composition <uuid>
+```
+
+Evaluation performs SELECT queries only. It reports terminal readiness,
+acceptance and unassisted-success rates with 95% Wilson intervals. Cost and the
+four provider token fields are aggregated only when every attributed run has
+complete telemetry; partial and missing records stay separate. Complete-case
+cost per success includes measured failed attempts in its numerator.
+
 When the editor freezes a final export, the next composition step automatically
 creates a separate reviewer workspace from that frozen tree. It never reads the
 live repository or a mutable editor tree. The reviewer returns a structured

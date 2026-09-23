@@ -1,18 +1,22 @@
 """Durable composition of the bounded P4 workflow and P5 workspaces."""
 
+import hashlib
 import json
 import math
 import sqlite3
+import tempfile
 import time
 import uuid
 from contextlib import contextmanager
+from pathlib import Path
 
 from . import task_contracts as contract
 from . import tasks, workflow, workspace
 from . import workspace_files as files
 from .platform.locks import file_lock
 from .store import ControlError
-from .workspace_policy import normalize_policy
+from .workspace_policy import normalize_policy, permits
+from .workspace_policy import path as policy_path
 
 STATE_ERRORS = (ControlError, OSError, ValueError, KeyError, TypeError, sqlite3.IntegrityError)
 
@@ -83,6 +87,114 @@ def _canonical_assignment(store, value, *, role=None, model=None):
     return assignment
 
 
+def _text(value, field, maximum=65536):
+    try:
+        encoded = value.encode("utf-8") if isinstance(value, str) else b""
+    except UnicodeEncodeError:
+        encoded = b""
+    if not isinstance(value, str) or not value.strip() or not encoded or len(encoded) > maximum:
+        raise ControlError("invalid_composition", f"Leader specification {field} is invalid.")
+    return value
+
+
+def _string_list(value, field, maximum=64):
+    if not isinstance(value, list) or not 1 <= len(value) <= maximum:
+        raise ControlError("invalid_composition", f"Leader specification {field} is invalid.")
+    return [_text(item, field, 4096) for item in value]
+
+
+def _leader_spec(value):
+    required = {
+        "version",
+        "id",
+        "name",
+        "objective",
+        "context",
+        "scope",
+        "acceptance_criteria",
+        "implementation_plan",
+    }
+    if not isinstance(value, dict) or set(value) != required or value["version"] != 1:
+        raise ControlError(
+            "invalid_composition", "Leader specification fields must match version 1."
+        )
+    spec = {
+        "version": 1,
+        "id": _text(value["id"], "id", 64),
+        "name": _text(value["name"], "name", 120),
+        "objective": _text(value["objective"], "objective"),
+        "context": _text(value["context"], "context"),
+        "scope": _string_list(value["scope"], "scope"),
+        "acceptance_criteria": _string_list(value["acceptance_criteria"], "acceptance_criteria"),
+        "implementation_plan": _string_list(value["implementation_plan"], "implementation_plan"),
+    }
+    raw = contract.canonical(spec)
+    if len(raw.encode("utf-8")) > 256 * 1024:
+        raise ControlError("invalid_composition", "Leader specification exceeds 256 KiB.")
+    return spec, hashlib.sha256(raw.encode()).hexdigest()
+
+
+def _selector_covers(selector, relative):
+    return selector == relative or (selector.endswith("/") and relative.startswith(selector))
+
+
+def _normalize_test_contract(value, editor_policy):
+    if value is None:
+        return None
+    if not isinstance(value, dict) or set(value) != {"version", "frozen_paths", "checks"}:
+        raise ControlError("invalid_composition", "Test contract fields must match version 1.")
+    if value["version"] != 1:
+        raise ControlError("invalid_composition", "Use test contract version 1.")
+    selected = value["frozen_paths"]
+    if not isinstance(selected, list) or not 1 <= len(selected) <= 64:
+        raise ControlError("invalid_composition", "Use 1–64 frozen test paths.")
+    frozen_paths = sorted(policy_path(item, allow_directory=True) for item in selected)
+    if len(set(frozen_paths)) != len(frozen_paths) or "." in frozen_paths:
+        raise ControlError("invalid_composition", "Frozen test paths must be unique and bounded.")
+    for frozen in frozen_paths:
+        relative = frozen[:-1] if frozen.endswith("/") else frozen
+        readable = permits(editor_policy["read_paths"], relative) or any(
+            item == frozen or (item.endswith("/") and frozen.startswith(item))
+            for item in editor_policy["read_paths"]
+        )
+        if not readable:
+            raise ControlError(
+                "invalid_composition", "Every frozen test path must be readable by the editor."
+            )
+    for writable in editor_policy["write_paths"]:
+        if any(_selector_covers(frozen, writable) for frozen in frozen_paths):
+            raise ControlError(
+                "invalid_composition", "Editor writes cannot overlap frozen test paths."
+            )
+    checks = value["checks"]
+    if not isinstance(checks, dict) or not 1 <= len(checks) <= 8:
+        raise ControlError("invalid_composition", "Use 1–8 required test checks.")
+    normalized = {}
+    for name, expectation in checks.items():
+        if name not in editor_policy["checks"]:
+            raise ControlError(
+                "invalid_composition", "Every test contract check must exist in editor policy."
+            )
+        if (
+            not isinstance(expectation, dict)
+            or set(expectation) != {"baseline", "post"}
+            or expectation["baseline"] not in ("pass", "fail")
+            or expectation["post"] != "pass"
+        ):
+            raise ControlError(
+                "invalid_composition",
+                "A test contract check needs baseline pass/fail and post pass.",
+            )
+        normalized[name] = dict(expectation)
+    content = {
+        "version": 1,
+        "frozen_paths": frozen_paths,
+        "checks": dict(sorted(normalized.items())),
+    }
+    content["sha256"] = hashlib.sha256(contract.canonical(content).encode()).hexdigest()
+    return content
+
+
 def _reviewer_policy(editor_policy):
     return normalize_policy(
         {
@@ -134,7 +246,9 @@ def _scout_provenance(store, workspace_id, source_repo, pinned_commit, read_path
             saved["manifest_sha256"],
         )
         if manifest["changes"]:
-            raise ControlError("invalid_composition", "Scout snapshot unexpectedly contains changes.")
+            raise ControlError(
+                "invalid_composition", "Scout snapshot unexpectedly contains changes."
+            )
         assignment = json.loads(binding["assignment"])
         if assignment["role"] != "researcher" or assignment["model"] != "sonnet":
             raise ControlError("invalid_composition", "Scout must use the Sonnet researcher role.")
@@ -165,19 +279,60 @@ def create(
     dispatch_window_seconds=900,
     reviewer_effort=None,
     scout_workspace=None,
+    leader_spec=None,
+    critic_assignment=None,
+    test_contract=None,
 ):
     """Create a composition, recovering a previously created P4 child by operation ID."""
     _require(store)
     source_repo = store.project(repo)
     composition_id = _composition_id(store, operation_id)
     pinned_commit = _pin_source(store, composition_id, source_repo, ref)
-    planning = _canonical_assignment(
-        store, planning_assignment, role=("planner", "architect", "executor")
-    )
     editor = _canonical_assignment(store, editor_assignment, role=("executor",))
     reviewer = _canonical_assignment(
         store, reviewer_assignment, role=("critic", "verifier"), model="fable"
     )
+    if (planning_assignment is None) == (leader_spec is None):
+        raise ControlError(
+            "invalid_composition", "Choose one generated plan or one leader specification."
+        )
+    planning_mode = "leader_spec" if leader_spec is not None else "generated"
+    spec = None
+    spec_sha256 = None
+    if planning_mode == "leader_spec":
+        if critic_assignment is None:
+            raise ControlError(
+                "invalid_composition", "Leader specifications require a Fable critic assignment."
+            )
+        spec, spec_sha256 = _leader_spec(leader_spec)
+        planning = _canonical_assignment(store, critic_assignment, role=("critic",), model="fable")
+        if editor["acceptance_criteria"] != spec["acceptance_criteria"]:
+            raise ControlError(
+                "invalid_composition",
+                "The editor must use the leader specification's exact acceptance criteria.",
+            )
+        planning = dict(planning)
+        planning["context"] = (
+            planning["context"]
+            + "\n\nCritique the following immutable leader-authored specification. "
+            "Do not rewrite it. Identify criterion-level blockers and return a recommendation.\n"
+            + contract.canonical(
+                {
+                    "protocol": "claude-control.leader-spec.v1",
+                    "sha256": spec_sha256,
+                    "specification": spec,
+                }
+            )
+        )
+        planning = _canonical_assignment(store, planning, role=("critic",), model="fable")
+    else:
+        if critic_assignment is not None:
+            raise ControlError(
+                "invalid_composition", "Generated planning cannot use a leader-spec critic."
+            )
+        planning = _canonical_assignment(
+            store, planning_assignment, role=("planner", "architect", "executor")
+        )
     if any(a["project"] != source_repo for a in (planning, editor, reviewer)):
         raise ControlError(
             "invalid_composition", "Every composition assignment must use the source repository."
@@ -190,6 +345,7 @@ def create(
     editor_policy = normalize_policy(editor_policy)
     if editor_policy["role"] != "executor":
         raise ControlError("invalid_composition", "The editor policy must use the executor role.")
+    test_contract = _normalize_test_contract(test_contract, editor_policy)
     scout = None
     if scout_workspace is not None:
         scout = _scout_provenance(
@@ -203,25 +359,26 @@ def create(
         planning["context"] = (
             planning["context"]
             + "\n\nTrusted read-only scout evidence follows. Cite its file:line evidence and "
-            "identify any missing source context before planning.\n"
-            + contract.canonical(scout)
+            "identify any missing source context before planning.\n" + contract.canonical(scout)
         )
-        planning = _canonical_assignment(
-            store, planning, role=("planner", "architect", "executor")
-        )
+        planning = _canonical_assignment(store, planning, role=("planner", "architect", "executor"))
     policy = {
         "version": 1,
+        "planning_mode": planning_mode,
         "repo": source_repo,
         "requested_ref": ref,
         "ref": pinned_commit,
         "planning_assignment": planning,
+        "leader_spec": spec,
+        "leader_spec_sha256": spec_sha256,
         "editor_assignment": editor,
         "editor_policy": editor_policy,
         "reviewer_assignment": reviewer,
         "reviewer_policy": _reviewer_policy(editor_policy),
+        "test_contract": test_contract,
         "scout": scout,
         "workflow": {
-            "max_revisions": max_revisions,
+            "max_revisions": 0 if planning_mode == "leader_spec" else max_revisions,
             "max_calls": max_calls,
             "dispatch_window_seconds": dispatch_window_seconds,
             "reviewer_effort": reviewer_effort,
@@ -237,7 +394,7 @@ def create(
         store,
         planning,
         _operation_id(composition_id, "plan:create"),
-        max_revisions=max_revisions,
+        max_revisions=0 if planning_mode == "leader_spec" else max_revisions,
         max_calls=max_calls,
         dispatch_window_seconds=dispatch_window_seconds,
         reviewer_effort=reviewer_effort,
@@ -258,7 +415,7 @@ def create(
                 "VALUES(?,?,?,?, 'active',NULL,'plan',?)",
                 (
                     composition_id,
-                    planning["name"],
+                    spec["name"] if spec else planning["name"],
                     child["id"],
                     contract.canonical(policy),
                     time.time(),
@@ -350,21 +507,177 @@ def _append_context(assignment, envelope):
     return result
 
 
+def _frozen_manifest(manifest, frozen_paths):
+    selected = {
+        relative: receipt
+        for relative, receipt in manifest["files"].items()
+        if any(_selector_covers(selector, relative) for selector in frozen_paths)
+    }
+    for selector in frozen_paths:
+        if not any(_selector_covers(selector, relative) for relative in selected):
+            raise ControlError(
+                "invalid_composition", "A frozen test path selects no file at the pinned commit."
+            )
+    return {
+        "files": selected,
+        "sha256": hashlib.sha256(contract.canonical(selected).encode()).hexdigest(),
+    }
+
+
+def _baseline_gate(store, row, policy, workspace_id):
+    test_contract = policy.get("test_contract")
+    if not test_contract:
+        return None
+    root = workspace.directory(store, workspace_id)
+    editor_policy = policy["editor_policy"]
+    baseline = files.inspect_tree(root / "baseline", editor_policy)
+    frozen = _frozen_manifest(baseline, test_contract["frozen_paths"])
+    operation_id = _operation_id(row["id"], "test:baseline")
+    intent = {
+        "kind": "composition_test_baseline",
+        "composition_id": row["id"],
+        "workspace_id": workspace_id,
+        "base_commit": policy["ref"],
+        "baseline_sha256": baseline["sha256"],
+        "test_contract_sha256": test_contract["sha256"],
+        "frozen_sha256": frozen["sha256"],
+    }
+    with store.db() as db:
+        fingerprint, prior = tasks._operation(db, operation_id, intent)
+    if not prior:
+        workspace.sandbox.require()
+        receipts = []
+        for name, expectation in test_contract["checks"].items():
+            check = editor_policy["checks"][name]
+            with tempfile.TemporaryDirectory(prefix="baseline-", dir=root) as temporary:
+                scratch = Path(temporary) / "tree"
+                files.copy_tree(root / "baseline", scratch, editor_policy)
+                receipt = workspace.sandbox.execute(scratch, check["argv"], check["timeout"])
+            observed = "pass" if receipt["outcome"] == "ok" else "fail"
+            receipts.append(
+                {
+                    "name": name,
+                    "expected": expectation["baseline"],
+                    "observed": observed,
+                    "tree_sha256": baseline["sha256"],
+                    "receipt": receipt,
+                }
+            )
+        passed = all(
+            item["observed"] == item["expected"] and item["receipt"]["outcome"] in ("ok", "failed")
+            for item in receipts
+        )
+        response = {
+            "status": "passed" if passed else "failed",
+            "workspace_id": workspace_id,
+            "baseline_sha256": baseline["sha256"],
+            "frozen": frozen,
+            "checks": receipts,
+        }
+        with store.db(write=True) as db:
+            fingerprint, prior = tasks._operation(db, operation_id, intent)
+            if not prior:
+                tasks._record(db, operation_id, fingerprint, response)
+                prior = response
+    if prior["status"] != "passed":
+        raise ControlError(
+            "baseline_check_failed", "A required baseline check did not match its expectation."
+        )
+    return prior
+
+
+def _post_gate(store, row, policy, member, exported):
+    test_contract = policy.get("test_contract")
+    if not test_contract:
+        return None
+    workspace_id = member["workspace_id"]
+    root = workspace.directory(store, workspace_id)
+    baseline = files.inspect_tree(root / "baseline", policy["editor_policy"])
+    baseline_frozen = _frozen_manifest(baseline, test_contract["frozen_paths"])
+    final_frozen = _frozen_manifest(exported["manifest"], test_contract["frozen_paths"])
+    operation_id = _operation_id(row["id"], "test:post")
+    intent = {
+        "kind": "composition_test_post",
+        "composition_id": row["id"],
+        "workspace_id": workspace_id,
+        "manifest_sha256": exported["manifest_sha256"],
+        "tree_sha256": exported["manifest"]["tree_sha256"],
+        "test_contract_sha256": test_contract["sha256"],
+    }
+    with store.db() as db:
+        fingerprint, prior = tasks._operation(db, operation_id, intent)
+        if not prior:
+            records = db.execute(
+                "SELECT q.run_id,q.seq,q.action,r.result FROM workspace_requests q "
+                "JOIN workspace_calls c USING(run_id) "
+                "JOIN workspace_receipts r USING(run_id,seq) "
+                "WHERE c.workspace_id=? ORDER BY c.rowid,q.seq",
+                (workspace_id,),
+            ).fetchall()
+    if not prior:
+        evidence = {}
+        for record in records:
+            action = json.loads(record["action"])
+            receipt = json.loads(record["result"])
+            if action.get("op") == "run_check" and action.get("name") in test_contract["checks"]:
+                evidence[action["name"]] = {
+                    "run_id": record["run_id"],
+                    "seq": record["seq"],
+                    "outcome": receipt.get("outcome"),
+                    "tree_sha256": receipt.get("tree_sha256"),
+                }
+        expected_tree = exported["manifest"]["tree_sha256"]
+        passed = baseline_frozen == final_frozen and all(
+            name in evidence
+            and evidence[name]["outcome"] == "ok"
+            and evidence[name]["tree_sha256"] == expected_tree
+            for name in test_contract["checks"]
+        )
+        response = {
+            "status": "passed" if passed else "failed",
+            "workspace_id": workspace_id,
+            "manifest_sha256": exported["manifest_sha256"],
+            "tree_sha256": expected_tree,
+            "frozen_sha256": final_frozen["sha256"],
+            "checks": evidence,
+        }
+        with store.db(write=True) as db:
+            fingerprint, prior = tasks._operation(db, operation_id, intent)
+            if not prior:
+                tasks._record(db, operation_id, fingerprint, response)
+                prior = response
+    if prior["status"] != "passed":
+        raise ControlError(
+            "post_check_failed",
+            "Frozen tests changed or a required check did not pass on the final tree.",
+        )
+    return prior
+
+
 def _materialize_editor(store, row, policy, plan):
     composition_id = row["id"]
+    planning_evidence = {
+        "protocol": "claude-control.composition.v2",
+        "phase": "plan",
+        "planning_mode": policy.get("planning_mode", "generated"),
+        "workflow_id": row["workflow_id"],
+        "task_id": plan["task_id"],
+        "revision": plan["revision"],
+        "run_id": plan["run_id"],
+        "result_sha256": plan["result_sha256"],
+        "acceptance_decision_id": plan["decision_id"],
+        "report": plan["report"],
+    }
+    if policy.get("planning_mode") == "leader_spec":
+        planning_evidence.update(
+            leader_spec_protocol="claude-control.leader-spec.v1",
+            leader_spec=policy["leader_spec"],
+            leader_spec_sha256=policy["leader_spec_sha256"],
+            report_kind="fable_critique",
+        )
     assignment = _append_context(
         policy["editor_assignment"],
-        {
-            "protocol": "claude-control.composition.v1",
-            "phase": "plan",
-            "workflow_id": row["workflow_id"],
-            "task_id": plan["task_id"],
-            "revision": plan["revision"],
-            "run_id": plan["run_id"],
-            "result_sha256": plan["result_sha256"],
-            "acceptance_decision_id": plan["decision_id"],
-            "report": plan["report"],
-        },
+        planning_evidence,
     )
     made = workspace.create(
         store,
@@ -373,6 +686,20 @@ def _materialize_editor(store, row, policy, plan):
         repo=policy["repo"],
         ref=policy["ref"],
     )
+    baseline = _baseline_gate(store, row, policy, made["id"])
+    if baseline:
+        assignment = _append_context(
+            assignment,
+            {
+                "protocol": "claude-control.test-contract.v1",
+                "test_contract": policy["test_contract"],
+                "baseline": baseline,
+                "requirement": (
+                    "Keep frozen paths unchanged and run every required named check after the "
+                    "last edit. A passing receipt must match the final tree hash."
+                ),
+            },
+        )
     bound = workspace.bind(
         store,
         made["id"],
@@ -520,6 +847,7 @@ def _advance(store, composition_id):
     if completed:
         source, exported = completed
         if row["phase"] == "editor":
+            _post_gate(store, row, policy, member, exported)
             _materialize_reviewer(
                 store,
                 row,
@@ -610,9 +938,7 @@ def accept_guard(store, db, task_id, run_id):
             "composition_review_required",
             "Accept the exact editor result only after its independent frozen-snapshot review.",
         )
-    reviewer_run = db.execute(
-        "SELECT * FROM runs WHERE id=?", (reviewer["run_id"],)
-    ).fetchone()
+    reviewer_run = db.execute("SELECT * FROM runs WHERE id=?", (reviewer["run_id"],)).fetchone()
     checked = contract.inspect_run(store, db, reviewer_run)
     if checked["report"]["review"]["recommendation"] != "approve":
         raise ControlError(
@@ -660,6 +986,13 @@ def status(store, composition_id):
             )
         ]
         accepted = _accepted(db, composition_id)
+        gates = {}
+        for name in ("baseline", "post"):
+            operation = db.execute(
+                "SELECT response FROM task_operations WHERE operation_id=?",
+                (_operation_id(composition_id, "test:" + name),),
+            ).fetchone()
+            gates[name] = json.loads(operation["response"]) if operation else None
     output["workflow"] = workflow.status(store, row["workflow_id"])
     output["members"] = {}
     for phase, member in members.items():
@@ -668,6 +1001,7 @@ def status(store, composition_id):
             "workspace": workspace.status(store, member["workspace_id"]),
         }
     output["accepted"] = bool(accepted)
+    output["test_gates"] = gates
     output["acceptance_decision_id"] = accepted["id"] if accepted else None
     if accepted and row["state"] not in ("stopping", "stopped"):
         output.update(state="accepted", reason="codex_accepted")

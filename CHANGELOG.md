@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.15.0 — 2026-09-23
+
+- Add immutable leader-authored composition specifications. Fable is restricted
+  to a critic assignment, the critique cannot revise the specification, and the
+  existing exact Codex acceptance gate still precedes editor creation.
+- Add optional frozen test contracts with controller-run baseline expectations,
+  editor write exclusion, frozen-file verification and required named-check
+  receipts bound to the final tree before reviewer creation.
+- Add read-only `composition evaluate` reports for readiness, acceptance and
+  unassisted-success rates with Wilson intervals, plus complete-case provider
+  cost and token aggregates without imputation.
+- Keep store schema 13. The new immutable contracts use existing composition
+  policy, operation and workspace receipt ledgers, so no migration is required.
+- Update the implementation plan and Korean/English composition documentation.
+
 ## 0.14.1 — 2026-09-23
 
 - Deduplicate Windows child environments case-insensitively before native

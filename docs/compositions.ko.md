@@ -53,6 +53,75 @@ digest를 확인한 뒤 `task accept`를 기록하세요. 이후의 경계 지�
 composition run)은 그 검증된 계획 보고서와 출처(provenance)를 편집자 할당에
 복사한 다음 편집자 워크스페이스를 생성합니다.
 
+### 리더 작성 명세
+
+0.15부터는 명세 작성자를 Codex 리더로 고정할 수 있습니다. planning assignment
+대신 엄격한 leader-spec 문서와 Fable critic assignment를 전달합니다.
+
+```json
+{
+  "version": 1,
+  "id": "feature-spec",
+  "name": "기능 명세",
+  "objective": "필요한 동작을 정의한다.",
+  "context": "관련 제약과 근거.",
+  "scope": ["허용한 구현 범위."],
+  "acceptance_criteria": ["관측 가능한 완료 기준."],
+  "implementation_plan": ["순서가 있는 구현 단계."]
+}
+```
+
+```bash
+claude_control composition create \
+  --leader-spec-file /absolute/path/spec.json \
+  --critic-assignment-file /absolute/path/fable-critic.json \
+  --editor-assignment-file /absolute/path/editor.json \
+  --editor-policy-file /absolute/path/editor-policy.json \
+  --reviewer-assignment-file /absolute/path/reviewer.json \
+  --repo /absolute/path/repository --ref HEAD \
+  --operation-id feature-composition-001 --reviewer-effort high
+```
+
+critic은 Fable과 `critic` 역할이어야 합니다. 불변 명세를 대신 작성하거나 수정하지
+않으며 critic revision도 허용하지 않습니다. 명세 수정이 필요하면 리더가 새 문서와
+composition을 만듭니다. 편집은 독립 비평의 승인 권고와 정확한 Codex accept가 모두
+기록된 뒤에만 열립니다. editor는 리더 명세, digest, 승인한 비평을 서로 구분된
+provenance로 받습니다.
+
+### 동결 테스트 계약
+
+`--test-contract-file`을 추가하면 editor binding 전에 컨트롤러가 baseline 검사를
+실행하고, 최종 트리와 일치하는 검사 영수증이 있어야 frozen Fable reviewer를 만듭니다.
+
+```json
+{
+  "version": 1,
+  "frozen_paths": ["tests/test_feature.py", "tests/fixtures/"],
+  "checks": {
+    "unit": {"baseline": "fail", "post": "pass"}
+  }
+}
+```
+
+검사 이름은 editor policy에 이미 있어야 합니다. 신규 동작의 red test는 baseline을
+`fail`, 회귀·리팩터링은 `pass`로 둡니다. post는 항상 `pass`입니다. 동결 경로는
+읽기 범위 안에 있어야 하고 editor 쓰기 경로와 겹칠 수 없습니다. baseline 영수증,
+동결 파일 해시, 최종 트리 검사 영수증은 기존 멱등 operation 원장에 저장됩니다.
+최종 트리와 일치하는 통과 영수증이 없으면 reviewer 생성 전에 composition이 멈춥니다.
+
+### 기록된 composition 평가
+
+```bash
+claude_control composition evaluate --all
+claude_control composition evaluate \
+  --composition <uuid> --composition <uuid>
+```
+
+평가는 SELECT만 사용합니다. terminal readiness, acceptance, unassisted-success 비율과
+95% Wilson 구간을 반환합니다. 비용과 네 가지 provider token 필드는 해당 composition의
+모든 run에 완전한 telemetry가 있을 때만 합산하고 partial/missing을 분리합니다.
+complete-case 성공당 비용의 분자에는 측정된 실패 시도의 비용도 포함합니다.
+
 편집자가 최종 익스포트를 고정(freeze)하면, 다음 구성 단계는 그 고정된 트리로부터
 별도의 검토자 워크스페이스를 자동으로 생성합니다. 이는 라이브 저장소나 변경 가능한
 편집자 트리를 절대 읽지 않습니다. 검토자는 편집자의 각 기준에 대한 구조화

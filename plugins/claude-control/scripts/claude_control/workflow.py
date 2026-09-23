@@ -296,9 +296,10 @@ def create(
             raise ControlError("invalid_workflow", str(exc)) from None
         if not recorded:
             store.preflight_effort(reviewer_effort)
-    if assignment["role"] not in ("executor", "planner", "architect"):
+    if assignment["role"] not in ("executor", "planner", "architect", "critic"):
         raise ControlError(
-            "invalid_workflow", "Worker role must be executor, planner or architect."
+            "invalid_workflow",
+            "Worker role must be executor, planner, architect or critic.",
         )
     if (
         type(max_revisions) is not int

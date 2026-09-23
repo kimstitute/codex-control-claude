@@ -3,7 +3,7 @@
 import math
 from pathlib import Path
 
-from . import composition
+from . import composition, evaluation
 from .assignments import load_assignment, strict_json
 from .store import ControlError, Store
 
@@ -13,10 +13,14 @@ def register(commands):
     sub = parser.add_subparsers(dest="composition_command", required=True)
 
     create = sub.add_parser("create")
-    create.add_argument("--planning-assignment-file", type=Path, required=True)
+    planning = create.add_mutually_exclusive_group(required=True)
+    planning.add_argument("--planning-assignment-file", type=Path)
+    planning.add_argument("--leader-spec-file", type=Path)
+    create.add_argument("--critic-assignment-file", type=Path)
     create.add_argument("--editor-assignment-file", type=Path, required=True)
     create.add_argument("--editor-policy-file", type=Path, required=True)
     create.add_argument("--reviewer-assignment-file", type=Path, required=True)
+    create.add_argument("--test-contract-file", type=Path)
     create.add_argument("--repo", required=True)
     create.add_argument("--ref", default="HEAD")
     create.add_argument("--operation-id", required=True)
@@ -40,6 +44,11 @@ def register(commands):
     stop.add_argument("--composition", required=True)
     stop.add_argument("--operation-id", required=True)
 
+    evaluate = sub.add_parser("evaluate")
+    selection = evaluate.add_mutually_exclusive_group(required=True)
+    selection.add_argument("--all", action="store_true")
+    selection.add_argument("--composition", action="append")
+
 
 def _policy(path):
     with path.open("rb") as handle:
@@ -53,9 +62,25 @@ def execute(args):
     store = Store(args.state_dir)
     command = args.composition_command
     if command == "create":
+        leader_spec = _policy(args.leader_spec_file) if args.leader_spec_file else None
+        critic = (
+            load_assignment(args.critic_assignment_file) if args.critic_assignment_file else None
+        )
+        if leader_spec is not None and critic is None:
+            raise ControlError(
+                "invalid_arguments", "--leader-spec-file requires --critic-assignment-file"
+            )
+        if leader_spec is None and critic is not None:
+            raise ControlError(
+                "invalid_arguments", "--critic-assignment-file requires --leader-spec-file"
+            )
         return composition.create(
             store,
-            load_assignment(args.planning_assignment_file),
+            (
+                load_assignment(args.planning_assignment_file)
+                if args.planning_assignment_file
+                else None
+            ),
             load_assignment(args.editor_assignment_file),
             _policy(args.editor_policy_file),
             load_assignment(args.reviewer_assignment_file),
@@ -67,7 +92,12 @@ def execute(args):
             dispatch_window_seconds=args.dispatch_window_seconds,
             reviewer_effort=args.reviewer_effort,
             scout_workspace=args.scout_workspace,
+            leader_spec=leader_spec,
+            critic_assignment=critic,
+            test_contract=(_policy(args.test_contract_file) if args.test_contract_file else None),
         )
+    if command == "evaluate":
+        return evaluation.evaluate(store, None if args.all else args.composition)
     if command == "status":
         return composition.status(store, args.composition)
     if command == "stop":

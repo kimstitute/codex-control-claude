@@ -443,6 +443,20 @@ claude_control composition create \
 Creation pins the Git commit and records the P4 workflow. It makes no model
 call. Save the returned composition UUID.
 
+For a leader-authored specification, replace `--planning-assignment-file` with
+`--leader-spec-file` and a Fable `--critic-assignment-file`. The optional
+`--test-contract-file` checks the baseline before editor binding and opens the
+reviewer only when frozen test paths are unchanged and every required check
+passes on the final tree. See the [composition guide](docs/compositions.md) for
+the JSON contracts and complete examples. Evaluate real recorded runs with:
+
+```bash
+claude_control composition evaluate --all
+claude_control composition evaluate --composition <uuid> --composition <uuid>
+```
+
+Evaluation does not mutate the ledger or estimate missing cost or token values.
+
 ### 7. Run until plan acceptance is required
 
 ```bash
