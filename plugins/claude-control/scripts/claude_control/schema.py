@@ -1,6 +1,6 @@
 """Additive schemas; existing sessions and runs retain their identity and rowids."""
 
-VERSION = 13
+VERSION = 14
 TASK_SCHEMA = """
 CREATE TABLE tasks (
  id TEXT PRIMARY KEY, name TEXT NOT NULL, session_id TEXT REFERENCES sessions(id),
@@ -479,4 +479,214 @@ ALTER TABLE runs ADD COLUMN process_backend TEXT;
 ALTER TABLE runs ADD COLUMN sandbox_backend TEXT;
 """,
         13,
+    )
+
+
+# The observation wire contract is pinned independently of the DB schema version so
+# the folded view can evolve without an offline migration.
+OBSERVATION_CONTRACT = "claude-control.observation.v1"
+_NOW = "(julianday('now')-2440587.5)*86400.0"
+_WIRE = f"'{OBSERVATION_CONTRACT}'"
+_EVENT = (
+    "INSERT INTO observation_events"
+    "(contract,kind,entity_kind,entity_id,recorded_at,effective_at,payload)"
+)
+_JSON = "json(CASE WHEN json_valid({0}) THEN {0} ELSE 'null' END)"
+
+# Projections are shared by the triggers (p='NEW.') and the baseline snapshot (p='').
+# Each one is a self-contained node or edge state carrying only stable identifiers,
+# names, roles, models, states, reasons, timestamps, token counts and costs. Project
+# paths, source repositories, prompts, results, bodies, policies, operation actions,
+# receipts, account identity and credentials are deliberately never projected.
+_SESSION = (
+    "json_object('node','session','id',{p}id,'name',{p}name,'backend_id',{p}backend_id,"
+    "'model',{p}model,'role',{p}role,'effort',{p}effort,'blocked',{p}blocked,"
+    "'created',{p}created)"
+)
+_RUN = (
+    "json_object('node','run','id',{p}id,'session_id',{p}session_id,"
+    "'backend_id',{p}backend_id,'state',{p}status,'effort',{p}effort,"
+    "'resume',{p}resume,'timeout',{p}timeout,'created',{p}created,'started',{p}started,"
+    "'finished',{p}finished,'exit_code',{p}exit_code,"
+    "'models'," + _JSON.format("{p}actual_models") + ")"
+)
+_TASK = (
+    "json_object('node','task','id',{p}id,'name',{p}name,'session_id',{p}session_id,"
+    "'revision',{p}current_revision,'active_run_id',{p}active_run_id,'created',{p}created)"
+)
+_WORKFLOW = (
+    "json_object('node','workflow','id',{p}id,'name',{p}name,"
+    "'worker_task_id',{p}worker_task_id,'reviewer_task_id',{p}reviewer_task_id,"
+    "'state',{p}state,'phase',{p}phase,'round',{p}round,"
+    "'first_reserved_at',{p}first_reserved_at,'created',{p}created)"
+)
+_WORKSPACE = (
+    "json_object('node','workspace','id',{p}id,'base_commit',{p}base_commit,"
+    "'source_workspace',{p}source_workspace,'baseline_sha256',{p}baseline_sha256,"
+    "'state',{p}state,'created',{p}created)"
+)
+_COMPOSITION = (
+    "json_object('node','composition','id',{p}id,'name',{p}name,"
+    "'workflow_id',{p}workflow_id,'state',{p}state,"
+    "'phase',{p}phase,'created',{p}created)"
+)
+_TELEMETRY = (
+    "json_object('node','run_telemetry','run_id',{p}run_id,"
+    "'usage'," + _JSON.format("{p}usage") + ","
+    "'model_usage'," + _JSON.format("{p}model_usage") + ","
+    "'provider_cost_usd',{p}provider_cost_usd,'duration_api_ms',{p}duration_api_ms,"
+    "'duration_ms',{p}duration_ms,'created',{p}created)"
+)
+# The delivery edge names its origin 'envelope' so no payload ever mentions bodies.
+_DEPENDENCY = (
+    "json_object('edge','dependency','from_kind','task','from_id',{p}child_task_id,"
+    "'from_revision',{p}child_revision,'to_kind','task','to_id',{p}parent_task_id,"
+    "'to_revision',{p}parent_revision)"
+)
+_BINDING = (
+    "json_object('edge','binding','from_kind','envelope','from_id',{p}message_id,"
+    "'to_kind','run','to_id',{p}run_id,'task_id',{p}task_id,'revision',{p}revision,"
+    "'created',{p}created)"
+)
+_REVIEW = (
+    "json_object('edge','review','id',{p}id,'from_kind','run','from_id',{p}run_id,"
+    "'to_kind','task','to_id',{p}task_id,'revision',{p}revision,'decision',{p}kind,"
+    "'reviewer',{p}reviewer,'recommendation',{p}recommendation,'created',{p}created)"
+)
+
+_NODES = (
+    (
+        "session",
+        "sessions",
+        _SESSION,
+        "NEW.created",
+        _NOW,
+        "OLD.blocked IS NOT NEW.blocked OR OLD.backend_id IS NOT NEW.backend_id",
+    ),
+    (
+        "run",
+        "runs",
+        _RUN,
+        "NEW.created",
+        f"coalesce(NEW.finished,NEW.started,{_NOW})",
+        "OLD.status IS NOT NEW.status",
+    ),
+    (
+        "task",
+        "tasks",
+        _TASK,
+        "NEW.created",
+        _NOW,
+        "OLD.current_revision IS NOT NEW.current_revision"
+        " OR OLD.active_run_id IS NOT NEW.active_run_id",
+    ),
+    (
+        "workflow",
+        "workflows",
+        _WORKFLOW,
+        "NEW.created",
+        _NOW,
+        "OLD.state IS NOT NEW.state OR OLD.phase IS NOT NEW.phase"
+        " OR OLD.round IS NOT NEW.round OR OLD.reason IS NOT NEW.reason",
+    ),
+    (
+        "workspace",
+        "workspaces",
+        _WORKSPACE,
+        "NEW.created",
+        _NOW,
+        "OLD.state IS NOT NEW.state OR OLD.reason IS NOT NEW.reason",
+    ),
+    (
+        "composition",
+        "compositions",
+        _COMPOSITION,
+        "NEW.created",
+        _NOW,
+        "OLD.state IS NOT NEW.state OR OLD.phase IS NOT NEW.phase"
+        " OR OLD.reason IS NOT NEW.reason",
+    ),
+)
+_EDGES = (
+    (
+        "dependency",
+        "task_dependencies",
+        _DEPENDENCY,
+        "NEW.child_task_id||':'||NEW.child_revision||'>'"
+        "||NEW.parent_task_id||':'||NEW.parent_revision",
+        _NOW,
+    ),
+    ("binding", "message_bindings", _BINDING, "NEW.message_id||'>'||NEW.run_id", "NEW.created"),
+    ("review", "review_decisions", _REVIEW, "NEW.id", "NEW.created"),
+)
+
+OBSERVATION_LEDGER = """
+CREATE TABLE observation_events (
+ cursor INTEGER PRIMARY KEY AUTOINCREMENT, contract TEXT NOT NULL, kind TEXT NOT NULL,
+ entity_kind TEXT NOT NULL, entity_id TEXT NOT NULL,
+ recorded_at REAL NOT NULL, effective_at REAL NOT NULL,
+ payload TEXT NOT NULL CHECK(json_valid(payload))
+);
+CREATE INDEX observation_entity_cursor ON observation_events(entity_kind,entity_id,cursor);
+CREATE INDEX observation_kind_cursor ON observation_events(kind,cursor);
+CREATE TRIGGER immutable_observation_events_update BEFORE UPDATE ON observation_events
+ BEGIN SELECT RAISE(ABORT,'observation events are append-only'); END;
+CREATE TRIGGER immutable_observation_events_delete BEFORE DELETE ON observation_events
+ BEGIN SELECT RAISE(ABORT,'observation events are append-only'); END;
+"""
+
+
+def _observation_ddl():
+    """Append every event in the same transaction as the mutation that caused it."""
+    parts = [OBSERVATION_LEDGER]
+    for kind, table, projection, born, moved, condition in _NODES:
+        body = projection.format(p="NEW.")
+        parts.append(
+            f"CREATE TRIGGER observation_{kind}_created AFTER INSERT ON {table}\n"
+            f" BEGIN {_EVENT}\n"
+            f" VALUES({_WIRE},'node_created','{kind}',NEW.id,{_NOW},{born},{body}); END;"
+        )
+        parts.append(
+            f"CREATE TRIGGER observation_{kind}_state AFTER UPDATE ON {table}\n"
+            f" WHEN {condition}\n"
+            f" BEGIN {_EVENT}\n"
+            f" VALUES({_WIRE},'node_state','{kind}',NEW.id,{_NOW},{moved},{body}); END;"
+        )
+    for kind, table, projection, identity, effective in _EDGES:
+        body = projection.format(p="NEW.")
+        parts.append(
+            f"CREATE TRIGGER observation_{kind}_created AFTER INSERT ON {table}\n"
+            f" BEGIN {_EVENT}\n"
+            f" VALUES({_WIRE},'edge_created','{kind}',{identity},{_NOW},{effective},{body});"
+            " END;"
+        )
+    parts.append(
+        f"CREATE TRIGGER observation_run_telemetry AFTER INSERT ON run_telemetry\n"
+        f" BEGIN {_EVENT}\n"
+        f" VALUES({_WIRE},'run_telemetry','run',NEW.run_id,{_NOW},NEW.created,"
+        f"{_TELEMETRY.format(p='NEW.')}); END;"
+    )
+    return "\n".join(parts) + "\n"
+
+
+def _snapshot(entries):
+    return ",".join(
+        f"'{kind}',json((SELECT json_group_array({projection.format(p='')}) FROM {table}))"
+        for kind, table, projection, *_ in entries
+    )
+
+
+def add_observation_schema(db):
+    _apply(db, _observation_ddl(), 14)
+    now = db.execute(f"SELECT {_NOW}").fetchone()[0]
+    # History before this migration is summarised, never replayed: the single baseline
+    # event states its own fidelity so no folded transition is ever invented.
+    db.execute(
+        f"{_EVENT} SELECT ?,'baseline','store','baseline',?,?,json_object("
+        "'fidelity','baseline_only',"
+        f"'nodes',json_object({_snapshot(_NODES)}),"
+        f"'edges',json_object({_snapshot(_EDGES)}),"
+        "'telemetry',json((SELECT json_group_array("
+        f"{_TELEMETRY.format(p='')}) FROM run_telemetry)))",
+        (OBSERVATION_CONTRACT, now, now),
     )

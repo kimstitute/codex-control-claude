@@ -97,6 +97,42 @@ class TelemetryMigrationTests(unittest.TestCase):
             )
             self.assertTrue(all(tuple(row) == (None,) * 6 for row in platform_values))
 
+    def test_schema13_to14_adds_observation_ledger_with_single_baseline(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            state, _ = legacy_store(root)
+            migration.migrate(state, offline=True, target=13)
+            old = Store(state)
+            with old.db() as db:
+                before = [tuple(row) for row in db.execute("SELECT rowid,* FROM runs")]
+
+            result = migration.migrate(state, offline=True, target=14)
+            current = Store(state)
+
+            with current.db() as db:
+                after = [tuple(row) for row in db.execute("SELECT rowid,* FROM runs")]
+                events = db.execute("SELECT kind,entity_kind FROM observation_events").fetchall()
+                columns = [row[1] for row in db.execute("PRAGMA table_info(observation_events)")]
+                violations = db.execute("PRAGMA foreign_key_check").fetchall()
+            self.assertEqual(result["schema"], 14)
+            self.assertEqual(after, before)
+            self.assertEqual([tuple(row) for row in events], [("baseline", "store")])
+            self.assertEqual(
+                columns,
+                [
+                    "cursor",
+                    "contract",
+                    "kind",
+                    "entity_kind",
+                    "entity_id",
+                    "recorded_at",
+                    "effective_at",
+                    "payload",
+                ],
+            )
+            self.assertEqual(violations, [])
+            with closing(sqlite3.connect(state / "schema-13-backup.sqlite3")) as backup:
+                self.assertEqual(backup.execute("PRAGMA user_version").fetchone()[0], 13)
+
 
 if __name__ == "__main__":
     unittest.main()

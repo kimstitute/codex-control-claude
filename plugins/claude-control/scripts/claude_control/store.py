@@ -23,6 +23,7 @@ from .schema import (
     add_composition_schema,
     add_execution_schema,
     add_message_schema,
+    add_observation_schema,
     add_platform_schema,
     add_queue_schema,
     add_task_schema,
@@ -172,6 +173,7 @@ class Store:
                 add_telemetry_schema(db)
                 add_application_schema(db)
                 add_platform_schema(db)
+                add_observation_schema(db)
                 db.execute("PRAGMA journal_mode=WAL")
             secure_new_file(directory / "state.sqlite3")
             private_dir(directory / "runs")

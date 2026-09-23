@@ -13,6 +13,7 @@ from .schema import (
     add_composition_schema,
     add_execution_schema,
     add_message_schema,
+    add_observation_schema,
     add_platform_schema,
     add_queue_schema,
     add_task_schema,
@@ -199,6 +200,7 @@ def _step(path, config, db, version, source):
                 10: add_telemetry_schema,
                 11: add_application_schema,
                 12: add_platform_schema,
+                13: add_observation_schema,
             }[source](db)
             if db.execute("PRAGMA foreign_key_check").fetchone():
                 raise ControlError("migration_integrity", "Foreign key validation failed.")
