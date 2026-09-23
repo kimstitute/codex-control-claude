@@ -56,12 +56,18 @@ TUI는 graph, agents, history, provider limits 화면을 제공하며 원장을 
 ### 역할과 출력 계약으로 위임하기
 
 `roles`는 초기화된 저장소 없이도 번들된 역할 지침과 호환 기본 모델을 보여줍니다.
-현재 호스트에 설정한 역할별 모델과 effort는 `models show`로 확인합니다.
+현재 호스트에 설정한 역할별 모델과 effort는 `models show`, 로그인 계정에 제공되는
+모델과 지원 effort는 prompt 없는 `models catalog`로 확인합니다.
 
 ```bash
 claude_control roles
 claude_control models show
+claude_control models catalog
 ```
+
+catalog는 Claude Code 초기화 응답에서 모델 필드만 반환합니다. 이메일, 조직과 기타
+계정 식별자는 출력하거나 저장하지 않습니다. 역할 설정 교체 방법은
+[모델 설정 안내](models.ko.md)를 참고하세요.
 
 | 역할 | 기본 모델 | 제공 텍스트 작업 |
 |---|---|---|

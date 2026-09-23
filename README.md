@@ -57,6 +57,10 @@ WSL2 안의 Bubblewrap으로만 실행됩니다. AppContainer와 비격리 대�
 `low`~`max` effort를 설정합니다. 새 작업은 역할 기본값을 해석해 동결하고,
 실제 응답 모델이 지정한 계열이나 정확한 ID와 다르면 실패합니다.
 
+0.18 버전은 로그인된 Claude Code 계정이 현재 선택할 수 있는 모델과 지원 effort를
+`models catalog`로 조회합니다. 모델 prompt를 보내지 않으며 계정 식별자는 반환하거나
+저장하지 않습니다.
+
 ## 어떤 명령을 선택해야 하나요?
 
 | 원하는 일 | 사용할 기능 | 추가되는 보장 |
@@ -70,6 +74,7 @@ WSL2 안의 Bubblewrap으로만 실행됩니다. AppContainer와 비격리 대�
 | 의존 작업을 순서대로 실행하기 | `task enqueue` + `dispatch` | FIFO 대기열과 정확한 부모 승인 조건 |
 | 다음 턴에 전달할 지시를 저장하기 | `message` | 선택된 개정에만 전달되는 지시와 결과 인수인계 |
 | 현재 에이전트와 계정 한도 관찰하기 | `monitor tui` | 역할·모델·작업 그래프, 실행 토큰, Codex/Claude/Gemini/Cursor 한도 |
+| 계정에서 선택 가능한 모델 확인하기 | `models catalog` | 현재 selector·해석된 모델·지원 effort, 계정 식별자 제거 |
 | 역할별 모델과 effort 바꾸기 | `models show/configure/reset` | 별칭·정확한 버전 ID, 원자적 설정 교체, 기존 작업 동결 |
 
 Codex 앱에서 사용할 때는 설치된 `$claude-control` 스킬을 명시하면 됩니다.
@@ -203,8 +208,9 @@ python3 "$HOME/plugins/claude-control/scripts/claude_control_cli.py" workspace d
 ```
 
 `doctor --auth` 결과에는 계정 식별자가 포함되지 않습니다. 정상 상태는
-`"ready": true`로 표시됩니다. 이 검사는 로그인과 CLI 기능을 확인하지만,
-특정 모델의 실제 사용 가능 여부는 해당 모델을 명시해 호출해야 확인됩니다.
+`"ready": true`로 표시됩니다. 로그인 계정에 제공되는 모델과 effort는 모델 추론을
+호출하지 않는 `models catalog`로 확인합니다. 실제 작업 호출의 모델 ID는 기존처럼
+실행 결과에서 다시 검증합니다.
 
 아래 shell 함수를 정의하면 이후 예시를 그대로 사용할 수 있습니다.
 
@@ -779,10 +785,11 @@ ruff format --check .
 
 ## 현재 범위
 
-0.16 버전은 Linux와 Windows 10/11에서 텍스트 위임, 영속 세션,
+0.18 버전은 Linux와 Windows 10/11에서 텍스트 위임, 영속 세션,
 검토·승인 가능한 task 개정, 유한 대기열과 workflow, 명시적
 계획·편집·검토 composition, 다중 composition dispatch, 라우팅 출처와 평가,
-검증된 scout 재사용, read-only 실시간 TUI를 지원합니다. Linux
+검증된 scout 재사용, 역할별 모델·effort 설정, 계정 model catalog와 read-only
+실시간 TUI를 지원합니다. Linux
 workspace는 네이티브 Bubblewrap, Windows workspace는 WSL2 내부 Bubblewrap을
 사용합니다. Claude의 직접 파일·shell 도구, 임의 기존 세션 인수, 대화 fork,
 macOS, AppContainer, MCP adapter, 서버 간 전달, Codex 자동 깨우기는 현재

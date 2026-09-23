@@ -6,20 +6,46 @@ Codex Control Claude는 각 역할에 사용할 Claude 모델과 노력 수준�
 
 ## 지원하는 모델 표기
 
-`model`에는 다음 두 형식 중 하나를 사용합니다.
+`model`에는 다음 형식 중 하나를 사용합니다.
 
 - 이동 별칭: `sonnet`, `opus`, `haiku`, `fable`
 - 정확한 모델 ID: `claude-fable-5-1`, `claude-opus-5`,
   `claude-sonnet-5`, `claude-haiku-4-5-20251001` 같은 `claude-...` 값
+- Claude Code가 catalog에 표시하는 명시적 1M context selector: `opus[1m]`,
+  `claude-fable-5-1[1m]` 같은 값
 
 별칭은 실행 결과가 같은 모델 계열인지 확인합니다. 정확한 모델 ID는 Claude Code가
 보고한 실제 ID와 바이트 단위로 같아야 성공합니다. 버전을 고정하려면 Claude Code가
 표시하거나 실행 기록에 남긴 정확한 ID를 사용하세요. 앱의 `Opus 5` 같은 표시 이름은
 설정 값이 아닙니다.
 
-모델 목록은 계정과 Claude Code 버전에 따라 달라지므로 컨트롤러가 고정된 버전
+모델 목록은 계정과 Claude Code 버전에 따라 달라지므로 컨트롤러는 고정된 버전
 목록을 유지하거나 모델을 자동 대체하지 않습니다. 사용할 수 없는 모델을 선택하면
 첫 실행이 명시적으로 실패합니다.
+
+## 계정 model catalog 조회
+
+```bash
+claude_control models catalog
+```
+
+이 명령은 Claude Agent SDK의 `initialize` 제어 요청을 사용해 로그인 계정에 현재
+제공되는 selector, 해석된 모델 ID, 표시 이름과 지원 effort를 읽습니다. 모델 prompt,
+도구 또는 MCP 호출은 발생하지 않습니다. Claude Code가 내부적으로 최신 상태를
+조회하거나 cache를 사용할 수 있으므로, 결과는 설치된 Claude Code가 그 시점에
+제공하는 유효 catalog입니다.
+
+초기화 응답에 포함될 수 있는 이메일, 조직, 구독과 PID는 모두 버리고 모델 필드만
+반환합니다. 결과는 저장하지 않으며 역할 설정도 바꾸지 않습니다.
+
+- `selector`: Claude Code에 전달할 선택자
+- `resolved_model`: 현재 해석된 실제 모델
+- `supported_effort_levels`: Claude Code가 광고한 전체 목록
+- `configurable_effort_levels`: 이 controller가 설정할 수 있는 교집합
+- `role_settings_compatible`: selector를 역할 설정에 그대로 쓸 수 있는지 여부
+
+`default`처럼 실행 때마다 해석될 수 있는 선택자는 catalog에 나타나더라도 역할 설정에
+사용할 수 없습니다. 버전 고정과 실행 결과 검증을 유지하기 위한 제한입니다.
 
 ## 노력 수준
 
@@ -34,6 +60,7 @@ provider 기본 동작을 사용하거나 effort를 지원하지 않는 모델�
 
 ```bash
 claude_control models show
+claude_control models catalog
 ```
 
 `source`가 `built_in`이면 기존 호환 기본값을 사용합니다. executor와 researcher는

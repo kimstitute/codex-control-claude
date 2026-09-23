@@ -23,18 +23,23 @@ LEGACY_DEFAULTS = {
     "verifier": {"model": "fable"},
 }
 _EXACT_MODEL_RE = re.compile(r"^claude-[a-z0-9]+(?:-[a-z0-9]+)*$")
+_CONTEXT_SUFFIX = "[1m]"
+
+
+def _base_selector(value):
+    return value[: -len(_CONTEXT_SUFFIX)] if value.endswith(_CONTEXT_SUFFIX) else value
 
 
 def validate_model(value):
     """Accept audited family aliases or a bounded exact Claude model identifier."""
     if not isinstance(value, str):
         raise ValueError("model must be a string")
-    if value in FAMILY_ALIASES or (
-        len(value) <= 128 and _EXACT_MODEL_RE.fullmatch(value)
-    ):
+    base = _base_selector(value)
+    if len(value) <= 128 and (base in FAMILY_ALIASES or _EXACT_MODEL_RE.fullmatch(base)):
         return value
     raise ValueError(
-        "model must be sonnet, opus, haiku, fable, or an exact identifier beginning claude-"
+        "model must be sonnet, opus, haiku, fable, an optional [1m] variant, "
+        "or an exact identifier beginning claude-"
     )
 
 
@@ -43,6 +48,8 @@ def model_matches(selector, actual):
     selector = validate_model(selector)
     if not isinstance(actual, str):
         return False
+    selector = _base_selector(selector)
+    actual = _base_selector(actual)
     prefix = FAMILY_ALIASES.get(selector)
     return actual.startswith(prefix) if prefix is not None else actual == selector
 

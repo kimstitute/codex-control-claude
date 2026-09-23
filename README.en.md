@@ -56,6 +56,10 @@ concurrency limit; and optionally reuses exact, reverified Sonnet scout results.
 Version 0.17 adds host-local per-role model and effort settings, exact version ID
 pinning, and strict verification of the provider-reported model identity.
 
+Version 0.18 adds `models catalog` for the signed-in Claude Code account's
+effective model selectors and effort capabilities. It sends no model prompt and
+returns or stores no account identifiers.
+
 ## Choose the right workflow
 
 | Goal | Use | What it adds |
@@ -69,6 +73,7 @@ pinning, and strict verification of the provider-reported model identity.
 | Schedule dependent tasks | `task enqueue` + `dispatch` | FIFO admission and exact accepted-parent gates |
 | Save instructions for the next turn | `message` | Explicit next-revision delivery and result handoff |
 | Observe agents and account limits | `monitor tui` | Role/model/work graph, run tokens and Codex/Claude/Gemini/Cursor limits |
+| List models available to the account | `models catalog` | Current selectors, resolved models and effort levels with account identity removed |
 | Configure model and effort per role | `models show/configure/reset` | Aliases, exact version IDs, atomic replacement and frozen existing work |
 
 If you use Codex interactively, ask Codex to apply the installed
@@ -202,8 +207,9 @@ python3 "$HOME/plugins/claude-control/scripts/claude_control_cli.py" workspace d
 ```
 
 `doctor --auth` deliberately excludes account identifiers. A healthy result has
-`"ready": true`. It verifies the CLI and login, but a particular model is proven
-available only by an actual explicit model request.
+`"ready": true`. Use the prompt-free `models catalog` command to inspect the
+models and effort levels offered to the signed-in account. Actual work still
+verifies the provider-reported model ID after execution.
 
 For shorter examples, define a shell function:
 
@@ -774,10 +780,11 @@ are opt-in and use your own Claude account; see [docs/testing.md](docs/testing.m
 
 ## Current scope
 
-Version 0.16 supports supplied-text delegation, persistent sessions,
+Version 0.18 supports supplied-text delegation, persistent sessions,
 review-gated task revisions, finite queues/workflows, explicit plan/edit/review
 compositions, multi-composition dispatch, routing provenance and evaluation,
-verified scout reuse, and a read-only live TUI on Linux and Windows 10/11. Linux workspaces
+verified scout reuse, per-role model/effort settings, an account model catalog,
+and a read-only live TUI on Linux and Windows 10/11. Linux workspaces
 use native Bubblewrap; Windows workspaces use Bubblewrap inside WSL2. Native
 Claude file/shell tools, arbitrary existing-session adoption, conversation forks,
 macOS, AppContainer, an MCP adapter, cross-host dispatch and automatic Codex

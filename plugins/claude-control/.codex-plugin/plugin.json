@@ -1,6 +1,6 @@
 {
   "name": "claude-control",
-  "version": "0.17.0",
+  "version": "0.18.0",
   "description": "Manage persistent local Claude sessions from Codex with explicit models and verified results.",
   "author": {
     "name": "kimstitute",
@@ -10,7 +10,7 @@
   "interface": {
     "displayName": "Codex Control Claude",
     "shortDescription": "Manage versioned local Claude sessions by role.",
-    "longDescription": "Manage and monitor local Claude sessions, task revisions, queues, bounded review workflows and explicit plan-edit-review compositions. The read-only TUI shows signed-in Codex, Claude, Gemini and Cursor quota usage without exposing credentials. Workspace policies add controller-mediated edits, isolated named checks and frozen results for Codex approval. Linux and Windows are supported; Windows session control uses a pinned native helper and Windows workspaces use WSL2 with Bubblewrap. Native Claude tools and cross-host dispatch remain disabled.",
+    "longDescription": "Manage and monitor local Claude sessions, task revisions, queues, bounded review workflows and explicit plan-edit-review compositions. Configure versioned models per role and inspect the signed-in Claude account's model catalog without exposing account identity. The read-only TUI shows signed-in Codex, Claude, Gemini and Cursor quota usage without exposing credentials. Workspace policies add controller-mediated edits, isolated named checks and frozen results for Codex approval. Linux and Windows are supported; Windows session control uses a pinned native helper and Windows workspaces use WSL2 with Bubblewrap. Native Claude tools and cross-host dispatch remain disabled.",
     "developerName": "kimstitute",
     "category": "Productivity",
     "capabilities": [

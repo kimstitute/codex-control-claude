@@ -264,10 +264,54 @@ def _run(arguments: list[str]) -> int:
         )
         return 0
 
+    if "--input-format" in arguments and "--model" not in arguments:
+        request = _prompt()
+        if (
+            request.get("type") != "control_request"
+            or request.get("request", {}).get("subtype") != "initialize"
+        ):
+            print("invalid control request", file=sys.stderr)
+            return 2
+        _print_json(
+            {
+                "type": "control_response",
+                "response": {
+                    "subtype": "success",
+                    "request_id": request.get("request_id"),
+                    "response": {
+                        "models": [
+                            {
+                                "value": "claude-fable-test[1m]",
+                                "resolvedModel": "claude-fable-test",
+                                "displayName": "Fable Test",
+                                "description": "Fixture frontier model",
+                                "supportsEffort": True,
+                                "supportedEffortLevels": ["low", "high", "max"],
+                                "supportsAdaptiveThinking": True,
+                                "supportsAutoMode": True,
+                            },
+                            {
+                                "value": "haiku",
+                                "resolvedModel": "claude-haiku-test",
+                                "displayName": "Haiku Test",
+                                "description": "Fixture fast model",
+                            },
+                        ],
+                        "account": {
+                            "email": "private@example.test",
+                            "organization": "Private Fixture Org",
+                        },
+                    },
+                },
+            }
+        )
+        return 0
+
     model = _option(arguments, "--model")
     session_id = _option(arguments, "--session-id") or _option(arguments, "--resume")
+    base_model = str(model).removesuffix("[1m]")
     aliases = {"sonnet", "fable", "opus", "haiku"}
-    if (model not in aliases and not str(model).startswith("claude-")) or session_id is None:
+    if (base_model not in aliases and not base_model.startswith("claude-")) or session_id is None:
         print("fake Claude requires an explicit model and session", file=sys.stderr)
         return 2
     try:
@@ -306,7 +350,9 @@ def _run(arguments: list[str]) -> int:
         print("fixture process failure", file=sys.stderr)
         return 7
 
-    assistant_model = model if model.startswith("claude-") else f"claude-{model}-test"
+    assistant_model = (
+        base_model if base_model.startswith("claude-") else f"claude-{base_model}-test"
+    )
     if behavior == "mismatch_model":
         assistant_model = "claude-fable-test" if model == "sonnet" else "claude-sonnet-test"
     elif behavior == "synthetic":

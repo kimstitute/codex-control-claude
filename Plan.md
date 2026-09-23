@@ -1,6 +1,6 @@
 # OMX 기능 도입 계획
 
-작성: 2026-09-20 · 갱신: 2026-09-23 · 기준: v0.17.0 · 상태: P1–P5 및 역할별 버전 모델·effort 설정 구현
+작성: 2026-09-20 · 갱신: 2026-09-23 · 기준: v0.18.0 · 상태: P1–P5, 역할별 모델 설정 및 계정 model catalog 구현
 
 이 문서는 도입 당시의 설계와 단계별 통과 조건을 보존한다. 단계별 구현 상태는 문서 끝의 진행 기록을 따른다. P5는 기존 Claude 도구 비활성화를 유지하는 컨트롤러 작업 요청 방식으로 구체화했다.
 
@@ -723,3 +723,20 @@ P4의 제한된 검토·수정 반복과 재접속 요약은 아래 기록대로
 검증은 Python 3.14 전체 424개 시험을 통과했고, 1개는 현재 호스트의 Bubblewrap
 namespace 제약으로 생략됐다. 변경 파일 Ruff, plugin-creator 검증, manifest JSON,
 `git diff --check`도 통과했다.
+
+## 26. 계정별 model catalog — v0.18.0
+
+- `models catalog`는 Claude Agent SDK가 사용하는 `initialize` 제어 요청으로 현재
+  로그인 계정의 유효 model selector, 해석된 모델 ID와 effort capability를 읽는다.
+- 조회 프로세스는 system prompt, 도구, slash command, MCP와 setting source를 비우고
+  사용자 prompt를 보내지 않는다. 모델 추론 호출이나 controller 작업 생성도 없다.
+- Claude Code 초기화 응답의 account, 이메일, 조직, PID와 기타 필드는 폐기하고 모델
+  허용 필드만 새 JSON 계약으로 반환한다. catalog는 역할 설정을 자동 변경하지 않는다.
+- Claude Code가 제공하는 `[1m]` selector를 설정에 사용할 수 있게 하되, 실행 결과의
+  모델 계열 또는 정확한 기본 ID 검증과 폴백 금지는 그대로 유지한다.
+
+검증은 Python 3.14 전체 426개 시험을 통과했고, 1개는 현재 호스트의 Bubblewrap
+namespace 제약으로 생략됐다. 변경 파일 Ruff 검사·포맷, plugin/skill validator,
+manifest JSON과 `git diff --check`도 통과했다. 로그인된 실제 Claude Code에 대한
+catalog smoke에서는 prompt·도구 호출 없이 모델 5개를 반환했고 계정 식별자는
+출력되지 않았다.

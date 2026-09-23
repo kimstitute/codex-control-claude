@@ -13,8 +13,10 @@ Choose a bounded timeout and explicit effort for new work:
 These are fields added to a complete assignment, not a complete assignment file.
 Raw sessions accept `start --model sonnet --effort medium --timeout 300` alongside
 usual identity/project/prompt flags. Model selectors may be the `sonnet`, `opus`,
-`haiku`, or `fable` family alias, or an exact `claude-...` model ID. Use `models
-show/configure/reset` for host-local role defaults; see `docs/models.md`.
+`haiku`, or `fable` family alias, an exact `claude-...` model ID, or an explicit
+`[1m]` selector advertised by Claude Code. Use `models catalog` for the signed-in
+account and `models show/configure/reset` for host-local role defaults; see
+`docs/models.md`.
 
 ## Persistent settings
 

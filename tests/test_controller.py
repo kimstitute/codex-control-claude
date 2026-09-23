@@ -44,8 +44,9 @@ class EnvironmentSelectionTests(unittest.TestCase):
             "HTTPS_PROXY": "upper",
             "https_proxy": "lower",
         }
-        with mock.patch.object(runner.os, "name", "nt"), mock.patch.dict(
-            runner.os.environ, source, clear=True
+        with (
+            mock.patch.object(runner.os, "name", "nt"),
+            mock.patch.dict(runner.os.environ, source, clear=True),
         ):
             environment = runner.child_environment()
 
@@ -57,8 +58,9 @@ class EnvironmentSelectionTests(unittest.TestCase):
 
     def test_non_windows_child_environment_preserves_distinct_case(self) -> None:
         source = {"HTTPS_PROXY": "upper", "https_proxy": "lower"}
-        with mock.patch.object(runner.os, "name", "posix"), mock.patch.dict(
-            runner.os.environ, source, clear=True
+        with (
+            mock.patch.object(runner.os, "name", "posix"),
+            mock.patch.dict(runner.os.environ, source, clear=True),
         ):
             environment = runner.child_environment()
 
@@ -240,6 +242,31 @@ class ControllerProcessTests(ControllerTestCase):
                 "subscriptionType": "test",
             },
         )
+
+    def test_model_catalog_uses_sdk_initialize_and_removes_account_identity(self) -> None:
+        report = self.cli("models", "catalog")
+
+        self.assertEqual(report["contract"], "claude-control.model-catalog.v1")
+        self.assertEqual(report["model_count"], 2)
+        self.assertEqual(
+            report["models"][0],
+            {
+                "selector": "claude-fable-test[1m]",
+                "resolved_model": "claude-fable-test",
+                "display_name": "Fable Test",
+                "description": "Fixture frontier model",
+                "role_settings_compatible": True,
+                "supports_effort": True,
+                "supported_effort_levels": ["low", "high", "max"],
+                "configurable_effort_levels": ["low", "high", "max"],
+                "supports_adaptive_thinking": True,
+                "supports_fast_mode": False,
+                "supports_auto_mode": True,
+            },
+        )
+        serialized = json.dumps(report)
+        self.assertNotIn("private@example.test", serialized)
+        self.assertNotIn("Private Fixture Org", serialized)
 
     def test_parallel_sessions_preserve_distinct_nonce_results(self) -> None:
         first = self.start("parallel-a", {"text": "nonce-a"}, "parallel-a")

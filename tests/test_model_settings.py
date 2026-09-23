@@ -32,6 +32,12 @@ class ModelSettingsTests(unittest.TestCase):
         self.assertTrue(model_matches("claude-opus-5", "claude-opus-5"))
         self.assertFalse(model_matches("claude-opus-5", "claude-opus-5-1"))
 
+    def test_one_million_context_selectors_preserve_model_identity_checks(self):
+        self.assertEqual(validate_model("opus[1m]"), "opus[1m]")
+        self.assertEqual(validate_model("claude-fable-5-1[1m]"), "claude-fable-5-1[1m]")
+        self.assertTrue(model_matches("opus[1m]", "claude-opus-5"))
+        self.assertTrue(model_matches("claude-fable-5-1[1m]", "claude-fable-5-1"))
+
     def test_unknown_alias_and_option_like_selector_are_rejected(self):
         for value in ("best", "--model", "Opus 5", "claude-"):
             with self.subTest(value=value), self.assertRaises(ValueError):

@@ -57,12 +57,19 @@ including structured follow-ups. Existing delegate and unstructured commands kee
 ### Delegate with a role and an output contract
 
 `roles` lists the bundled role instructions and compatible built-in models without
-requiring an initialized store:
+requiring an initialized store. `models show` reports host-local role defaults,
+while prompt-free `models catalog` reports models and effort levels offered to the
+signed-in account:
 
 ```bash
 claude_control roles
 claude_control models show
+claude_control models catalog
 ```
+
+The catalog copies only model fields from Claude Code initialization. It neither
+returns nor stores email, organization or other account identifiers. See the
+[model settings guide](models.md) for replacement configuration.
 
 | Role | Default model | Supplied-text task |
 |---|---|---|

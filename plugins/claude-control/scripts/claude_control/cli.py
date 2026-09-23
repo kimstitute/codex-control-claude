@@ -23,6 +23,7 @@ from . import (
 )
 from .assignments import CONTRACT, ROLE_PRESETS, load_assignment, render_assignment, strict_json
 from .execution_settings import EFFORTS
+from .model_catalog import query_catalog
 from .orchestration import observe, report
 from .platform import capability_report, default_state_dir
 from .runner import child_environment, exec_claude, launch_worker, run_worker
@@ -58,6 +59,10 @@ def parser():
     models = commands.add_parser("models", help="Show or replace per-role model defaults.")
     model_commands = models.add_subparsers(dest="models_command", required=True)
     model_commands.add_parser("show")
+    catalog = model_commands.add_parser(
+        "catalog", help="Read the signed-in account's effective Claude model catalog."
+    )
+    catalog.add_argument("--timeout", type=float, default=15)
     configure = model_commands.add_parser("configure")
     configure.add_argument("--file", required=True, type=Path)
     model_commands.add_parser("reset")
@@ -222,6 +227,10 @@ def execute(args):
     if args.command == "models":
         if args.models_command == "show":
             return store.role_defaults_report()
+        if args.models_command == "catalog":
+            if not 1 <= args.timeout <= 60:
+                raise ControlError("invalid_timeout", "Catalog timeout must be 1–60 seconds.")
+            return query_catalog(store.config["claude_bin"], store.path, args.timeout)
         if args.models_command == "reset":
             return store.reset_role_defaults()
         try:

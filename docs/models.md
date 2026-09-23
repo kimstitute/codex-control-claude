@@ -6,13 +6,39 @@ keep the resolved settings frozen at creation time.
 
 ## Model selectors
 
-Use either a moving family alias (`sonnet`, `opus`, `haiku`, or `fable`) or an
-exact `claude-...` model ID. Aliases verify the provider-reported model family.
-Exact IDs require byte-for-byte equality, so use an exact ID when a version must
-be pinned. UI labels such as `Opus 5` are display names, not configuration values.
+Use a moving family alias (`sonnet`, `opus`, `haiku`, or `fable`), an exact
+`claude-...` model ID, or an explicit `[1m]` selector advertised by Claude Code.
+Aliases verify the provider-reported model family. Exact IDs require the same
+base model identity, so use an exact ID when a version must be pinned. UI labels
+such as `Opus 5` are display names, not configuration values.
 
-The controller does not maintain an account-specific version catalog or silently
-fall back. An unavailable selector fails visibly on its first invocation.
+The controller does not maintain a hard-coded version catalog or silently fall
+back. An unavailable selector fails visibly on its first invocation.
+
+## Read the account model catalog
+
+```bash
+claude_control models catalog
+```
+
+This command uses the Claude Agent SDK `initialize` control exchange to read the
+selectors, resolved model IDs, display names and effort levels currently offered
+to the signed-in account. It sends no model prompt and enables no tools or MCP
+servers. Claude Code may refresh or use its own internal cache, so the result is
+the effective catalog reported by the installed CLI at query time.
+
+The controller discards account, email, organization, subscription, PID and all
+other initialization fields. It returns only an allowlisted model record and
+does not persist the result or change role settings.
+
+- `selector`: value accepted by Claude Code
+- `resolved_model`: model currently selected by that value
+- `supported_effort_levels`: every effort level advertised by Claude Code
+- `configurable_effort_levels`: the subset accepted by this controller
+- `role_settings_compatible`: whether the selector can be copied into role settings
+
+A moving `default` entry can appear in the catalog but remains incompatible with
+role settings because it cannot preserve the controller's model identity check.
 
 Effort accepts `low`, `medium`, `high`, `xhigh`, or `max`. Omit the key to use
 provider behavior or for a model that does not support effort. Unsupported
@@ -22,6 +48,7 @@ model/effort combinations fail without dropping or changing the flag.
 
 ```bash
 claude_control models show
+claude_control models catalog
 claude_control models configure --file /absolute/path/to/role-models.json
 claude_control models reset
 ```

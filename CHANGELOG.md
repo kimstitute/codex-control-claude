@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.18.0 — 2026-09-23
+
+- Add `models catalog`, which uses Claude Code's Agent SDK initialization
+  exchange to read the signed-in account's effective model selectors, resolved
+  model IDs and advertised effort capabilities without sending a model prompt.
+- Reduce the provider response to an explicit model-field allowlist. Account,
+  email, organization and credential fields are neither returned nor persisted.
+- Accept Claude Code's explicit `[1m]` selector suffix while preserving exact or
+  family model identity checks and the existing no-fallback rule.
+- Update Korean and English model documentation and current-scope summaries for
+  the v0.18 catalog workflow.
+
 ## 0.17.0 — 2026-09-23
 
 - Add atomic host-local model and effort defaults for executor, researcher,
