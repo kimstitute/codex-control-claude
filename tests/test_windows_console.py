@@ -18,6 +18,8 @@ class WindowsConsoleTests(unittest.TestCase):
             "\t": windows_console.KEY_TAB,
             "r": windows_console.KEY_REFRESH,
             "a": windows_console.KEY_ACTIVE,
+            " ": windows_console.KEY_PLAY,
+            "p": windows_console.KEY_PLAY,
             "j": windows_console.ARROW_DOWN,
             "k": windows_console.ARROW_UP,
             "[": windows_console.STEP_BACK,

@@ -2,7 +2,7 @@
 
 import sys
 
-from . import monitor, observation, observation_otel, provider_usage
+from . import monitor, observation, observation_agui, observation_otel, provider_usage
 from .store import ControlError, Store
 
 
@@ -32,10 +32,52 @@ def register(commands):
         action="store_true",
         help="Wrap the standard document with local profile and omission metadata.",
     )
+    agui = sub.add_parser("agui", help="Convert observation history into AG-UI 1.0 events.")
+    agui_sub = agui.add_subparsers(dest="agui_command", required=True)
+    agui_snapshot = agui_sub.add_parser("snapshot", help="Return one AG-UI STATE_SNAPSHOT event.")
+    agui_snapshot.add_argument(
+        "--through", type=int, help="Inclusive replay cursor; defaults to latest."
+    )
+    agui_events = agui_sub.add_parser("events", help="Convert one ledger page into AG-UI events.")
+    agui_events.add_argument("--after", type=int, default=0, help="Exclusive event cursor.")
+    agui_events.add_argument("--limit", type=int, default=100)
+    agui_events.add_argument("--through", type=int, help="Inclusive high-water cursor.")
     tui = sub.add_parser("tui", help="Open the live terminal dashboard.")
     tui.add_argument("--history", type=int, default=100)
     tui.add_argument("--refresh-seconds", type=float, default=0.5)
     tui.add_argument("--limits-refresh-seconds", type=float, default=60.0)
+
+
+def _agui(store, args):
+    """Convert one bounded observation read into standard AG-UI objects."""
+    if args.agui_command == "snapshot":
+        replayed = observation.replay(store, through=args.through)
+        try:
+            return observation_agui.state_snapshot(replayed)
+        except ValueError as exc:
+            raise ControlError("invalid_event", str(exc)) from exc
+    if args.agui_command == "events":
+        page = observation.events(
+            store,
+            after=args.after,
+            limit=args.limit,
+            through=args.through,
+        )
+        try:
+            converted = observation_agui.events(page["events"])
+        except ValueError as exc:
+            raise ControlError("invalid_event", str(exc)) from exc
+        # The AG-UI objects stay standard; only this envelope carries local paging.
+        return {
+            "profile": observation_agui.PROFILE,
+            "after": page["after"],
+            "limit": page["limit"],
+            "through": page["through"],
+            "next_cursor": page["next_cursor"],
+            "has_more": page["has_more"],
+            "events": converted,
+        }
+    raise ControlError("invalid_command", "Unsupported monitor agui command.")
 
 
 def execute(args):
@@ -63,6 +105,8 @@ def execute(args):
         snapshot = observation.replay(store, through=args.through)
         bundle = observation_otel.build_export(snapshot)
         return bundle if args.metadata else bundle["document"]
+    if args.monitor_command == "agui":
+        return _agui(store, args)
     if args.monitor_command == "tui":
         if not sys.stdin.isatty() or not sys.stdout.isatty():
             raise ControlError("monitor_terminal", "Monitor TUI needs an interactive terminal.")

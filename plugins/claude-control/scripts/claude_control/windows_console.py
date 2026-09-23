@@ -23,6 +23,7 @@ KEY_QUIT = "quit"
 KEY_TAB = "tab"
 KEY_REFRESH = "refresh"
 KEY_ACTIVE = "active"
+KEY_PLAY = "play"
 
 _EXTENDED_KEYS = {
     "H": ARROW_UP,
@@ -89,6 +90,8 @@ def decode_key(sequence):
         return KEY_REFRESH
     if first in ("a", "A"):
         return KEY_ACTIVE
+    if first in (" ", "p", "P"):
+        return KEY_PLAY
     if first in ("j", "J"):
         return ARROW_DOWN
     if first in ("k", "K"):

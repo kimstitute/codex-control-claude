@@ -678,7 +678,10 @@ def _replay_lines(replay):
         return ["Replay unavailable: " + replay["error"]], "observation replay unavailable"
     cursor, latest = replay["cursor"], replay["latest_cursor"]
     event = replay.get("event") or {}
-    status = "LIVE" if replay["at_latest"] else "PAUSED"
+    if replay.get("playing"):
+        status = "PLAYING"
+    else:
+        status = "LIVE" if replay.get("live", replay["at_latest"]) else "PAUSED"
     lines = [
         f"CURSOR {cursor}/{latest}  {status}  fidelity {replay['fidelity']}",
         observation_view.timeline_bar(cursor, latest, 52),
@@ -734,7 +737,7 @@ def _draw(window, data, view, offset, active_only, replay):
         window,
         2,
         0,
-        "q quit · 1-5 view · ↑↓ scroll · ←→ cursor · Home/End · [/] ±10 · r refresh",
+        "q quit · 1-5 view · ↑↓ scroll · ←→ cursor · Space play/pause · Home/End · [/] ±10",
         width,
     )
     if height < 8 or width < 50:
@@ -831,9 +834,13 @@ def run_tui(store, *, refresh_seconds=0.5, history=100, limits_refresh_seconds=6
         data = _attach_provider_usage(snapshot(store, history=history), poller.get())
         replay = _load_replay(store)
         replay_live = True
+        replay_play = False
         while True:
             data = _attach_provider_usage(data, poller.get())
-            offsets[view] = _draw(window, data, view, offsets[view], active_only, replay)
+            replay_display = {**replay, "live": replay_live, "playing": replay_play}
+            offsets[view] = _draw(
+                window, data, view, offsets[view], active_only, replay_display
+            )
             key = window.getch()
             if key in (ord("q"), ord("Q")):
                 return
@@ -854,26 +861,45 @@ def run_tui(store, *, refresh_seconds=0.5, history=100, limits_refresh_seconds=6
                 offsets[view] = 0
             elif view == 4 and key in (curses.KEY_LEFT, ord("[")):
                 step = 10 if key == ord("[") else 1
+                replay_play = False
                 replay_live = False
                 replay = _load_replay(store, max(1, replay["cursor"] - step))
                 offsets[view] = 0
             elif view == 4 and key in (curses.KEY_RIGHT, ord("]")):
                 step = 10 if key == ord("]") else 1
+                replay_play = False
                 target = min(replay["latest_cursor"], replay["cursor"] + step)
                 replay_live = target >= replay["latest_cursor"]
                 replay = _load_replay(store, None if replay_live else target)
                 offsets[view] = 0
             elif view == 4 and key == curses.KEY_HOME:
+                replay_play = False
                 replay_live = False
                 replay = _load_replay(store, 1)
                 offsets[view] = 0
             elif view == 4 and key == curses.KEY_END:
+                replay_play = False
                 replay_live = True
                 replay = _load_replay(store)
                 offsets[view] = 0
+            elif view == 4 and key in (ord(" "), ord("p"), ord("P")):
+                if replay_play:
+                    replay_play = False
+                elif replay["cursor"] < replay["latest_cursor"]:
+                    replay_live = False
+                    replay_play = True
+                else:
+                    replay_live = False
             if key in (-1, ord("r"), ord("R")):
                 data = snapshot(store, history=history)
-                if replay_live or key in (ord("r"), ord("R")):
+                if replay_play and key == -1:
+                    latest = _load_replay(store)
+                    target = min(latest["latest_cursor"], replay["cursor"] + 1)
+                    replay = _load_replay(store, target)
+                    if target >= latest["latest_cursor"]:
+                        replay_play = False
+                        replay_live = False
+                elif replay_live or key in (ord("r"), ord("R")):
                     replay = _load_replay(store, None if replay_live else replay["cursor"])
                 if key in (ord("r"), ord("R")):
                     poller.refresh()
@@ -899,7 +925,10 @@ def _windows_header(data, view, mode, offset, visible, total):
     tab_line = "   ".join(
         f"[{tab}]" if index == view else tab for index, tab in enumerate(tabs)
     )
-    help_line = "q quit · 1-5 view · up/down scroll · left/right cursor · Home/End · [/] ±10"
+    help_line = (
+        "q quit · 1-5 view · up/down scroll · left/right cursor · "
+        "Space play/pause · Home/End · [/] ±10"
+    )
     last = min(total, offset + visible)
     status = f"{mode} · rows {offset + 1}-{last}/{total}"
     return [title, tab_line, help_line, status]
@@ -919,10 +948,12 @@ def _run_windows_tui(store, *, refresh_seconds, history, limits_refresh_seconds)
     data = _attach_provider_usage(snapshot(store, history=history), poller.get())
     replay = _load_replay(store)
     replay_live = True
+    replay_play = False
     try:
         while True:
             columns, rows = windows_console.terminal_size()
-            lines, mode = _view_lines(data, view, active_only, replay)
+            replay_display = {**replay, "live": replay_live, "playing": replay_play}
+            lines, mode = _view_lines(data, view, active_only, replay_display)
             visible = max(1, rows - 4)
             offset = max(0, min(offsets[view], max(0, len(lines) - visible)))
             offsets[view] = offset
@@ -956,6 +987,7 @@ def _run_windows_tui(store, *, refresh_seconds, history, limits_refresh_seconds)
                 offsets[view] = 0
             elif view == 4 and key in (windows_console.ARROW_LEFT, windows_console.STEP_BACK):
                 step = 10 if key == windows_console.STEP_BACK else 1
+                replay_play = False
                 replay_live = False
                 replay = _load_replay(store, max(1, replay["cursor"] - step))
                 offsets[view] = 0
@@ -964,21 +996,39 @@ def _run_windows_tui(store, *, refresh_seconds, history, limits_refresh_seconds)
                 windows_console.STEP_FORWARD,
             ):
                 step = 10 if key == windows_console.STEP_FORWARD else 1
+                replay_play = False
                 target = min(replay["latest_cursor"], replay["cursor"] + step)
                 replay_live = target >= replay["latest_cursor"]
                 replay = _load_replay(store, None if replay_live else target)
                 offsets[view] = 0
             elif view == 4 and key == windows_console.HOME:
+                replay_play = False
                 replay_live = False
                 replay = _load_replay(store, 1)
                 offsets[view] = 0
             elif view == 4 and key == windows_console.END:
+                replay_play = False
                 replay_live = True
                 replay = _load_replay(store)
                 offsets[view] = 0
+            elif view == 4 and key == windows_console.KEY_PLAY:
+                if replay_play:
+                    replay_play = False
+                elif replay["cursor"] < replay["latest_cursor"]:
+                    replay_live = False
+                    replay_play = True
+                else:
+                    replay_live = False
             if key in (None, windows_console.KEY_REFRESH):
                 data = snapshot(store, history=history)
-                if replay_live or key == windows_console.KEY_REFRESH:
+                if replay_play and key is None:
+                    latest = _load_replay(store)
+                    target = min(latest["latest_cursor"], replay["cursor"] + 1)
+                    replay = _load_replay(store, target)
+                    if target >= latest["latest_cursor"]:
+                        replay_play = False
+                        replay_live = False
+                elif replay_live or key == windows_console.KEY_REFRESH:
                     replay = _load_replay(store, None if replay_live else replay["cursor"])
                 if key == windows_console.KEY_REFRESH:
                     poller.refresh()
