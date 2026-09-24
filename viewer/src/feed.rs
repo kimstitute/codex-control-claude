@@ -16,6 +16,10 @@ pub struct FeedConfig {
     pub after: u64,
     pub follow: bool,
     pub poll_seconds: f64,
+    pub local_detail: bool,
+    pub source: Option<String>,
+    pub claude_root: Option<PathBuf>,
+    pub codex_root: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug)]
@@ -51,8 +55,22 @@ impl Feed {
         if let Some(state_dir) = &config.state_dir {
             command.arg("--state-dir").arg(state_dir);
         }
-        command
-            .args([
+        if config.local_detail {
+            command.args(["monitor", "local", "stream"]);
+            if let Some(source) = &config.source {
+                command.arg("--source").arg(source);
+            }
+            if let Some(root) = &config.claude_root {
+                command.arg("--claude-root").arg(root);
+            }
+            if let Some(root) = &config.codex_root {
+                command.arg("--codex-root").arg(root);
+            }
+            command
+                .arg("--poll-seconds")
+                .arg(config.poll_seconds.to_string());
+        } else {
+            command.args([
                 "monitor",
                 "agui",
                 "stream",
@@ -62,7 +80,9 @@ impl Feed {
                 "256",
                 "--poll-seconds",
                 &config.poll_seconds.to_string(),
-            ])
+            ]);
+        }
+        command
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -71,8 +91,9 @@ impl Feed {
         }
         let mut child = command.spawn().with_context(|| {
             format!(
-                "could not start {} monitor agui stream",
-                config.cli.display()
+                "could not start {} monitor {} stream",
+                config.cli.display(),
+                if config.local_detail { "local" } else { "agui" }
             )
         })?;
         let stdout = child

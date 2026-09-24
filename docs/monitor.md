@@ -15,6 +15,27 @@ claude_control monitor viewer --tree
 tmux new -s claude-control-viewer 'claude_control monitor viewer'
 ```
 
+The default remains the content-free Safe Observer. Opt in explicitly to read
+transcripts stored on this host.
+
+```bash
+claude_control monitor viewer --local-detail       # keyboard/mouse picker
+claude_control monitor viewer --detail-current     # current directory
+claude_control monitor viewer --detail-dir /absolute/project
+claude_control monitor viewer --detail-file /absolute/transcript.jsonl
+claude_control monitor viewer --detail-id <provider-session-id>
+claude_control monitor local sessions --source all
+claude_control monitor viewer --detail-source '<selector>'
+```
+
+Local Detail scans bounded JSONL data only from managed run artifacts and the
+default `~/.claude/projects` and `~/.codex/sessions` roots. Override them with
+`--claude-root` and `--codex-root`. `Esc` closes the picker and continues with
+the Safe Observer without opening transcript content.
+`monitor local stream` writes prompt and response bodies directly to JSONL
+stdout. Treat that stream as sensitive local output, and redirect or pipe it
+only when explicitly intended.
+
 The viewer renders controller, composition, workflow, workspace, task and Claude
 session cards with directional relationships. Session cards aggregate role,
 model, current state, run counts and final output tokens. Runs do not become an
@@ -41,12 +62,17 @@ when an explicitly monochrome screen is required.
 | Click previous/next `ERA` | Jump to the previous or next run-start era |
 | Click the speed chip | Cycle 0.25× → 0.5× → 1× → 2× → 4× → 8× |
 | Click the `GAP` chip | Toggle uniform and timestamp-compressed playback |
+| Click the `M:*` chip | Rotate all, prompt, tool, failure and agent marker filters |
+| Click an Inspector tab | Open Overview, Provenance, Tools or Activity |
 | Right-click | Close the inspector |
 
 | Key | Action |
 |---|---|
 | `[`, `]` | Seek by one historical event |
 | `{`, `}` | Jump to the previous or next run-start era |
+| `p`, `P` | Jump to the previous or next prompt era |
+| `/`, `n`, `N` | Enter search, move to the next match, or move to the previous match |
+| `m`, `v` | Rotate the marker filter or Inspector tab |
 | `,`, `.` | Decrease or increase playback speed from 0.25× to 8× |
 | `z` | Toggle uniform (`GAP OFF`) and timestamp-compressed (`GAP ON`) playback |
 | `Home`, `End` | Jump to the baseline or latest live cursor |
@@ -74,6 +100,17 @@ The inspector and operation projection are content-free. They exclude project
 paths, command argv, prompts, reasoning, request/response bodies, results, hashes
 and error text. Operation kind is normalized to the closed set `read`, `write`,
 `patch`, `named_check` or `unknown`.
+
+When enabled, Local Detail divides the Inspector into **Overview**,
+**Provenance**, **Tools** and **Activity**. These show safe run/operation data,
+bounded prompt and response/reasoning, tool state/duration/summary, and timestamped
+prompt/tool/spawn/failure events. `partial / bounded` means malformed rows were
+skipped or byte/record bounds omitted older input. The content is composed in
+memory and never written to the SQLite observation ledger, AG-UI, OTLP,
+`--inspect` or `--tree`.
+Parent/child agents, prompts, responses and tool states replay at their recorded
+times. A tool that finishes after the selected cursor remains `pending`, and
+transcript silence alone is never treated as agent completion.
 
 Headless `--inspect` preserves its v1 contract and prints fidelity, cursor, node,
 edge and agent counts plus final output-token total as JSON. Schema-15 operation

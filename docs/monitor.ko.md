@@ -16,6 +16,26 @@ claude_control monitor viewer --tree
 tmux new -s claude-control-viewer 'claude_control monitor viewer'
 ```
 
+기본 viewer는 계속 content-free Safe Observer입니다. 이 호스트의 로컬 전사까지
+열람하려면 명시적으로 Local Detail을 켭니다.
+
+```bash
+claude_control monitor viewer --local-detail       # keyboard/mouse picker
+claude_control monitor viewer --detail-current     # 현재 directory
+claude_control monitor viewer --detail-dir /absolute/project
+claude_control monitor viewer --detail-file /absolute/transcript.jsonl
+claude_control monitor viewer --detail-id <provider-session-id>
+claude_control monitor local sessions --source all
+claude_control monitor viewer --detail-source '<selector>'
+```
+
+Local Detail은 관리 run artifact와 기본 `~/.claude/projects`, `~/.codex/sessions`
+아래 JSONL만 bounded scan합니다. `--claude-root`와 `--codex-root`로 대체 root를
+지정할 수 있습니다. picker를 `Esc`로 닫으면 전사를 열지 않고 Safe Observer로 진행합니다.
+`monitor local stream`은 prompt와 응답을 JSONL stdout으로 그대로 내보내므로 민감한
+로컬 출력으로 취급해야 합니다. 파일로 저장하거나 다른 프로세스에 전달할 때는 사용자가
+명시적으로 선택해야 합니다.
+
 viewer는 controller, composition, workflow, workspace, task와 Claude session을
 카드와 방향 관계로 표시합니다. session 카드에는 역할, 실제/요청 모델, 현재 상태,
 실행 수와 확정 output token을 집계합니다. run마다 카드를 무한히 늘리지 않으므로
@@ -41,12 +61,17 @@ Codex/Claude 프로세스가 기계 출력용 `NO_COLOR=1`을 설정해도 대�
 | `ERA` 이전·다음 클릭 | 이전·다음 run 시작 구간으로 이동 |
 | 속도 chip 클릭 | 0.25× → 0.5× → 1× → 2× → 4× → 8× 순환 |
 | `GAP` chip 클릭 | 고정 간격과 기록 시각 기반 압축 재생 전환 |
+| `M:*` chip 클릭 | all, prompt, tool, failure, agent marker filter 순환 |
+| Inspector tab 클릭 | Overview, Provenance, Tools, Activity 전환 |
 | 우클릭 | inspector 닫기 |
 
 | 키 | 동작 |
 |---|---|
 | `[`, `]` | 과거 이벤트를 1개 이동 |
 | `{`, `}` | 이전·다음 run 시작 구간으로 이동 |
+| `p`, `P` | 이전·다음 prompt 구간으로 이동 |
+| `/`, `n`, `N` | 검색 입력, 다음 결과, 이전 결과 |
+| `m`, `v` | marker filter와 Inspector tab 순환 |
 | `,`, `.` | 재생 속도를 0.25×–8× 범위에서 낮추거나 높이기 |
 | `z` | 고정 간격(`GAP OFF`)과 시각 간격 압축(`GAP ON`) 전환 |
 | `Home`, `End` | baseline 또는 최신 live cursor로 이동 |
@@ -74,6 +99,16 @@ Inspector와 operation projection은 content-free입니다. 프로젝트 경로,
 prompt, reasoning, request/response body, 결과, hash와 error text를 표시하거나 AG-UI
 관측 이벤트에 추가하지 않습니다. operation kind도 `read`, `write`, `patch`,
 `named_check`, `unknown`의 닫힌 집합으로 정규화합니다.
+
+Local Detail을 켠 경우 Inspector는 **Overview**, **Provenance**, **Tools**,
+**Activity** 탭으로 나뉩니다. 각각 safe run/operation 정보, bounded prompt와
+response/reasoning, tool 상태·duration·요약, prompt/tool/spawn/failure 시각 이력을
+보여줍니다. `partial / bounded`는 malformed row 또는 byte/record 한도로 과거 일부가
+생략됐다는 뜻입니다. 이 내용은 메모리에서만 합성하며 SQLite observation 원장,
+AG-UI, OTLP, `--inspect`, `--tree`에 기록하지 않습니다.
+부모·자식 agent, prompt/응답, tool 상태는 기록 시각에 맞춰 재생됩니다. 선택한
+cursor 뒤에 끝난 tool은 `pending`으로 보이며, transcript 침묵만으로 agent 완료를
+추정하지 않습니다.
 
 headless `--inspect`는 기존 v1 contract를 유지하며 fidelity, cursor,
 node/edge/agent 수와 확정 output token 합계를 JSON으로 출력합니다. schema 15에서

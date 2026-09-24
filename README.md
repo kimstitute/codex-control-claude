@@ -85,6 +85,12 @@ scrub, minimap 이동, PLAY/LIVE transport를 터미널에서 직접 제어할 �
 포함한 결정적 전체 트리를 출력합니다. 재생은 0.25×–8× 속도, 실제 시간 간격 압축,
 run 시작 구간 이동을 키보드와 마우스로 제어할 수 있습니다.
 
+0.24 버전은 기본 content-free 관측과 분리된 opt-in Local Detail을 추가합니다.
+키보드·마우스 session picker에서 관리 run, Claude Code 또는 Codex 전사를 고르면
+Provenance·Tools·Activity 탭으로 prompt, response/reasoning, tool timing과 semantic
+event를 로컬에서만 볼 수 있습니다. `/` 검색, `n/N` 결과 이동, `p/P` prompt 이동과
+marker filter도 지원합니다. AG-UI, OTLP, `--inspect`, `--tree`에는 이 내용이 들어가지 않습니다.
+
 ## 어떤 명령을 선택해야 하나요?
 
 | 원하는 일 | 사용할 기능 | 추가되는 보장 |
@@ -98,6 +104,7 @@ run 시작 구간 이동을 키보드와 마우스로 제어할 수 있습니다
 | 의존 작업을 순서대로 실행하기 | `task enqueue` + `dispatch` | FIFO 대기열과 정확한 부모 승인 조건 |
 | 다음 턴에 전달할 지시를 저장하기 | `message` | 선택된 개정에만 전달되는 지시와 결과 인수인계 |
 | multi-agent graph와 과거 실행 관찰하기 | `monitor viewer` | focus/recent/all graph, minimap, mouse camera, activity replay, agent별 실행 토큰 |
+| 로컬 Claude/Codex 전사까지 상세 관찰하기 | `monitor viewer --local-detail` | mouse session picker, provenance/tool/activity 탭, 검색·prompt 이동; export와 분리 |
 | 계정 한도와 portable fallback 보기 | `monitor tui` / `monitor limits` | Codex·Claude·Gemini·Cursor quota와 Python-only 화면 |
 | 계정에서 선택 가능한 모델 확인하기 | `models catalog` | 현재 selector·해석된 모델·지원 effort, 계정 식별자 제거 |
 | 역할별 모델과 effort 바꾸기 | `models show/configure/reset` | 별칭·정확한 버전 ID, 원자적 설정 교체, 기존 작업 동결 |
@@ -108,6 +115,8 @@ Codex 앱에서 사용할 때는 설치된 `$claude-control` 스킬을 명시하
 ```bash
 claude_control monitor viewer
 claude_control monitor viewer --tree
+claude_control monitor viewer --local-detail
+claude_control monitor viewer --detail-current
 claude_control monitor tui
 claude_control monitor limits
 claude_control monitor agui stream --after 0 --limit 100

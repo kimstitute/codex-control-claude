@@ -9,7 +9,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import monitor, observation, observation_agui, observation_otel, provider_usage
+from . import local_detail, monitor, observation, observation_agui, observation_otel, provider_usage
 from .store import ControlError, Store
 
 
@@ -57,6 +57,20 @@ def register(commands):
     agui_stream.add_argument("--through", type=int, help="Inclusive high-water cursor.")
     agui_stream.add_argument("--follow", action="store_true", help="Wait for appended events.")
     agui_stream.add_argument("--poll-seconds", type=float, default=0.25)
+    local = sub.add_parser("local", help="Inspect explicit local transcript/session roots.")
+    local_sub = local.add_subparsers(dest="local_command", required=True)
+    sessions = local_sub.add_parser("sessions")
+    stream = local_sub.add_parser("stream")
+    for item in (sessions, stream):
+        item.add_argument(
+            "--source",
+            default="all" if item is sessions else "managed",
+            help="Provider or exact selector returned by `monitor local sessions`.",
+        )
+        item.add_argument("--claude-root", type=Path)
+        item.add_argument("--codex-root", type=Path)
+    stream.add_argument("--follow", action="store_true")
+    stream.add_argument("--poll-seconds", type=float, default=0.25)
     tui = sub.add_parser("tui", help="Open the live terminal dashboard.")
     tui.add_argument("--history", type=int, default=100)
     tui.add_argument("--refresh-seconds", type=float, default=0.5)
@@ -67,6 +81,19 @@ def register(commands):
     viewer.add_argument("--no-follow", action="store_true")
     viewer.add_argument("--no-color", action="store_true", help="Disable the semantic palette.")
     viewer.add_argument("--stream-file", type=Path, help="Open a saved AG-UI JSONL stream.")
+    viewer.add_argument(
+        "--local-detail",
+        action="store_true",
+        help="Open a local-only session picker with transcript detail.",
+    )
+    viewer.add_argument("--claude-root", type=Path, help="Override the Claude transcript root.")
+    viewer.add_argument("--codex-root", type=Path, help="Override the Codex transcript root.")
+    selectors = viewer.add_mutually_exclusive_group()
+    selectors.add_argument("--detail-source", help="Open an exact local session selector.")
+    selectors.add_argument("--detail-current", action="store_true")
+    selectors.add_argument("--detail-dir", type=Path)
+    selectors.add_argument("--detail-file", type=Path)
+    selectors.add_argument("--detail-id")
     headless = viewer.add_mutually_exclusive_group()
     headless.add_argument("--inspect", action="store_true", help="Print a headless summary.")
     headless.add_argument("--tree", action="store_true", help="Print the complete headless tree.")
@@ -207,6 +234,22 @@ def _viewer_command(args):
         )
         if args.no_follow:
             command.append("--no-follow")
+        if getattr(args, "local_detail", False):
+            command.append("--local-detail")
+        if getattr(args, "detail_source", None):
+            command.extend(("--detail-source", args.detail_source))
+        if getattr(args, "claude_root", None):
+            command.extend(("--claude-root", str(args.claude_root.expanduser().resolve())))
+        if getattr(args, "codex_root", None):
+            command.extend(("--codex-root", str(args.codex_root.expanduser().resolve())))
+        if getattr(args, "detail_current", False):
+            command.append("--detail-current")
+        if getattr(args, "detail_dir", None):
+            command.extend(("--detail-dir", str(args.detail_dir.expanduser().resolve())))
+        if getattr(args, "detail_file", None):
+            command.extend(("--detail-file", str(args.detail_file.expanduser().resolve())))
+        if getattr(args, "detail_id", None):
+            command.extend(("--detail-id", args.detail_id))
     if getattr(args, "no_color", False):
         command.append("--no-color")
     return command
@@ -255,6 +298,17 @@ def execute(args):
         if args.agui_command == "stream":
             return _agui_stream(store, args)
         return _agui(store, args)
+    if args.monitor_command == "local":
+        if args.local_command == "sessions":
+            return local_detail.catalog(store=store, source=args.source, claude_root=args.claude_root, codex_root=args.codex_root)
+        if not math.isfinite(args.poll_seconds) or not 0.05 <= args.poll_seconds <= 10:
+            raise ControlError("invalid_limit", "Local detail poll interval must be finite, 0.05–10 seconds.")
+        try:
+            for event in local_detail.stream(store, source=args.source, claude_root=args.claude_root, codex_root=args.codex_root, follow=args.follow, poll_seconds=args.poll_seconds):
+                print(json.dumps(event, sort_keys=True, separators=(",", ":")), flush=True)
+        except BrokenPipeError:
+            return None
+        return None
     if args.monitor_command == "tui":
         if not sys.stdin.isatty() or not sys.stdout.isatty():
             raise ControlError("monitor_terminal", "Monitor TUI needs an interactive terminal.")

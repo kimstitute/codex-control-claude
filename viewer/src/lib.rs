@@ -4,5 +4,6 @@ pub mod graph;
 pub mod headless;
 pub mod interaction;
 pub mod model;
+pub mod picker;
 pub mod theme;
 pub mod ui;

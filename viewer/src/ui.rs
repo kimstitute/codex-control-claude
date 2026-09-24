@@ -27,7 +27,7 @@ use crate::feed::{Feed, FeedEvent};
 use crate::flow_view::{ObserverFlow, compact_number, new_flow, relayout, sync as sync_flow};
 use crate::graph::{Card, Link, Point, Scene, project_with_positions};
 use crate::interaction::{ScreenPoint, point_in_rect, timeline_column_to_index};
-use crate::model::{GraphState, Timeline};
+use crate::model::{DetailStore, GraphState, Timeline};
 use crate::theme::{
     BORDER, CANVAS, GOLD, GREEN, GRID, MUTED, RED, SUBTLE, SURFACE, SURFACE_RAISED, TEXT,
     state_color,
@@ -93,6 +93,81 @@ enum GapMode {
     Compressed,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum InspectorTab {
+    #[default]
+    Overview,
+    Provenance,
+    Tools,
+    Activity,
+}
+
+impl InspectorTab {
+    const ALL: [Self; 4] = [
+        Self::Overview,
+        Self::Provenance,
+        Self::Tools,
+        Self::Activity,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Overview => "OVERVIEW",
+            Self::Provenance => "PROVENANCE",
+            Self::Tools => "TOOLS",
+            Self::Activity => "ACTIVITY",
+        }
+    }
+
+    fn next(self) -> Self {
+        let index = Self::ALL.iter().position(|item| *item == self).unwrap_or(0);
+        Self::ALL[(index + 1) % Self::ALL.len()]
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum MarkerFilter {
+    #[default]
+    All,
+    Prompts,
+    Tools,
+    Failures,
+    Agents,
+}
+
+impl MarkerFilter {
+    fn label(self) -> &'static str {
+        match self {
+            Self::All => "ALL",
+            Self::Prompts => "PROMPTS",
+            Self::Tools => "TOOLS",
+            Self::Failures => "FAILURES",
+            Self::Agents => "AGENTS",
+        }
+    }
+
+    fn next(self) -> Self {
+        match self {
+            Self::All => Self::Prompts,
+            Self::Prompts => Self::Tools,
+            Self::Tools => Self::Failures,
+            Self::Failures => Self::Agents,
+            Self::Agents => Self::All,
+        }
+    }
+
+    fn accepts(self, summary: &str) -> bool {
+        let value = summary.to_lowercase();
+        match self {
+            Self::All => true,
+            Self::Prompts => value.contains("prompt"),
+            Self::Tools => value.contains("tool"),
+            Self::Failures => value.contains("fail") || value.contains("error"),
+            Self::Agents => value.contains("spawn") || value.contains("agent"),
+        }
+    }
+}
+
 impl GapMode {
     fn label(self) -> &'static str {
         match self {
@@ -132,6 +207,8 @@ struct UiRegions {
     gap: Option<Rect>,
     previous_era: Option<Rect>,
     next_era: Option<Rect>,
+    marker_filter: Option<Rect>,
+    inspector_tabs: Vec<(Rect, InspectorTab)>,
 }
 
 pub struct App {
@@ -163,10 +240,15 @@ pub struct App {
     inspector_viewport_height: u16,
     inspector_follow_latest: bool,
     inspector_selected: Option<String>,
+    detail: DetailStore,
+    inspector_tab: InspectorTab,
+    marker_filter: MarkerFilter,
+    search_query: String,
+    search_editing: bool,
 }
 
 impl App {
-    pub fn new(timeline: Timeline, feed: Option<Feed>) -> Result<Self> {
+    pub fn new(timeline: Timeline, feed: Option<Feed>, detail: DetailStore) -> Result<Self> {
         let index = timeline.latest_index();
         let state = timeline.state_at(index)?;
         let mut positions = BTreeMap::new();
@@ -209,6 +291,11 @@ impl App {
             inspector_viewport_height: 0,
             inspector_follow_latest: false,
             inspector_selected: None,
+            detail,
+            inspector_tab: InspectorTab::Overview,
+            marker_filter: MarkerFilter::All,
+            search_query: String::new(),
+            search_editing: false,
         })
     }
 
@@ -250,6 +337,43 @@ impl App {
         if let Some(feed) = &mut self.feed {
             for event in feed.drain() {
                 match event {
+                    FeedEvent::Event(value)
+                        if value.get("type").and_then(serde_json::Value::as_str)
+                            == Some("CLAUDE_CONTROL_DETAIL_SNAPSHOT") =>
+                    {
+                        match self.detail.apply_snapshot(&value) {
+                            Ok(()) => {
+                                self.status = format!(
+                                    "local detail · {} tools · {} events",
+                                    self.detail.tools.len(),
+                                    self.detail.events.len()
+                                );
+                                if self.selected_id().is_none() {
+                                    let target = self.detail.agents.values().find_map(|agent| {
+                                        [agent.parent_key.as_ref(), Some(&agent.key)]
+                                            .into_iter()
+                                            .flatten()
+                                            .find(|key| self.display_scene.index_of(key).is_some())
+                                            .cloned()
+                                    });
+                                    if let Some(target) = target {
+                                        self.flow.select_node(&target);
+                                        self.flow.center_on_selected();
+                                    }
+                                }
+                            }
+                            Err(error) => self.error = Some(error.to_string()),
+                        }
+                    }
+                    FeedEvent::Event(value)
+                        if value.get("type").and_then(serde_json::Value::as_str)
+                            == Some("CLAUDE_CONTROL_DETAIL_RESET") =>
+                    {
+                        self.timeline = Timeline::default();
+                        self.index = 0;
+                        self.status = "local transcript replaced · replay reset".to_owned();
+                        self.refresh_projection();
+                    }
                     FeedEvent::Event(value) => match self.timeline.push(value) {
                         Ok(true) => {
                             self.stream_open = true;
@@ -375,12 +499,117 @@ impl App {
     }
 
     fn seek_era(&mut self, next: bool) {
+        let mut starts = self
+            .timeline
+            .events()
+            .iter()
+            .enumerate()
+            .filter(|(_, event)| {
+                event
+                    .raw
+                    .pointer("/value/payload/kind")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("prompt")
+            })
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        starts.extend(
+            self.detail
+                .events
+                .iter()
+                .filter(|event| event.kind == "prompt")
+                .filter_map(|event| self.timeline.nearest_index(event.timestamp)),
+        );
+        starts.sort_unstable();
+        starts.dedup();
         let target = if next {
-            self.timeline.next_era(self.index)
+            starts
+                .into_iter()
+                .find(|start| *start > self.index)
+                .unwrap_or_else(|| self.timeline.latest_index())
         } else {
-            self.timeline.previous_era(self.index)
+            starts
+                .into_iter()
+                .rfind(|start| *start < self.index)
+                .unwrap_or(0)
         };
         self.seek_to(target);
+    }
+
+    fn seek_run(&mut self, next: bool) {
+        let target = if next {
+            self.timeline.next_run(self.index)
+        } else {
+            self.timeline.previous_run(self.index)
+        };
+        self.seek_to(target);
+    }
+
+    fn seek_search(&mut self, forward: bool) {
+        let mut local_hits = self.detail_search_indices();
+        local_hits.extend(self.timeline.matching_indices(&self.search_query));
+        local_hits.sort_unstable();
+        local_hits.dedup();
+        let target = directional_match(&local_hits, self.index, self.timeline.len(), forward);
+        if let Some(index) = target {
+            self.seek_to(index);
+            self.status = format!("match · {}", self.search_query);
+        } else if !self.search_query.is_empty() {
+            self.status = format!("no match · {}", self.search_query);
+        }
+    }
+
+    fn detail_search_indices(&self) -> Vec<usize> {
+        let query = self.search_query.trim().to_lowercase();
+        if query.is_empty() {
+            return Vec::new();
+        }
+        let mut stamps = Vec::new();
+        for agent in self.detail.agents.values() {
+            let has_timestamped_text = self.detail.events.iter().any(|event| {
+                event.owner_key.as_deref() == Some(&agent.key) && event.text.is_some()
+            });
+            let mut searchable = vec![
+                agent.description.as_deref(),
+                agent.role.as_deref(),
+                agent.model.as_deref(),
+            ];
+            if !has_timestamped_text {
+                searchable.extend([agent.prompt.as_deref(), agent.reasoning.as_deref()]);
+            }
+            if searchable
+            .into_iter()
+            .flatten()
+            .any(|value| value.to_lowercase().contains(&query))
+            {
+                stamps.push(agent.finished.or(agent.started).unwrap_or(0.0));
+            }
+        }
+        for tool in &self.detail.tools {
+            if tool.name.to_lowercase().contains(&query)
+                || tool
+                    .summary
+                    .as_deref()
+                    .is_some_and(|value| value.to_lowercase().contains(&query))
+            {
+                stamps.push(tool.started.or(tool.finished).unwrap_or(0.0));
+            }
+        }
+        for event in &self.detail.events {
+            if event.summary.to_lowercase().contains(&query)
+                || event.kind.to_lowercase().contains(&query)
+                || event
+                    .text
+                    .as_deref()
+                    .is_some_and(|value| value.to_lowercase().contains(&query))
+            {
+                stamps.push(event.timestamp);
+            }
+        }
+        stamps
+            .into_iter()
+            .filter_map(|stamp| self.timeline.nearest_index(stamp))
+            .collect()
     }
 
     fn scroll_inspector(&mut self, delta: isize) {
@@ -445,6 +674,23 @@ impl App {
             }
             return;
         }
+        if self.search_editing {
+            match key.code {
+                KeyCode::Esc => self.search_editing = false,
+                KeyCode::Enter => {
+                    self.search_editing = false;
+                    self.seek_search(true);
+                }
+                KeyCode::Backspace => {
+                    self.search_query.pop();
+                }
+                KeyCode::Char(value) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.search_query.push(value);
+                }
+                _ => {}
+            }
+            return;
+        }
         match key.code {
             KeyCode::Char('q') => self.quit = true,
             KeyCode::Esc => self.flow.clear_selection(),
@@ -453,8 +699,23 @@ impl App {
             KeyCode::Char(' ') => self.toggle_play(),
             KeyCode::Char('[') => self.seek(-1),
             KeyCode::Char(']') => self.seek(1),
-            KeyCode::Char('{') => self.seek_era(false),
-            KeyCode::Char('}') => self.seek_era(true),
+            KeyCode::Char('{') => self.seek_run(false),
+            KeyCode::Char('}') => self.seek_run(true),
+            KeyCode::Char('p') => self.seek_era(false),
+            KeyCode::Char('P') => self.seek_era(true),
+            KeyCode::Char('/') => {
+                self.search_editing = true;
+                self.search_query.clear();
+            }
+            KeyCode::Char('n') => self.seek_search(true),
+            KeyCode::Char('N') => self.seek_search(false),
+            KeyCode::Char('m') | KeyCode::Char('M') => {
+                self.marker_filter = self.marker_filter.next();
+            }
+            KeyCode::Char('v') | KeyCode::Char('V') => {
+                self.inspector_tab = self.inspector_tab.next();
+                self.inspector_scroll = 0;
+            }
             KeyCode::Char(',') => self.change_speed(-1),
             KeyCode::Char('.') => self.change_speed(1),
             KeyCode::Char('z') | KeyCode::Char('Z') => self.toggle_gap(),
@@ -595,6 +856,24 @@ impl App {
                 self.seek_era(true);
                 return;
             }
+            if self
+                .regions
+                .marker_filter
+                .is_some_and(|area| point_in_rect(point, area))
+            {
+                self.marker_filter = self.marker_filter.next();
+                return;
+            }
+            if let Some((_, tab)) = self
+                .regions
+                .inspector_tabs
+                .iter()
+                .find(|(area, _)| point_in_rect(point, *area))
+            {
+                self.inspector_tab = *tab;
+                self.inspector_scroll = 0;
+                return;
+            }
         }
         if self
             .regions
@@ -619,12 +898,12 @@ impl App {
     }
 }
 
-pub fn run(timeline: Timeline, feed: Option<Feed>) -> Result<()> {
+pub fn run(timeline: Timeline, feed: Option<Feed>, detail: DetailStore) -> Result<()> {
     let _screen = ScreenGuard::enter()?;
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend).context("could not initialize terminal")?;
     terminal.clear()?;
-    let mut app = App::new(timeline, feed)?;
+    let mut app = App::new(timeline, feed, detail)?;
     while !app.quit {
         app.update();
         terminal.draw(|frame| draw(frame, &mut app))?;
@@ -707,6 +986,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     app.regions.canvas = canvas;
     app.regions.timeline = timeline;
     app.regions.inspector = inspector;
+    app.regions.inspector_tabs.clear();
     draw_canvas(frame, canvas, app);
     if let Some(area) = inspector {
         draw_inspector(frame, area, app);
@@ -781,6 +1061,7 @@ fn draw_inspector(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) {
     let key = Style::default().fg(GOLD).bg(SURFACE);
     let value = Style::default().fg(TEXT).bg(SURFACE);
     let dim = Style::default().fg(SUBTLE).bg(SURFACE);
+    let tabs = inspector_tabs(app.inspector_tab, key, dim);
     let mut lines = vec![
         Line::from(vec![
             Span::styled(
@@ -789,18 +1070,149 @@ fn draw_inspector(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) {
             ),
             Span::styled(card.title.clone(), heading),
         ]),
+        tabs,
         Line::from(""),
-        detail_line("state", &card.state, key, value),
-        detail_line("kind", &card.kind, key, value),
-        detail_line("role", card.role.as_deref().unwrap_or("—"), key, value),
-        detail_line("model", card.model.as_deref().unwrap_or("—"), key, value),
-        detail_line("activity", &card.activity, key, value),
-        detail_line("tokens", &compact_number(card.output_tokens), key, value),
-        Line::from(""),
-        Line::from(Span::styled("identity", key)),
-        Line::from(Span::styled(card.key.clone(), dim)),
     ];
+    match app.inspector_tab {
+        InspectorTab::Overview => {
+            lines.extend([
+                detail_line("state", &card.state, key, value),
+                detail_line("kind", &card.kind, key, value),
+                detail_line("role", card.role.as_deref().unwrap_or("—"), key, value),
+                detail_line("model", card.model.as_deref().unwrap_or("—"), key, value),
+                detail_line("activity", &card.activity, key, value),
+                detail_line("tokens", &compact_number(card.output_tokens), key, value),
+                Line::from(""),
+                Line::from(Span::styled("identity", key)),
+                Line::from(Span::styled(card.key.clone(), dim)),
+            ]);
+            append_runs(&mut lines, app, &card, heading, key, value);
+            append_operations(&mut lines, app, &card, key, value, dim);
+            if !app.detail.source.provider.is_empty() {
+                lines.extend([
+                    Line::from(""),
+                    Line::from(Span::styled("local source", key)),
+                    detail_line("provider", &app.detail.source.provider, key, value),
+                    detail_line(
+                        "session",
+                        app.detail.source.session_id.as_deref().unwrap_or("—"),
+                        key,
+                        value,
+                    ),
+                    detail_line(
+                        "mode",
+                        app.detail.source.mode.as_deref().unwrap_or("—"),
+                        key,
+                        value,
+                    ),
+                    detail_line(
+                        "project",
+                        app.detail.source.project.as_deref().unwrap_or("—"),
+                        key,
+                        value,
+                    ),
+                    detail_line(
+                        "access",
+                        app.detail.source.permission_mode.as_deref().unwrap_or("—"),
+                        key,
+                        value,
+                    ),
+                    detail_line(
+                        "coverage",
+                        if app.detail.source.partial || app.detail.source.truncated {
+                            "partial / bounded"
+                        } else {
+                            "complete within source"
+                        },
+                        key,
+                        value,
+                    ),
+                ]);
+                if let Some(error) = &app.detail.source.read_error {
+                    lines.push(detail_line("read error", error, key, value));
+                }
+            }
+        }
+        InspectorTab::Provenance => append_provenance(&mut lines, app, &card, key, value, dim),
+        InspectorTab::Tools => append_tools(&mut lines, app, &card, key, value, dim),
+        InspectorTab::Activity => append_activity(&mut lines, app, &card, key, value, dim),
+    }
+    lines.extend([
+        Line::from(""),
+        Line::from(Span::styled(
+            if app.detail.source.provider.is_empty() {
+                "SAFE INSPECTOR · content-free controller metadata"
+            } else {
+                "LOCAL DETAIL · explicit host-only transcript inspection"
+            },
+            dim,
+        )),
+        Line::from(Span::styled("PgUp/PgDn or wheel to scroll", dim)),
+    ]);
 
+    let selection_changed = app.inspector_selected.as_deref() != Some(&card.key);
+    if selection_changed {
+        app.inspector_selected = Some(card.key.clone());
+        app.inspector_scroll = 0;
+        app.inspector_follow_latest = true;
+    }
+    app.inspector_content_height = wrapped_line_count(&lines, inner.width);
+    app.inspector_viewport_height = inner.height;
+    let max_scroll = app
+        .inspector_content_height
+        .saturating_sub(app.inspector_viewport_height);
+    if app.inspector_follow_latest {
+        app.inspector_scroll = 0;
+    } else {
+        app.inspector_scroll = app.inspector_scroll.min(max_scroll);
+    }
+    frame.render_widget(
+        Paragraph::new(lines)
+            .style(Style::default().bg(SURFACE))
+            .wrap(Wrap { trim: false })
+            .scroll((app.inspector_scroll, 0)),
+        inner,
+    );
+    let mut x = inner.x;
+    let y = inner.y.saturating_add(1);
+    for tab in InspectorTab::ALL {
+        let width = tab.label().len() as u16 + 2;
+        app.regions
+            .inspector_tabs
+            .push((Rect::new(x, y, width, 1), tab));
+        x = x.saturating_add(width + 1);
+    }
+}
+
+fn inspector_tabs(active: InspectorTab, on: Style, off: Style) -> Line<'static> {
+    let mut spans = Vec::new();
+    for tab in InspectorTab::ALL {
+        spans.push(Span::styled(
+            format!(" {} ", tab.label()),
+            if tab == active {
+                Style::default()
+                    .fg(CANVAS)
+                    .bg(GOLD)
+                    .add_modifier(Modifier::BOLD)
+            } else if on.fg.is_some() {
+                off
+            } else {
+                on
+            },
+        ));
+        spans.push(Span::raw(" "));
+    }
+    Line::from(spans)
+}
+
+fn append_runs(
+    lines: &mut Vec<Line<'static>>,
+    app: &App,
+    card: &Card,
+    heading: Style,
+    key: Style,
+    value: Style,
+) {
     let mut runs = app
         .state
         .related_run_ids(&card.key)
@@ -812,41 +1224,51 @@ fn draw_inspector(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) {
             .total_cmp(&run_order(left))
             .then_with(|| right.id.cmp(&left.id))
     });
-    if !runs.is_empty() {
-        lines.extend([Line::from(""), Line::from(Span::styled("runs", key))]);
-        for run in runs {
-            let run_id = &run.id;
-            lines.push(Line::from(vec![
-                Span::styled(
-                    "◆ ",
-                    Style::default().fg(state_color(&run.state)).bg(SURFACE),
-                ),
-                Span::styled(run_id.get(..8).unwrap_or(run_id).to_owned(), heading),
-                Span::styled(format!("  {}", run.state), value),
-            ]));
-            lines.push(detail_line(
-                "effort",
-                raw_string(&run.raw, "effort").unwrap_or("—"),
-                key,
-                value,
-            ));
-            lines.push(detail_line(
-                "actual",
-                model_list(&run.raw).as_deref().unwrap_or("—"),
-                key,
-                value,
-            ));
-            lines.push(detail_line(
-                "timing",
-                &timing_line(&run.raw, &run.state),
-                key,
-                value,
-            ));
-            lines.push(detail_line("usage", &usage_line(&run.raw), key, value));
-            lines.push(detail_line("cost", &cost_line(&run.raw), key, value));
-        }
+    if runs.is_empty() {
+        return;
     }
+    lines.extend([Line::from(""), Line::from(Span::styled("runs", key))]);
+    for run in runs {
+        let run_id = &run.id;
+        lines.push(Line::from(vec![
+            Span::styled(
+                "◆ ",
+                Style::default().fg(state_color(&run.state)).bg(SURFACE),
+            ),
+            Span::styled(run_id.get(..8).unwrap_or(run_id).to_owned(), heading),
+            Span::styled(format!("  {}", run.state), value),
+        ]));
+        lines.push(detail_line(
+            "effort",
+            raw_string(&run.raw, "effort").unwrap_or("—"),
+            key,
+            value,
+        ));
+        lines.push(detail_line(
+            "actual",
+            model_list(&run.raw).as_deref().unwrap_or("—"),
+            key,
+            value,
+        ));
+        lines.push(detail_line(
+            "timing",
+            &timing_line(&run.raw, &run.state),
+            key,
+            value,
+        ));
+        lines.push(detail_line("usage", &usage_line(&run.raw), key, value));
+        lines.push(detail_line("cost", &cost_line(&run.raw), key, value));
+    }
+}
 
+fn append_operations(
+    lines: &mut Vec<Line<'static>>,
+    app: &App,
+    card: &Card,
+    key: Style,
+    value: Style,
+    dim: Style,
+) {
     let operations = app.state.operations_for(&card.key);
     lines.extend([
         Line::from(""),
@@ -868,67 +1290,196 @@ fn draw_inspector(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) {
             "No recorded controller operations.",
             dim,
         )));
-    } else {
-        for operation in operations.iter().rev() {
-            let duration = operation
-                .duration_seconds()
-                .map(format_duration)
-                .unwrap_or_else(|| {
-                    if operation.state == "started" {
-                        "open"
-                    } else {
-                        "—"
-                    }
-                    .to_owned()
-                });
-            lines.push(Line::from(vec![
-                Span::styled(format!("#{:<4}", operation.seq), dim),
-                Span::styled(format!("{:<12}", operation.kind), value),
-                Span::styled(
-                    format!("{:<9}", operation.state),
-                    Style::default()
-                        .fg(state_color(&operation.state))
-                        .bg(SURFACE),
-                ),
-                Span::styled(duration, dim),
-            ]));
+    }
+    for operation in operations.iter().rev() {
+        let duration = operation
+            .duration_seconds()
+            .map(format_duration)
+            .unwrap_or_else(|| {
+                if operation.state == "started" {
+                    "open"
+                } else {
+                    "—"
+                }
+                .to_owned()
+            });
+        lines.push(Line::from(vec![
+            Span::styled(format!("#{:<4}", operation.seq), dim),
+            Span::styled(format!("{:<12}", operation.kind), value),
+            Span::styled(
+                format!("{:<9}", operation.state),
+                Style::default()
+                    .fg(state_color(&operation.state))
+                    .bg(SURFACE),
+            ),
+            Span::styled(duration, dim),
+        ]));
+    }
+}
+
+fn append_provenance(
+    lines: &mut Vec<Line<'static>>,
+    app: &App,
+    card: &Card,
+    key: Style,
+    value: Style,
+    dim: Style,
+) {
+    let owners = app.detail.owner_keys(&app.state, &card.key);
+    let agents = app.detail.agents_for(&owners);
+    let cutoff = app.timeline.event(app.index).map(|event| event.timestamp);
+    if agents.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "No opt-in local provenance for this node.",
+            dim,
+        )));
+        return;
+    }
+    for agent in agents {
+        lines.push(Line::from(Span::styled(
+            agent
+                .description
+                .as_deref()
+                .unwrap_or(&agent.agent_id)
+                .to_owned(),
+            key,
+        )));
+        lines.push(detail_line(
+            "role",
+            agent.role.as_deref().unwrap_or("—"),
+            key,
+            value,
+        ));
+        lines.push(detail_line(
+            "model",
+            agent.model.as_deref().unwrap_or("—"),
+            key,
+            value,
+        ));
+        let agent_owners = BTreeSet::from([agent.key.clone()]);
+        let aggregate_visible = app.index == app.timeline.latest_index()
+            || cutoff.is_none_or(|limit| {
+                agent
+                    .finished
+                    .is_some_and(|finished| finished <= limit)
+            });
+        let prompt = app
+            .detail
+            .latest_text(&agent_owners, &["prompt"], cutoff)
+            .or_else(|| aggregate_visible.then_some(agent.prompt.as_deref()).flatten());
+        let reasoning = app
+            .detail
+            .latest_text(&agent_owners, &["response", "reasoning"], cutoff)
+            .or_else(|| aggregate_visible.then_some(agent.reasoning.as_deref()).flatten());
+        append_text(lines, "prompt", prompt, key, value, dim);
+        append_text(
+            lines,
+            "response / reasoning",
+            reasoning,
+            key,
+            value,
+            dim,
+        );
+        lines.push(Line::from(""));
+    }
+}
+
+fn append_tools(
+    lines: &mut Vec<Line<'static>>,
+    app: &App,
+    card: &Card,
+    key: Style,
+    value: Style,
+    dim: Style,
+) {
+    let owners = app.detail.owner_keys(&app.state, &card.key);
+    let cutoff = app.timeline.event(app.index).map(|event| event.timestamp);
+    let tools = app.detail.tools_for(&owners, cutoff);
+    if tools.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "No local tool calls for this node.",
+            dim,
+        )));
+        return;
+    }
+    for tool in tools.iter().rev() {
+        let state = tool.state_at(cutoff);
+        lines.push(Line::from(vec![
+            Span::styled(
+                "◆ ",
+                Style::default().fg(state_color(state)).bg(SURFACE),
+            ),
+            Span::styled(tool.name.clone(), key),
+            Span::styled(format!("  {state}"), value),
+            Span::styled(
+                tool.duration_seconds(cutoff)
+                    .map(format_duration)
+                    .map(|item| format!(" · {item}"))
+                    .unwrap_or_default(),
+                dim,
+            ),
+        ]));
+        if let Some(summary) = &tool.summary {
+            lines.push(Line::from(Span::styled(format!("  {summary}"), dim)));
         }
     }
-    lines.extend([
-        Line::from(""),
-        Line::from(Span::styled(
-            "Content-free metadata only · paths, commands, prompts,",
-            dim,
-        )),
-        Line::from(Span::styled(
-            "reasoning, operation bodies, and results are excluded.",
-            dim,
-        )),
-        Line::from(Span::styled("PgUp/PgDn or wheel to scroll", dim)),
-    ]);
+}
 
-    let selection_changed = app.inspector_selected.as_deref() != Some(&card.key);
-    if selection_changed {
-        app.inspector_selected = Some(card.key.clone());
-        app.inspector_scroll = 0;
-        app.inspector_follow_latest = true;
+fn append_activity(
+    lines: &mut Vec<Line<'static>>,
+    app: &App,
+    card: &Card,
+    key: Style,
+    value: Style,
+    dim: Style,
+) {
+    let owners = app.detail.owner_keys(&app.state, &card.key);
+    let cutoff = app.timeline.event(app.index).map(|event| event.timestamp);
+    let events = app.detail.events_for(&owners, cutoff);
+    if events.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "No semantic local activity for this node.",
+            dim,
+        )));
+        return;
     }
-    app.inspector_content_height = lines.len().min(u16::MAX as usize) as u16;
-    app.inspector_viewport_height = inner.height;
-    let max_scroll = app
-        .inspector_content_height
-        .saturating_sub(app.inspector_viewport_height);
-    if app.inspector_follow_latest {
-        app.inspector_scroll = 0;
-    } else {
-        app.inspector_scroll = app.inspector_scroll.min(max_scroll);
+    for event in events.iter().rev() {
+        if !app.marker_filter.accepts(&event.kind) {
+            continue;
+        }
+        lines.push(Line::from(vec![
+            Span::styled(format!("{} ", format_clock(event.timestamp)), dim),
+            Span::styled(format!("{:<12}", event.kind.replace('_', " ")), key),
+            Span::styled(event.summary.clone(), value),
+        ]));
     }
-    frame.render_widget(
-        Paragraph::new(lines)
-            .style(Style::default().bg(SURFACE))
-            .scroll((app.inspector_scroll, 0)),
-        inner,
-    );
+}
+
+fn append_text(
+    lines: &mut Vec<Line<'static>>,
+    label: &str,
+    text: Option<&str>,
+    key: Style,
+    value: Style,
+    dim: Style,
+) {
+    lines.push(Line::from(Span::styled(label.to_owned(), key)));
+    match text.filter(|text| !text.trim().is_empty()) {
+        Some(text) => lines.extend(
+            text.lines()
+                .map(|line| Line::from(Span::styled(line.to_owned(), value))),
+        ),
+        None => lines.push(Line::from(Span::styled("—", dim))),
+    }
+}
+
+fn wrapped_line_count(lines: &[Line<'_>], width: u16) -> u16 {
+    let width = usize::from(width.max(1));
+    lines
+        .iter()
+        .map(|line| line.width().max(1).div_ceil(width))
+        .sum::<usize>()
+        .min(u16::MAX as usize) as u16
 }
 
 fn raw_string<'a>(value: &'a serde_json::Value, name: &str) -> Option<&'a str> {
@@ -1081,9 +1632,28 @@ fn draw_timeline(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) {
     for (index, event) in app.timeline.events().iter().enumerate() {
         let col = event_column(index, app.timeline.len(), width);
         counts[col] += event_weight(&event.summary);
-        let mark = event_mark(&event.summary);
+        let mark = if app.marker_filter.accepts(&event.summary) {
+            event_mark(&event.summary)
+        } else {
+            ' '
+        };
         if mark != ' ' {
             marks[col] = mark;
+        }
+    }
+    if !app.timeline.has_local_markers() {
+        for event in &app.detail.events {
+            let Some(index) = app.timeline.nearest_index(event.timestamp) else {
+                continue;
+            };
+            let col = event_column(index, app.timeline.len(), width);
+            counts[col] += event_weight(&event.kind);
+            if app.marker_filter.accepts(&event.kind) {
+                let mark = event_mark(&event.kind);
+                if mark != ' ' {
+                    marks[col] = mark;
+                }
+            }
         }
     }
     let max_count = counts.iter().copied().max().unwrap_or(1).max(1);
@@ -1122,7 +1692,11 @@ fn draw_timeline(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) {
         .map(|event| format_clock(event.timestamp))
         .unwrap_or_else(|| "--:--:--".to_owned());
     let summary = event.map(|event| event.summary.as_str()).unwrap_or("event");
-    let left = format!(" {clock}  {summary}");
+    let left = if app.search_editing {
+        format!(" /{}", app.search_query)
+    } else {
+        format!(" {clock}  {summary}")
+    };
     buffer.set_stringn(
         info.x,
         info.y,
@@ -1161,6 +1735,7 @@ fn draw_footer(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) {
     app.regions.gap = None;
     app.regions.previous_era = None;
     app.regions.next_era = None;
+    app.regions.marker_filter = None;
     let mut x = area.x;
     let brand = " observer ";
     buffer.set_string(
@@ -1267,6 +1842,15 @@ fn draw_footer(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) {
                 }),
         );
         x += gap.len() as u16 + 1;
+        let filter = format!(" M:{} ", app.marker_filter.label());
+        app.regions.marker_filter = Some(Rect::new(x, area.y, filter.len() as u16, 1));
+        buffer.set_string(
+            x,
+            area.y,
+            &filter,
+            Style::default().fg(GOLD).bg(SURFACE_RAISED),
+        );
+        x += filter.len() as u16 + 1;
     }
     let total_agents = app
         .scene
@@ -1281,7 +1865,7 @@ fn draw_footer(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) {
         .filter(|card| card.kind == "session")
         .count();
     let tokens: u64 = app.scene.cards.iter().map(|card| card.output_tokens).sum();
-    let (era, eras) = app.timeline.era_ordinal(app.index);
+    let (era, eras) = app.timeline.run_era_ordinal(app.index);
     let stats = format!(
         "{visible_agents}/{total_agents} agents · {} tok · era {era}/{eras} · {}",
         compact_number(tokens),
@@ -1294,7 +1878,7 @@ fn draw_footer(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) {
         usize::from(area.right().saturating_sub(x).saturating_sub(25)),
         Style::default().fg(SUBTLE).bg(CANVAS),
     );
-    let hints = "? help · q quit ";
+    let hints = "/ search · ? help · q quit ";
     if area.width > hints.len() as u16 {
         buffer.set_string(
             area.right() - hints.len() as u16,
@@ -1321,18 +1905,22 @@ fn draw_help(frame: &mut ratatui::Frame<'_>) {
         ]),
         Line::from(vec![
             Span::styled("replay", Style::default().fg(GOLD)),
-            Span::raw("  space play/pause · [ ] step · { } era · ,/. speed · z gap"),
+            Span::raw("  space play/pause · [ ] step · { } run · p/P prompt · ,/. speed"),
         ]),
         Line::from(vec![
             Span::styled("detail", Style::default().fg(GOLD)),
-            Span::raw("  PgUp/PgDn or mouse wheel scroll · home start · g/end live"),
+            Span::raw("  v tabs · PgUp/PgDn or wheel scroll · m marker filter"),
+        ]),
+        Line::from(vec![
+            Span::styled("search", Style::default().fg(GOLD)),
+            Span::raw("  / enter query · n/N next/previous match · Esc cancel"),
         ]),
         Line::from(vec![
             Span::styled("system", Style::default().fg(GOLD)),
             Span::raw("  i info · x mouse capture · q quit"),
         ]),
     ];
-    draw_overlay(frame, 74, 11, " controls ", Text::from(lines));
+    draw_overlay(frame, 78, 12, " controls ", Text::from(lines));
 }
 
 fn draw_info(frame: &mut ratatui::Frame<'_>, app: &App) {
@@ -1344,7 +1932,11 @@ fn draw_info(frame: &mut ratatui::Frame<'_>, app: &App) {
     let lines = vec![
         Line::from(vec![
             Span::styled("source    ", Style::default().fg(GOLD)),
-            Span::raw("Claude Control observation ledger"),
+            Span::raw(if app.detail.source.provider.is_empty() {
+                "Claude Control observation ledger"
+            } else {
+                "observation graph + opt-in local transcript"
+            }),
         ]),
         Line::from(vec![
             Span::styled("fidelity  ", Style::default().fg(GOLD)),
@@ -1372,7 +1964,11 @@ fn draw_info(frame: &mut ratatui::Frame<'_>, app: &App) {
         ]),
         Line::from(""),
         Line::from(Span::styled(
-            "Read-only · content-free · replayable",
+            if app.detail.source.provider.is_empty() {
+                "Read-only · content-free · replayable"
+            } else {
+                "Read-only · local detail is never exported"
+            },
             Style::default().fg(SUBTLE),
         )),
     ];
@@ -1451,10 +2047,44 @@ fn event_column(index: usize, len: usize, width: usize) -> usize {
     }
 }
 
+fn directional_match(
+    matches: &[usize],
+    current: usize,
+    len: usize,
+    forward: bool,
+) -> Option<usize> {
+    if matches.is_empty() || len == 0 {
+        return None;
+    }
+    matches.iter().copied().min_by_key(|index| {
+        if forward {
+            if *index > current {
+                *index - current
+            } else {
+                len.saturating_sub(current).saturating_add(*index)
+            }
+        } else if *index < current {
+            current - *index
+        } else {
+            current.saturating_add(len.saturating_sub(*index))
+        }
+    })
+}
+
 fn event_mark(summary: &str) -> char {
-    let lower = summary.to_ascii_lowercase();
+    let lower = summary.to_ascii_lowercase().replace('_', " ");
     if lower.contains("fail") || lower.contains("error") {
         '×'
+    } else if lower.contains("prompt") {
+        '◆'
+    } else if lower.contains("response") || lower.contains("reasoning") {
+        '●'
+    } else if lower.contains("spawn") || lower.contains("agent") {
+        '✦'
+    } else if lower.contains("tool start") {
+        '▸'
+    } else if lower.contains("tool end") {
+        '✓'
     } else if lower.contains("node_created") || lower.contains("created") {
         '✦'
     } else if lower.contains("run started") || lower.contains("run_started") {
@@ -1465,9 +2095,15 @@ fn event_mark(summary: &str) -> char {
 }
 
 fn event_weight(summary: &str) -> u64 {
-    let lower = summary.to_ascii_lowercase();
+    let lower = summary.to_ascii_lowercase().replace('_', " ");
     if lower.contains("fail") || lower.contains("error") {
         7
+    } else if lower.contains("prompt") {
+        6
+    } else if lower.contains("response") || lower.contains("reasoning") {
+        3
+    } else if lower.contains("tool") || lower.contains("spawn") {
+        4
     } else if lower.contains("run started") || lower.contains("run_started") {
         5
     } else if lower.contains("node_created") || lower.contains("created") {
@@ -1698,7 +2334,7 @@ mod tests {
                 ))
                 .unwrap();
         }
-        App::new(timeline, None).unwrap()
+        App::new(timeline, None, DetailStore::default()).unwrap()
     }
 
     fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
@@ -1743,7 +2379,118 @@ mod tests {
         terminal.draw(|frame| draw(frame, &mut app)).unwrap();
         let panel = app.regions.inspector.expect("selection should open detail");
         assert!(panel.width > app.regions.canvas.width);
-        assert!(buffer_text(&terminal).contains("Content-free metadata only"));
+        assert!(buffer_text(&terminal).contains("SAFE INSPECTOR"));
+    }
+
+    #[test]
+    fn local_provenance_tab_renders_opt_in_prompt_and_response() {
+        let mut app = sample_app(1);
+        app.detail
+            .apply_snapshot(&json!({
+                "type":"CLAUDE_CONTROL_DETAIL_SNAPSHOT","version":1,
+                "source":{"selector":"codex:session-0","provider":"codex","session_id":"session-0","partial":false,"truncated":false},
+                "agents":[{"key":"session:session-0","agent_id":"session-0","session_id":"session-0","role":"reviewer","model":"gpt-test","prompt":"prompt sentinel","reasoning":"response sentinel","started":1.0}],
+                "tools":[],"events":[]
+            }))
+            .unwrap();
+        app.inspector_tab = InspectorTab::Provenance;
+        app.flow.select_node("session:session-0");
+        let backend = TestBackend::new(160, 45);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+        let screen = buffer_text(&terminal);
+        assert!(screen.contains("prompt sentinel"), "{screen}");
+        assert!(screen.contains("response sentinel"), "{screen}");
+        assert!(screen.contains("LOCAL DETAIL"), "{screen}");
+        app.search_query = "response sentinel".to_owned();
+        assert_eq!(app.detail_search_indices(), vec![0]);
+    }
+
+    #[test]
+    fn replayed_provenance_hides_future_prompt_and_response() {
+        let mut app = sample_app(3);
+        app.detail
+            .apply_snapshot(&json!({
+                "type":"CLAUDE_CONTROL_DETAIL_SNAPSHOT","version":1,
+                "source":{"selector":"managed:r1","provider":"managed","session_id":"session-0","partial":false,"truncated":false},
+                "agents":[{"key":"session:session-0","agent_id":"session-0","session_id":"session-0","prompt":"latest prompt","reasoning":"future response","started":2.0,"finished":4.0}],
+                "tools":[],
+                "events":[
+                    {"kind":"prompt","owner_key":"session:session-0","timestamp":2.0,"summary":"prompt","text":"visible prompt"},
+                    {"kind":"response","owner_key":"session:session-0","timestamp":4.0,"summary":"response","text":"future response"}
+                ]
+            }))
+            .unwrap();
+        app.inspector_tab = InspectorTab::Provenance;
+        app.flow.select_node("session:session-0");
+        app.seek_to(1);
+        let backend = TestBackend::new(160, 45);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+        let screen = buffer_text(&terminal);
+        assert!(screen.contains("visible prompt"), "{screen}");
+        assert!(!screen.contains("future response"), "{screen}");
+    }
+
+    #[test]
+    fn managed_detail_prompts_drive_era_navigation_without_graph_markers() {
+        let mut app = sample_app(4);
+        app.detail
+            .apply_snapshot(&json!({
+                "type":"CLAUDE_CONTROL_DETAIL_SNAPSHOT","version":1,
+                "source":{"selector":"managed:r1","provider":"managed","partial":false,"truncated":false},
+                "agents":[],"tools":[],
+                "events":[{"kind":"prompt","timestamp":3.0,"summary":"managed prompt","text":"prompt body"}]
+            }))
+            .unwrap();
+        app.seek_to(0);
+        app.seek_era(true);
+        assert_eq!(app.index, 2);
+    }
+
+    #[test]
+    fn search_prefers_the_nearest_forward_match_across_both_sources() {
+        let mut timeline = Timeline::default();
+        timeline
+            .push(observation(
+                1,
+                "baseline",
+                "store",
+                "baseline",
+                json!({"fidelity": "exact", "nodes": {}, "edges": {}, "telemetry": []}),
+            ))
+            .unwrap();
+        for cursor in 2..=4 {
+            timeline
+                .push(observation(
+                    cursor,
+                    "node_created",
+                    "session",
+                    &format!("s{cursor}"),
+                    json!({"id":format!("s{cursor}"),"summary":if cursor == 4 {"needle"} else {"other"}}),
+                ))
+                .unwrap();
+        }
+        let mut detail = DetailStore::default();
+        detail
+            .apply_snapshot(&json!({
+                "type":"CLAUDE_CONTROL_DETAIL_SNAPSHOT","version":1,
+                "source":{"selector":"managed:r1","provider":"managed","partial":false,"truncated":false},
+                "agents":[],"tools":[],
+                "events":[{"kind":"prompt","timestamp":1.0,"summary":"needle","text":"needle"}]
+            }))
+            .unwrap();
+        let mut app = App::new(timeline, None, detail).unwrap();
+        app.seek_to(1);
+        app.search_query = "needle".to_owned();
+        app.seek_search(true);
+        assert_eq!(app.index, 3);
+    }
+
+    #[test]
+    fn wrapped_inspector_height_counts_visual_rows() {
+        let lines = vec![Line::from("x".repeat(401))];
+        assert_eq!(wrapped_line_count(&lines, 100), 5);
     }
 
     #[test]

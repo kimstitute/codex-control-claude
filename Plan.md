@@ -1,6 +1,6 @@
 # OMX 기능 도입 계획
 
-작성: 2026-09-20 · 갱신: 2026-09-24 · 기준: v0.23.0 · 상태: P1–P5, model catalog 및 Safe Observer v2 구현
+작성: 2026-09-20 · 갱신: 2026-09-24 · 기준: v0.24.0 · 상태: P1–P5, model catalog 및 Local Detail Observer 구현
 
 이 문서는 도입 당시의 설계와 단계별 통과 조건을 보존한다. 단계별 구현 상태는 문서 끝의 진행 기록을 따른다. P5는 기존 Claude 도구 비활성화를 유지하는 컨트롤러 작업 요청 방식으로 구체화했다.
 
@@ -837,3 +837,24 @@ manifest JSON과 `git diff --check`가 통과했다. 실제 계정 상태 이관
 - replay는 0.25×–8× 속도, 고정 간격과 timestamp gap compression, 이전·다음 run 시작
   era 이동을 제공한다. `[ ]`의 단일 event 이동은 그대로 보존하며 footer chip도 같은
   기능을 마우스로 제공한다.
+
+## 33. Local Detail Observer와 semantic replay — v0.24.0
+
+- 기본 observation/AG-UI/OTLP/headless 경로는 content-free 계약을 유지한다. 사용자가
+  `--local-detail` 또는 구체 selector를 지정한 경우에만 현재 호스트의 관리 run,
+  Claude Code, Codex JSONL을 bounded metadata-head + latest-tail 방식으로 읽고 메모리에서만
+  상세 색인을 만든다. 파일·byte·record 한도와 읽기 오류는 partial/truncated coverage로 표시한다.
+- provider별 allowlist parser가 prompt, response/reasoning, tool start/end, spawn과 failure를
+  정규화한다. 암호화 content와 credential 계열 필드는 해석하거나 저장하지 않으며 local
+  detail은 SQLite, AG-UI 저장 파일과 OTLP export에 합치지 않는다.
+- Claude `agentId`와 Codex parent thread를 연결해 부모·자식 agent를 기록 시각 순서대로
+  생성한다. 과거 cursor에서는 아직 시작하지 않은 agent와 이후 prompt, 응답, tool 완료
+  상태를 보이지 않는다. 명시적 종료 근거가 없는 오래된 transcript는 terminal 완료로
+  추정하지 않고 idle로 표시한다.
+- terminal picker는 keyboard filter와 mouse click을 지원한다. selector는 목록 key 외에도
+  현재 directory, 기록된 directory, 정확한 transcript file과 provider session ID를 쓸 수 있다.
+- Inspector는 Overview, Provenance, Tools, Activity 탭으로 나뉜다. tool 상태·소요 시간,
+  prompt/response, semantic event와 partial/truncated coverage를 표시하고 mouse/keyboard로
+  탭과 scroll을 제어한다.
+- timeline은 prompt, tool, spawn, failure marker와 filter, `/` 검색, `n/N` 결과 이동,
+  `p/P` prompt 이동을 제공한다. 기존 `{}` run era, 속도 조절과 gap compression은 유지한다.

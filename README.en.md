@@ -86,6 +86,12 @@ complete hierarchy including hidden runs and operation summaries. Replay adds
 0.25×–8× speed, timestamp-gap compression and run-era navigation through both
 keyboard and mouse controls.
 
+Version 0.24 adds opt-in Local Detail beside the default content-free observer.
+Choose a managed run, Claude Code session or Codex task from the keyboard/mouse
+picker to inspect local prompt, response/reasoning, tool timing and semantic
+activity. Search, marker filters and prompt navigation stay local; AG-UI, OTLP,
+`--inspect` and `--tree` never receive transcript content.
+
 ## Choose the right workflow
 
 | Goal | Use | What it adds |
@@ -99,6 +105,7 @@ keyboard and mouse controls.
 | Schedule dependent tasks | `task enqueue` + `dispatch` | FIFO admission and exact accepted-parent gates |
 | Save instructions for the next turn | `message` | Explicit next-revision delivery and result handoff |
 | Observe the multi-agent graph and past execution | `monitor viewer` | Focus/recent/all graph, minimap, mouse cameras, activity replay and per-agent run tokens |
+| Inspect local Claude/Codex transcripts | `monitor viewer --local-detail` | Mouse session picker, provenance/tool/activity tabs, search and prompt navigation; never exported |
 | Inspect account limits or use the portable fallback | `monitor tui` / `monitor limits` | Codex, Claude, Gemini and Cursor quotas plus a Python-only screen |
 | List models available to the account | `models catalog` | Current selectors, resolved models and effort levels with account identity removed |
 | Configure model and effort per role | `models show/configure/reset` | Aliases, exact version IDs, atomic replacement and frozen existing work |
@@ -110,6 +117,8 @@ the controller yourself.
 ```bash
 claude_control monitor viewer
 claude_control monitor viewer --tree
+claude_control monitor viewer --local-detail
+claude_control monitor viewer --detail-current
 claude_control monitor tui
 claude_control monitor limits
 claude_control monitor agui stream --after 0 --limit 100

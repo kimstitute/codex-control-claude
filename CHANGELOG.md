@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.24.0 — 2026-09-24
+
+- Add an explicit local-only transcript catalog and bounded Claude Code/Codex
+  adapters. The default observation ledger, AG-UI, OTLP, `--inspect` and
+  `--tree` contracts remain content-free and unchanged.
+- Add a keyboard and mouse session picker plus exact source, current directory,
+  recorded directory, transcript file and provider session-ID selection.
+- Add `OVERVIEW`, `PROVENANCE`, `TOOLS` and `ACTIVITY` Inspector tabs with local
+  prompt/response provenance, tool state and duration, semantic activity and
+  visible partial/truncation coverage.
+- Add typed prompt, tool, spawn and failure markers, marker filters, timeline
+  search, next/previous match navigation and prompt-era seeking. Existing run
+  era, speed and gap-compression replay remains available.
+- Preserve large-transcript identity with bounded metadata-head plus latest-tail
+  reads, reconstruct Claude/Codex parent-child topology at recorded start times,
+  and keep prompt, response and tool state faithful to the selected replay time.
+
 ## 0.23.0 — 2026-09-24
 
 - Add a scrollable Safe Inspector v2 with run timing, configured effort, actual

@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Result, anyhow, bail};
 use serde_json::Value;
@@ -44,6 +44,305 @@ pub struct OperationRecord {
     pub state: String,
     pub started: Option<f64>,
     pub finished: Option<f64>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DetailSource {
+    pub selector: String,
+    pub provider: String,
+    pub session_id: Option<String>,
+    pub title: Option<String>,
+    pub project: Option<String>,
+    pub mode: Option<String>,
+    pub permission_mode: Option<String>,
+    pub last_prompt: Option<String>,
+    pub queued_ops: u64,
+    pub file_edits: u64,
+    pub partial: bool,
+    pub truncated: bool,
+    pub read_error: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AgentDetail {
+    pub key: String,
+    pub agent_id: String,
+    pub parent_key: Option<String>,
+    pub run_id: Option<String>,
+    pub session_id: Option<String>,
+    pub role: Option<String>,
+    pub model: Option<String>,
+    pub description: Option<String>,
+    pub prompt: Option<String>,
+    pub reasoning: Option<String>,
+    pub started: Option<f64>,
+    pub finished: Option<f64>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ToolDetail {
+    pub id: String,
+    pub owner_key: String,
+    pub name: String,
+    pub summary: Option<String>,
+    pub state: String,
+    pub started: Option<f64>,
+    pub finished: Option<f64>,
+}
+
+impl ToolDetail {
+    pub fn duration_seconds(&self, cutoff: Option<f64>) -> Option<f64> {
+        let start = self.started?;
+        let end = match (self.finished, cutoff) {
+            (Some(finished), Some(limit)) => finished.min(limit),
+            (Some(finished), None) => finished,
+            (None, Some(limit)) => limit,
+            (None, None) => return None,
+        };
+        let duration = end - start;
+        duration.is_finite().then_some(duration.max(0.0))
+    }
+
+    pub fn state_at(&self, cutoff: Option<f64>) -> &str {
+        if cutoff.is_some_and(|limit| self.finished.is_none_or(|finished| finished > limit)) {
+            "pending"
+        } else {
+            &self.state
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SemanticDetail {
+    pub kind: String,
+    pub owner_key: Option<String>,
+    pub timestamp: f64,
+    pub summary: String,
+    pub text: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DetailStore {
+    pub source: DetailSource,
+    pub agents: BTreeMap<String, AgentDetail>,
+    pub tools: Vec<ToolDetail>,
+    pub events: Vec<SemanticDetail>,
+}
+
+impl DetailStore {
+    pub fn apply_snapshot(&mut self, value: &Value) -> Result<()> {
+        if value.get("type").and_then(Value::as_str) != Some("CLAUDE_CONTROL_DETAIL_SNAPSHOT") {
+            bail!("unsupported local detail snapshot")
+        }
+        if value.get("version").and_then(Value::as_u64) != Some(1) {
+            bail!("unsupported local detail snapshot version")
+        }
+        let source = value
+            .get("source")
+            .and_then(Value::as_object)
+            .ok_or_else(|| anyhow!("local detail snapshot has no source"))?;
+        self.source = DetailSource {
+            selector: object_string(source, "selector").unwrap_or_default(),
+            provider: object_string(source, "provider").unwrap_or_default(),
+            session_id: object_string(source, "session_id"),
+            title: object_string(source, "title"),
+            project: object_string(source, "project"),
+            mode: object_string(source, "mode"),
+            permission_mode: object_string(source, "permission_mode"),
+            last_prompt: object_string(source, "last_prompt"),
+            queued_ops: object_u64(source, "queued_ops"),
+            file_edits: object_u64(source, "file_edits"),
+            partial: source
+                .get("partial")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            truncated: source
+                .get("truncated")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            read_error: object_string(source, "read_error"),
+        };
+        self.agents.clear();
+        for item in value
+            .get("agents")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let Some(object) = item.as_object() else {
+                continue;
+            };
+            let Some(key) = object_string(object, "key").filter(|value| !value.is_empty()) else {
+                continue;
+            };
+            self.agents.insert(
+                key.clone(),
+                AgentDetail {
+                    key,
+                    agent_id: object_string(object, "agent_id").unwrap_or_default(),
+                    parent_key: object_string(object, "parent_key"),
+                    run_id: object_string(object, "run_id"),
+                    session_id: object_string(object, "session_id"),
+                    role: object_string(object, "role"),
+                    model: object_string(object, "model"),
+                    description: object_string(object, "description"),
+                    prompt: object_string(object, "prompt"),
+                    reasoning: object_string(object, "reasoning"),
+                    started: object_f64(object, "started"),
+                    finished: object_f64(object, "finished"),
+                },
+            );
+        }
+        self.tools = value
+            .get("tools")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|item| {
+                let object = item.as_object()?;
+                let id = object_string(object, "id")?;
+                let owner_key = object_string(object, "owner_key")?;
+                let name = object_string(object, "name")?;
+                Some(ToolDetail {
+                    id,
+                    owner_key,
+                    name,
+                    summary: object_string(object, "summary"),
+                    state: object_string(object, "state").unwrap_or_else(|| "pending".into()),
+                    started: object_f64(object, "started"),
+                    finished: object_f64(object, "finished"),
+                })
+            })
+            .collect();
+        self.tools.sort_by(|left, right| {
+            left.started
+                .unwrap_or(0.0)
+                .total_cmp(&right.started.unwrap_or(0.0))
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        self.events = value
+            .get("events")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|item| {
+                let object = item.as_object()?;
+                let timestamp = object_f64(object, "timestamp")?;
+                Some(SemanticDetail {
+                    kind: object_string(object, "kind")?,
+                    owner_key: object_string(object, "owner_key"),
+                    timestamp,
+                    summary: object_string(object, "summary").unwrap_or_default(),
+                    text: object_string(object, "text"),
+                })
+            })
+            .collect();
+        self.events.sort_by(|left, right| {
+            left.timestamp
+                .total_cmp(&right.timestamp)
+                .then_with(|| left.kind.cmp(&right.kind))
+        });
+        Ok(())
+    }
+
+    pub fn owner_keys(&self, state: &GraphState, key: &str) -> BTreeSet<String> {
+        let mut keys = BTreeSet::from([key.to_owned()]);
+        for run_id in state.related_run_ids(key) {
+            keys.insert(format!("run:{run_id}"));
+        }
+        if let Some((kind, id)) = key.split_once(':')
+            && kind == "session"
+        {
+            keys.insert(id.to_owned());
+        }
+        keys
+    }
+
+    pub fn agents_for<'a>(&'a self, keys: &BTreeSet<String>) -> Vec<&'a AgentDetail> {
+        self.agents
+            .values()
+            .filter(|agent| {
+                keys.contains(&agent.key)
+                    || agent
+                        .run_id
+                        .as_ref()
+                        .is_some_and(|id| keys.contains(&format!("run:{id}")))
+                    || agent
+                        .session_id
+                        .as_ref()
+                        .is_some_and(|id| keys.contains(&format!("session:{id}")))
+            })
+            .collect()
+    }
+
+    pub fn tools_for<'a>(
+        &'a self,
+        keys: &BTreeSet<String>,
+        cutoff: Option<f64>,
+    ) -> Vec<&'a ToolDetail> {
+        self.tools
+            .iter()
+            .filter(|tool| keys.contains(&tool.owner_key))
+            .filter(|tool| cutoff.is_none_or(|limit| tool.started.is_none_or(|ts| ts <= limit)))
+            .collect()
+    }
+
+    pub fn events_for<'a>(
+        &'a self,
+        keys: &BTreeSet<String>,
+        cutoff: Option<f64>,
+    ) -> Vec<&'a SemanticDetail> {
+        self.events
+            .iter()
+            .filter(|event| {
+                event
+                    .owner_key
+                    .as_ref()
+                    .is_none_or(|owner| keys.contains(owner))
+            })
+            .filter(|event| cutoff.is_none_or(|limit| event.timestamp <= limit))
+            .collect()
+    }
+
+    pub fn latest_text<'a>(
+        &'a self,
+        keys: &BTreeSet<String>,
+        kinds: &[&str],
+        cutoff: Option<f64>,
+    ) -> Option<&'a str> {
+        self.events
+            .iter()
+            .rev()
+            .find(|event| {
+                kinds.contains(&event.kind.as_str())
+                    && event.text.is_some()
+                    && event
+                        .owner_key
+                        .as_ref()
+                        .is_none_or(|owner| keys.contains(owner))
+                    && cutoff.is_none_or(|limit| event.timestamp <= limit)
+            })
+            .and_then(|event| event.text.as_deref())
+    }
+}
+
+fn object_string(object: &serde_json::Map<String, Value>, name: &str) -> Option<String> {
+    object
+        .get(name)
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn object_u64(object: &serde_json::Map<String, Value>, name: &str) -> u64 {
+    object.get(name).and_then(Value::as_u64).unwrap_or(0)
+}
+
+fn object_f64(object: &serde_json::Map<String, Value>, name: &str) -> Option<f64> {
+    object
+        .get(name)
+        .and_then(Value::as_f64)
+        .filter(|value| value.is_finite())
 }
 
 impl OperationRecord {
@@ -224,7 +523,7 @@ impl Timeline {
         Ok(state)
     }
 
-    pub fn era_starts(&self) -> Vec<usize> {
+    pub fn run_era_starts(&self) -> Vec<usize> {
         let mut starts = vec![0];
         starts.extend(
             self.events
@@ -239,24 +538,108 @@ impl Timeline {
         starts
     }
 
-    pub fn previous_era(&self, index: usize) -> usize {
-        self.era_starts()
+    pub fn prompt_era_starts(&self) -> Vec<usize> {
+        let starts = self
+            .events
+            .iter()
+            .enumerate()
+            .filter(|(_, event)| semantic_kind(&event.raw) == Some("prompt"))
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        if starts.is_empty() { vec![0] } else { starts }
+    }
+
+    pub fn previous_prompt(&self, index: usize) -> usize {
+        self.prompt_era_starts()
             .into_iter()
             .rfind(|start| *start < index)
             .unwrap_or(0)
     }
 
-    pub fn next_era(&self, index: usize) -> usize {
-        self.era_starts()
+    pub fn next_prompt(&self, index: usize) -> usize {
+        self.prompt_era_starts()
             .into_iter()
             .find(|start| *start > index)
             .unwrap_or_else(|| self.latest_index())
     }
 
-    pub fn era_ordinal(&self, index: usize) -> (usize, usize) {
-        let starts = self.era_starts();
+    pub fn previous_run(&self, index: usize) -> usize {
+        self.run_era_starts()
+            .into_iter()
+            .rfind(|start| *start < index)
+            .unwrap_or(0)
+    }
+
+    pub fn next_run(&self, index: usize) -> usize {
+        self.run_era_starts()
+            .into_iter()
+            .find(|start| *start > index)
+            .unwrap_or_else(|| self.latest_index())
+    }
+
+    pub fn run_era_ordinal(&self, index: usize) -> (usize, usize) {
+        let starts = self.run_era_starts();
         let ordinal = starts.partition_point(|start| *start <= index).max(1);
         (ordinal, starts.len())
+    }
+
+    pub fn find(&self, query: &str, from: usize, forward: bool) -> Option<usize> {
+        let matches = self.matching_indices(query);
+        if matches.is_empty() {
+            return None;
+        }
+        if forward {
+            matches
+                .iter()
+                .copied()
+                .find(|index| *index > from)
+                .or_else(|| matches.first().copied())
+        } else {
+            matches
+                .iter()
+                .rev()
+                .copied()
+                .find(|index| *index < from)
+                .or_else(|| matches.last().copied())
+        }
+    }
+
+    pub fn matching_indices(&self, query: &str) -> Vec<usize> {
+        let query = query.trim().to_lowercase();
+        if query.is_empty() {
+            return Vec::new();
+        }
+        self.events
+            .iter()
+            .enumerate()
+            .filter(|(_, event)| {
+                event.summary.to_lowercase().contains(&query)
+                    || event
+                        .raw
+                        .pointer("/value/payload/summary")
+                        .and_then(Value::as_str)
+                        .is_some_and(|value| value.to_lowercase().contains(&query))
+            })
+            .map(|(index, _)| index)
+            .collect()
+    }
+
+    pub fn nearest_index(&self, timestamp: f64) -> Option<usize> {
+        self.events
+            .iter()
+            .enumerate()
+            .min_by(|(_, left), (_, right)| {
+                (left.timestamp - timestamp)
+                    .abs()
+                    .total_cmp(&(right.timestamp - timestamp).abs())
+            })
+            .map(|(index, _)| index)
+    }
+
+    pub fn has_local_markers(&self) -> bool {
+        self.events.iter().any(|event| {
+            event.raw.pointer("/value/kind").and_then(Value::as_str) == Some("local_marker")
+        })
     }
 }
 
@@ -265,6 +648,13 @@ fn is_run_start(event: &Value) -> bool {
         || (event.get("type").and_then(Value::as_str) == Some("CUSTOM")
             && event.pointer("/value/kind").and_then(Value::as_str) == Some("node_created")
             && event.pointer("/value/entity_kind").and_then(Value::as_str) == Some("run"))
+}
+
+fn semantic_kind(event: &Value) -> Option<&str> {
+    (event.get("type").and_then(Value::as_str) == Some("CUSTOM")
+        && event.pointer("/value/kind").and_then(Value::as_str) == Some("local_marker"))
+    .then(|| event.pointer("/value/entity_kind").and_then(Value::as_str))
+    .flatten()
 }
 
 fn operation_record(node: &Node) -> Option<OperationRecord> {
@@ -294,6 +684,9 @@ fn event_summary(event: &Value) -> String {
         .unwrap_or("UNKNOWN")
     {
         "CUSTOM" => {
+            if let Some(kind) = semantic_kind(event) {
+                return kind.replace('_', " ");
+            }
             let kind = event
                 .pointer("/value/kind")
                 .and_then(Value::as_str)
@@ -351,6 +744,7 @@ fn apply_custom(state: &mut GraphState, value: &Value) -> Result<()> {
             apply_telemetry(state, entity_id, payload);
             Ok(())
         }
+        "local_marker" => Ok(()),
         _ => {
             state.skipped += 1;
             Ok(())
@@ -764,10 +1158,78 @@ mod tests {
             ))
             .unwrap();
 
-        assert_eq!(timeline.era_starts(), vec![0, 1, 3]);
-        assert_eq!(timeline.next_era(1), 3);
-        assert_eq!(timeline.previous_era(3), 1);
-        assert_eq!(timeline.era_ordinal(2), (2, 3));
+        assert_eq!(timeline.run_era_starts(), vec![0, 1, 3]);
+        assert_eq!(timeline.next_run(1), 3);
+        assert_eq!(timeline.previous_run(3), 1);
+        assert_eq!(timeline.run_era_ordinal(2), (2, 3));
+    }
+
+    #[test]
+    fn local_markers_drive_prompt_navigation_and_search_without_mutating_graph() {
+        let mut timeline = Timeline::default();
+        timeline
+            .push(custom(
+                1,
+                "baseline",
+                "store",
+                "baseline",
+                serde_json::json!({"fidelity":"local_detail","nodes":{},"edges":{},"telemetry":[]}),
+            ))
+            .unwrap();
+        for (cursor, kind, summary) in [
+            (2, "prompt", "first prompt"),
+            (3, "tool_start", "Read"),
+            (4, "prompt", "second prompt"),
+        ] {
+            timeline
+                .push(serde_json::json!({
+                    "type":"CUSTOM",
+                    "name":"claude-control.local-detail",
+                    "value":{
+                        "kind":"local_marker","entity_kind":kind,
+                        "entity_id":format!("m-{cursor}"),
+                        "payload":{"kind":kind,"summary":summary}
+                    },
+                    "timestamp":cursor as f64,
+                    "metadata":{"claude-control":{"cursor":cursor}}
+                }))
+                .unwrap();
+        }
+        assert_eq!(timeline.prompt_era_starts(), vec![1, 3]);
+        assert_eq!(timeline.next_prompt(1), 3);
+        assert_eq!(timeline.previous_prompt(3), 1);
+        assert_eq!(timeline.find("read", 0, true), Some(2));
+        assert_eq!(timeline.state_at(3).unwrap().skipped, 0);
+    }
+
+    #[test]
+    fn detail_snapshot_indexes_agents_tools_and_semantic_events() {
+        let mut detail = DetailStore::default();
+        detail
+            .apply_snapshot(&serde_json::json!({
+                "type":"CLAUDE_CONTROL_DETAIL_SNAPSHOT","version":1,
+                "source":{"selector":"codex:s1","provider":"codex","session_id":"s1","project":"/work","queued_ops":1,"file_edits":2,"partial":false,"truncated":false},
+                "agents":[{"key":"session:s1","agent_id":"s1","session_id":"s1","role":"reviewer","model":"gpt-test","prompt":"p","reasoning":"r"}],
+                "tools":[{"id":"t1","owner_key":"session:s1","name":"read","state":"ok","started":1.0,"finished":2.0}],
+                "events":[
+                    {"kind":"prompt","owner_key":"session:s1","timestamp":1.0,"summary":"prompt","text":"p"},
+                    {"kind":"tool_end","owner_key":"session:s1","timestamp":2.0,"summary":"read"}
+                ]
+            }))
+            .unwrap();
+        let keys = BTreeSet::from(["session:s1".to_owned()]);
+        assert_eq!(detail.source.project.as_deref(), Some("/work"));
+        assert_eq!(detail.agents_for(&keys).len(), 1);
+        assert_eq!(
+            detail.tools_for(&keys, Some(2.0))[0].duration_seconds(None),
+            Some(1.0)
+        );
+        let tool = detail.tools_for(&keys, Some(1.5))[0];
+        assert_eq!(tool.state_at(Some(1.5)), "pending");
+        assert_eq!(tool.duration_seconds(Some(1.5)), Some(0.5));
+        assert_eq!(tool.state_at(Some(2.0)), "ok");
+        assert_eq!(detail.events_for(&keys, Some(2.0))[1].kind, "tool_end");
+        assert_eq!(detail.latest_text(&keys, &["prompt"], Some(1.0)), Some("p"));
     }
 
     #[test]

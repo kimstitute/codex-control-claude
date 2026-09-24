@@ -77,6 +77,56 @@ class MonitorTests(ControllerTestCase):
 
         self.assertEqual(tree_command[1], "tree")
 
+    def test_local_catalog_and_viewer_selector_are_explicit_opt_in(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            transcript = root / "session.jsonl"
+            transcript.write_text(
+                json.dumps(
+                    {
+                        "type": "user",
+                        "sessionId": "local-session",
+                        "cwd": str(root),
+                        "timestamp": "2026-01-01T00:00:00Z",
+                        "message": {"content": "local only"},
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            data = self.cli(
+                "monitor", "local", "sessions", "--source", "claude", "--claude-root", str(root)
+            )
+            binary = root / ("ccc-viewer.exe" if sys.platform == "win32" else "ccc-viewer")
+            binary.write_bytes(b"viewer")
+            args = type(
+                "Args",
+                (),
+                {
+                    "viewer_bin": binary,
+                    "inspect": False,
+                    "tree": False,
+                    "stream_file": None,
+                    "state_dir": self.state,
+                    "poll_seconds": 0.5,
+                    "no_follow": True,
+                    "no_color": False,
+                    "local_detail": False,
+                    "detail_source": data["sessions"][0]["selector"],
+                    "claude_root": root,
+                    "codex_root": None,
+                    "detail_current": False,
+                    "detail_dir": None,
+                    "detail_file": None,
+                    "detail_id": None,
+                },
+            )()
+            command = monitor_cli._viewer_command(args)
+
+        self.assertEqual(data["protocol"], "claude-control.local-sessions.v1")
+        self.assertIn("--detail-source", command)
+        self.assertIn("--claude-root", command)
+
     def test_bundled_viewer_manifest_detects_tampering(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             binary = Path(root) / ("ccc-viewer.exe" if sys.platform == "win32" else "ccc-viewer")
@@ -117,6 +167,21 @@ class MonitorTests(ControllerTestCase):
         self.assertEqual(set(document) - {"_exit_code"}, {"resourceSpans"})
         self.assertEqual(bundle["document"], {"resourceSpans": document["resourceSpans"]})
         self.assertEqual(bundle["metadata"]["exported_run_count"], 1)
+
+    def test_default_observation_surfaces_never_export_prompt_content(self) -> None:
+        sentinel = "LOCAL_TRANSCRIPT_SENTINEL_7e811b"
+        started = self.start("privacy-sonnet", {"text": sentinel}, "privacy-run")
+        self.assertEqual(self.wait_terminal(started["id"])["status"], "completed")
+
+        surfaces = [
+            self.cli("monitor", "events", "--limit", "1000"),
+            self.cli("monitor", "replay"),
+            self.cli("monitor", "agui", "events", "--limit", "1000"),
+            self.cli("monitor", "agui", "snapshot"),
+            self.cli("monitor", "export", "--format", "otlp-json", "--metadata"),
+            monitor.snapshot(Store(self.state), history=100),
+        ]
+        self.assertTrue(all(sentinel not in json.dumps(surface) for surface in surfaces))
 
     def test_cli_agui_snapshot_returns_one_standard_state_snapshot(self) -> None:
         started = self.start("agui-sonnet", {"text": "observed"}, "agui-run")
