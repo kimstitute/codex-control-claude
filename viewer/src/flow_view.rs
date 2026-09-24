@@ -24,7 +24,7 @@ use crate::theme::{
 };
 
 const PRIMARY_DIMS: (f64, f64) = (30.0, 7.0);
-const SECONDARY_DIMS: (f64, f64) = (28.0, 6.0);
+const SECONDARY_DIMS: (f64, f64) = (28.0, 7.0);
 const CELL_MIN_WIDTH: u16 = 10;
 const CELL_MIN_HEIGHT: u16 = 3;
 
@@ -90,6 +90,23 @@ impl ObserverNode {
                 bg.fg(palette.text),
             ),
         ]));
+
+        if self.card.operation_counts.iter().any(|count| *count > 0)
+            || self.card.open_operations > 0
+        {
+            let [read, write, patch, check] = self.card.operation_counts;
+            let mut chips = vec![Span::styled(
+                format!("R{read} W{write} P{patch} C{check}"),
+                bg.fg(GOLD).add_modifier(Modifier::BOLD),
+            )];
+            if self.card.open_operations > 0 {
+                chips.push(Span::styled(
+                    format!("  ⧗{}", self.card.open_operations),
+                    bg.fg(AMBER),
+                ));
+            }
+            lines.push(Line::from(chips));
+        }
 
         let tokens = compact_number(self.card.output_tokens);
         let mut footer = vec![Span::styled(
@@ -382,6 +399,8 @@ mod tests {
             model: Some("claude-opus-5".into()),
             activity: "working".into(),
             output_tokens: 1_200,
+            operation_counts: [1, 0, 2, 1],
+            open_operations: 1,
             position: Point::default(),
             width: 30,
             height: 6,

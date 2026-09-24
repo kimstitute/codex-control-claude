@@ -35,6 +35,7 @@ use crate::theme::{
 
 const FRAME_TIME: Duration = Duration::from_millis(32);
 const PLAY_TIME: Duration = Duration::from_millis(180);
+const PLAYBACK_SPEEDS: [f64; 6] = [0.25, 0.5, 1.0, 2.0, 4.0, 8.0];
 const RECENT_NODE_LIMIT: usize = 18;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -86,6 +87,28 @@ enum Playback {
     Playing,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GapMode {
+    Uniform,
+    Compressed,
+}
+
+impl GapMode {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Uniform => "GAP OFF",
+            Self::Compressed => "GAP ON",
+        }
+    }
+
+    fn toggled(self) -> Self {
+        match self {
+            Self::Uniform => Self::Compressed,
+            Self::Compressed => Self::Uniform,
+        }
+    }
+}
+
 impl Playback {
     fn label(self) -> &'static str {
         match self {
@@ -105,6 +128,10 @@ struct UiRegions {
     play: Option<Rect>,
     live: Option<Rect>,
     scope: Option<Rect>,
+    speed: Option<Rect>,
+    gap: Option<Rect>,
+    previous_era: Option<Rect>,
+    next_era: Option<Rect>,
 }
 
 pub struct App {
@@ -120,6 +147,8 @@ pub struct App {
     playback: Playback,
     camera: CameraMode,
     scope: ScopeMode,
+    speed_index: usize,
+    gap_mode: GapMode,
     show_help: bool,
     show_info: bool,
     quit: bool,
@@ -129,6 +158,11 @@ pub struct App {
     last_frame: Instant,
     regions: UiRegions,
     mouse_capture: bool,
+    inspector_scroll: u16,
+    inspector_content_height: u16,
+    inspector_viewport_height: u16,
+    inspector_follow_latest: bool,
+    inspector_selected: Option<String>,
 }
 
 impl App {
@@ -159,6 +193,8 @@ impl App {
             },
             camera: CameraMode::Overview,
             scope: ScopeMode::Focus,
+            speed_index: 2,
+            gap_mode: GapMode::Uniform,
             show_help: false,
             show_info: false,
             quit: false,
@@ -168,6 +204,11 @@ impl App {
             last_frame: Instant::now(),
             regions: UiRegions::default(),
             mouse_capture: true,
+            inspector_scroll: 0,
+            inspector_content_height: 0,
+            inspector_viewport_height: 0,
+            inspector_follow_latest: false,
+            inspector_selected: None,
         })
     }
 
@@ -235,18 +276,30 @@ impl App {
                 }
             }
         }
-        if self.playback == Playback::Playing && self.last_play.elapsed() >= PLAY_TIME {
-            if self.index < self.timeline.latest_index() {
+        if self.playback == Playback::Playing {
+            let mut advanced = 0;
+            while self.index < self.timeline.latest_index()
+                && self.last_play.elapsed() >= self.playback_delay()
+                && advanced < 512
+            {
+                let delay = self.playback_delay();
+                self.last_play = self
+                    .last_play
+                    .checked_add(delay)
+                    .unwrap_or_else(Instant::now);
                 self.index += 1;
+                advanced += 1;
+            }
+            if advanced > 0 {
                 self.refresh_projection();
-            } else {
+            }
+            if self.index >= self.timeline.latest_index() {
                 self.playback = if self.stream_open {
                     Playback::Live
                 } else {
                     Playback::Paused
                 };
             }
-            self.last_play = Instant::now();
         }
         let now = Instant::now();
         let elapsed = now.saturating_duration_since(self.last_frame);
@@ -288,6 +341,55 @@ impl App {
             Playback::Live | Playback::Paused => Playback::Playing,
         };
         self.last_play = Instant::now();
+    }
+
+    fn playback_delay(&self) -> Duration {
+        let speed = PLAYBACK_SPEEDS[self.speed_index];
+        let millis = if self.gap_mode == GapMode::Uniform {
+            PLAY_TIME.as_secs_f64() * 1_000.0
+        } else {
+            let current = self.timeline.event(self.index).map(|event| event.timestamp);
+            let next = self
+                .timeline
+                .event(self.index.saturating_add(1))
+                .map(|event| event.timestamp);
+            match (current, next) {
+                (Some(current), Some(next)) if current.is_finite() && next.is_finite() => {
+                    ((next - current).max(0.0) * 1_000.0).clamp(16.0, 2_000.0)
+                }
+                _ => PLAY_TIME.as_secs_f64() * 1_000.0,
+            }
+        };
+        Duration::from_secs_f64((millis / speed).max(1.0) / 1_000.0)
+    }
+
+    fn change_speed(&mut self, delta: isize) {
+        self.speed_index = (self.speed_index as isize + delta)
+            .clamp(0, PLAYBACK_SPEEDS.len() as isize - 1) as usize;
+        self.last_play = Instant::now();
+    }
+
+    fn toggle_gap(&mut self) {
+        self.gap_mode = self.gap_mode.toggled();
+        self.last_play = Instant::now();
+    }
+
+    fn seek_era(&mut self, next: bool) {
+        let target = if next {
+            self.timeline.next_era(self.index)
+        } else {
+            self.timeline.previous_era(self.index)
+        };
+        self.seek_to(target);
+    }
+
+    fn scroll_inspector(&mut self, delta: isize) {
+        let max = self
+            .inspector_content_height
+            .saturating_sub(self.inspector_viewport_height);
+        self.inspector_scroll =
+            (self.inspector_scroll as isize + delta).clamp(0, max as isize) as u16;
+        self.inspector_follow_latest = self.inspector_scroll == 0;
     }
 
     fn follow_activity(&mut self) {
@@ -351,6 +453,17 @@ impl App {
             KeyCode::Char(' ') => self.toggle_play(),
             KeyCode::Char('[') => self.seek(-1),
             KeyCode::Char(']') => self.seek(1),
+            KeyCode::Char('{') => self.seek_era(false),
+            KeyCode::Char('}') => self.seek_era(true),
+            KeyCode::Char(',') => self.change_speed(-1),
+            KeyCode::Char('.') => self.change_speed(1),
+            KeyCode::Char('z') | KeyCode::Char('Z') => self.toggle_gap(),
+            KeyCode::PageUp if self.selected_id().is_some() => {
+                self.scroll_inspector(-(self.inspector_viewport_height.max(1) as isize));
+            }
+            KeyCode::PageDown if self.selected_id().is_some() => {
+                self.scroll_inspector(self.inspector_viewport_height.max(1) as isize);
+            }
             KeyCode::Home => self.seek_to(0),
             KeyCode::End | KeyCode::Char('g') | KeyCode::Char('G') => self.go_live(),
             KeyCode::Char('o') | KeyCode::Char('O') => {
@@ -449,12 +562,50 @@ impl App {
                 self.cycle_scope();
                 return;
             }
+            if self
+                .regions
+                .speed
+                .is_some_and(|area| point_in_rect(point, area))
+            {
+                self.speed_index = (self.speed_index + 1) % PLAYBACK_SPEEDS.len();
+                self.last_play = Instant::now();
+                return;
+            }
+            if self
+                .regions
+                .gap
+                .is_some_and(|area| point_in_rect(point, area))
+            {
+                self.toggle_gap();
+                return;
+            }
+            if self
+                .regions
+                .previous_era
+                .is_some_and(|area| point_in_rect(point, area))
+            {
+                self.seek_era(false);
+                return;
+            }
+            if self
+                .regions
+                .next_era
+                .is_some_and(|area| point_in_rect(point, area))
+            {
+                self.seek_era(true);
+                return;
+            }
         }
         if self
             .regions
             .inspector
             .is_some_and(|area| point_in_rect(point, area))
         {
+            match mouse.kind {
+                MouseEventKind::ScrollUp => self.scroll_inspector(-3),
+                MouseEventKind::ScrollDown => self.scroll_inspector(3),
+                _ => {}
+            }
             return;
         }
         if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Right)) {
@@ -612,8 +763,8 @@ fn draw_canvas(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) {
     }
 }
 
-fn draw_inspector(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
-    let Some(card) = app.selected_card() else {
+fn draw_inspector(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) {
+    let Some(card) = app.selected_card().cloned() else {
         return;
     };
     let block = Block::default()
@@ -649,25 +800,246 @@ fn draw_inspector(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         Line::from(Span::styled("identity", key)),
         Line::from(Span::styled(card.key.clone(), dim)),
     ];
-    if inner.height > 14 {
-        lines.extend([
-            Line::from(""),
-            Line::from(Span::styled(
-                "Observation contains state metadata only.",
-                dim,
-            )),
-            Line::from(Span::styled(
-                "Prompts, reasoning, and tool bodies are excluded.",
-                dim,
-            )),
-        ]);
+
+    let mut runs = app
+        .state
+        .related_run_ids(&card.key)
+        .into_iter()
+        .filter_map(|run_id| app.state.nodes.get(&format!("run:{run_id}")))
+        .collect::<Vec<_>>();
+    runs.sort_by(|left, right| {
+        run_order(right)
+            .total_cmp(&run_order(left))
+            .then_with(|| right.id.cmp(&left.id))
+    });
+    if !runs.is_empty() {
+        lines.extend([Line::from(""), Line::from(Span::styled("runs", key))]);
+        for run in runs {
+            let run_id = &run.id;
+            lines.push(Line::from(vec![
+                Span::styled(
+                    "◆ ",
+                    Style::default().fg(state_color(&run.state)).bg(SURFACE),
+                ),
+                Span::styled(run_id.get(..8).unwrap_or(run_id).to_owned(), heading),
+                Span::styled(format!("  {}", run.state), value),
+            ]));
+            lines.push(detail_line(
+                "effort",
+                raw_string(&run.raw, "effort").unwrap_or("—"),
+                key,
+                value,
+            ));
+            lines.push(detail_line(
+                "actual",
+                model_list(&run.raw).as_deref().unwrap_or("—"),
+                key,
+                value,
+            ));
+            lines.push(detail_line(
+                "timing",
+                &timing_line(&run.raw, &run.state),
+                key,
+                value,
+            ));
+            lines.push(detail_line("usage", &usage_line(&run.raw), key, value));
+            lines.push(detail_line("cost", &cost_line(&run.raw), key, value));
+        }
+    }
+
+    let operations = app.state.operations_for(&card.key);
+    lines.extend([
+        Line::from(""),
+        Line::from(Span::styled("controller operations", key)),
+    ]);
+    let [read, write, patch, check] = card.operation_counts;
+    lines.push(Line::from(vec![
+        Span::styled(format!(" R{read} "), Style::default().fg(CANVAS).bg(GOLD)),
+        Span::raw(" "),
+        Span::styled(format!(" W{write} "), Style::default().fg(CANVAS).bg(GOLD)),
+        Span::raw(" "),
+        Span::styled(format!(" P{patch} "), Style::default().fg(CANVAS).bg(GOLD)),
+        Span::raw(" "),
+        Span::styled(format!(" C{check} "), Style::default().fg(CANVAS).bg(GOLD)),
+        Span::styled(format!("  open {}", card.open_operations), dim),
+    ]));
+    if operations.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "No recorded controller operations.",
+            dim,
+        )));
+    } else {
+        for operation in operations.iter().rev() {
+            let duration = operation
+                .duration_seconds()
+                .map(format_duration)
+                .unwrap_or_else(|| {
+                    if operation.state == "started" {
+                        "open"
+                    } else {
+                        "—"
+                    }
+                    .to_owned()
+                });
+            lines.push(Line::from(vec![
+                Span::styled(format!("#{:<4}", operation.seq), dim),
+                Span::styled(format!("{:<12}", operation.kind), value),
+                Span::styled(
+                    format!("{:<9}", operation.state),
+                    Style::default()
+                        .fg(state_color(&operation.state))
+                        .bg(SURFACE),
+                ),
+                Span::styled(duration, dim),
+            ]));
+        }
+    }
+    lines.extend([
+        Line::from(""),
+        Line::from(Span::styled(
+            "Content-free metadata only · paths, commands, prompts,",
+            dim,
+        )),
+        Line::from(Span::styled(
+            "reasoning, operation bodies, and results are excluded.",
+            dim,
+        )),
+        Line::from(Span::styled("PgUp/PgDn or wheel to scroll", dim)),
+    ]);
+
+    let selection_changed = app.inspector_selected.as_deref() != Some(&card.key);
+    if selection_changed {
+        app.inspector_selected = Some(card.key.clone());
+        app.inspector_scroll = 0;
+        app.inspector_follow_latest = true;
+    }
+    app.inspector_content_height = lines.len().min(u16::MAX as usize) as u16;
+    app.inspector_viewport_height = inner.height;
+    let max_scroll = app
+        .inspector_content_height
+        .saturating_sub(app.inspector_viewport_height);
+    if app.inspector_follow_latest {
+        app.inspector_scroll = 0;
+    } else {
+        app.inspector_scroll = app.inspector_scroll.min(max_scroll);
     }
     frame.render_widget(
         Paragraph::new(lines)
             .style(Style::default().bg(SURFACE))
-            .wrap(Wrap { trim: true }),
+            .scroll((app.inspector_scroll, 0)),
         inner,
     );
+}
+
+fn raw_string<'a>(value: &'a serde_json::Value, name: &str) -> Option<&'a str> {
+    value.get(name).and_then(serde_json::Value::as_str)
+}
+
+fn run_order(run: &crate::model::Node) -> f64 {
+    run.raw
+        .get("started")
+        .or_else(|| run.raw.get("created"))
+        .and_then(serde_json::Value::as_f64)
+        .filter(|value| value.is_finite())
+        .unwrap_or(0.0)
+}
+
+fn model_list(value: &serde_json::Value) -> Option<String> {
+    let models = value.get("models")?.as_array()?;
+    let names = models
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect::<Vec<_>>();
+    (!names.is_empty()).then(|| names.join(", "))
+}
+
+fn timing_line(value: &serde_json::Value, state: &str) -> String {
+    let started = value.get("started").and_then(serde_json::Value::as_f64);
+    let finished = value.get("finished").and_then(serde_json::Value::as_f64);
+    let duration = finished
+        .zip(started)
+        .map(|(finished, started)| format_duration((finished - started).max(0.0)));
+    match (started, duration) {
+        (Some(started), Some(duration)) => format!("{} · {duration}", format_clock(started)),
+        (Some(started), None) if active_state(state) => {
+            format!("{} · running", format_clock(started))
+        }
+        (Some(started), None) => format!("{} · end unavailable", format_clock(started)),
+        _ => "—".to_owned(),
+    }
+}
+
+fn usage_line(value: &serde_json::Value) -> String {
+    let Some(telemetry) = value.get("telemetry") else {
+        return "—".to_owned();
+    };
+    let usage = telemetry.get("usage").unwrap_or(telemetry);
+    if let Some(items) = usage.as_array() {
+        let input: u64 = items
+            .iter()
+            .filter_map(|item| item.get("inputTokens").and_then(serde_json::Value::as_u64))
+            .sum();
+        let output: u64 = items
+            .iter()
+            .filter_map(|item| item.get("outputTokens").and_then(serde_json::Value::as_u64))
+            .sum();
+        let thinking: u64 = items
+            .iter()
+            .filter_map(|item| {
+                item.get("reasoningTokens")
+                    .and_then(serde_json::Value::as_u64)
+            })
+            .sum();
+        return format!(
+            "in {} · out {} · think {}",
+            compact_number(input),
+            compact_number(output),
+            compact_number(thinking)
+        );
+    }
+    let input = usage
+        .get("input_tokens")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let output = usage
+        .get("output_tokens")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let cache = usage
+        .get("cache_read_input_tokens")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let thinking = usage
+        .pointer("/output_tokens_details/thinking_tokens")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    if input + output + cache + thinking == 0 {
+        "—".to_owned()
+    } else {
+        format!(
+            "in {} · out {} · cache {} · think {}",
+            compact_number(input),
+            compact_number(output),
+            compact_number(cache),
+            compact_number(thinking)
+        )
+    }
+}
+
+fn cost_line(value: &serde_json::Value) -> String {
+    value
+        .pointer("/telemetry/provider_cost_usd")
+        .and_then(serde_json::Value::as_f64)
+        .map(|cost| format!("${cost:.4}"))
+        .unwrap_or_else(|| "—".to_owned())
+}
+
+fn format_duration(seconds: f64) -> String {
+    if seconds < 1.0 {
+        format!("{:.0}ms", seconds * 1_000.0)
+    } else {
+        format!("{seconds:.1}s")
+    }
 }
 
 fn detail_line(label: &'static str, content: &str, key: Style, value: Style) -> Line<'static> {
@@ -785,6 +1157,10 @@ fn draw_footer(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) {
     app.regions.play = None;
     app.regions.live = None;
     app.regions.scope = None;
+    app.regions.speed = None;
+    app.regions.gap = None;
+    app.regions.previous_era = None;
+    app.regions.next_era = None;
     let mut x = area.x;
     let brand = " observer ";
     buffer.set_string(
@@ -841,6 +1217,57 @@ fn draw_footer(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) {
             .add_modifier(Modifier::BOLD),
     );
     x += scope.len() as u16 + 1;
+    if area.right().saturating_sub(x) >= 46 {
+        let previous = " ‹ ERA ";
+        app.regions.previous_era = Some(Rect::new(x, area.y, previous.len() as u16, 1));
+        buffer.set_string(
+            x,
+            area.y,
+            previous,
+            Style::default().fg(GOLD).bg(SURFACE_RAISED),
+        );
+        x += previous.len() as u16;
+        let next = " ERA › ";
+        app.regions.next_era = Some(Rect::new(x, area.y, next.len() as u16, 1));
+        buffer.set_string(
+            x,
+            area.y,
+            next,
+            Style::default().fg(GOLD).bg(SURFACE_RAISED),
+        );
+        x += next.len() as u16 + 1;
+        let speed = format!(" {:.2}× ", PLAYBACK_SPEEDS[app.speed_index]);
+        app.regions.speed = Some(Rect::new(x, area.y, speed.len() as u16, 1));
+        buffer.set_string(
+            x,
+            area.y,
+            &speed,
+            Style::default()
+                .fg(CANVAS)
+                .bg(GOLD)
+                .add_modifier(Modifier::BOLD),
+        );
+        x += speed.len() as u16 + 1;
+        let gap = format!(" {} ", app.gap_mode.label());
+        app.regions.gap = Some(Rect::new(x, area.y, gap.len() as u16, 1));
+        buffer.set_string(
+            x,
+            area.y,
+            &gap,
+            Style::default()
+                .fg(if app.gap_mode == GapMode::Compressed {
+                    CANVAS
+                } else {
+                    MUTED
+                })
+                .bg(if app.gap_mode == GapMode::Compressed {
+                    GREEN
+                } else {
+                    SURFACE_RAISED
+                }),
+        );
+        x += gap.len() as u16 + 1;
+    }
     let total_agents = app
         .scene
         .cards
@@ -854,8 +1281,9 @@ fn draw_footer(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) {
         .filter(|card| card.kind == "session")
         .count();
     let tokens: u64 = app.scene.cards.iter().map(|card| card.output_tokens).sum();
+    let (era, eras) = app.timeline.era_ordinal(app.index);
     let stats = format!(
-        "{visible_agents}/{total_agents} agents · {} tok · {}",
+        "{visible_agents}/{total_agents} agents · {} tok · era {era}/{eras} · {}",
         compact_number(tokens),
         app.camera.label()
     );
@@ -893,7 +1321,11 @@ fn draw_help(frame: &mut ratatui::Frame<'_>) {
         ]),
         Line::from(vec![
             Span::styled("replay", Style::default().fg(GOLD)),
-            Span::raw("  space play/pause · [ ] step · home start · g/end live"),
+            Span::raw("  space play/pause · [ ] step · { } era · ,/. speed · z gap"),
+        ]),
+        Line::from(vec![
+            Span::styled("detail", Style::default().fg(GOLD)),
+            Span::raw("  PgUp/PgDn or mouse wheel scroll · home start · g/end live"),
         ]),
         Line::from(vec![
             Span::styled("system", Style::default().fg(GOLD)),
@@ -1311,7 +1743,7 @@ mod tests {
         terminal.draw(|frame| draw(frame, &mut app)).unwrap();
         let panel = app.regions.inspector.expect("selection should open detail");
         assert!(panel.width > app.regions.canvas.width);
-        assert!(buffer_text(&terminal).contains("Observation contains state metadata only"));
+        assert!(buffer_text(&terminal).contains("Content-free metadata only"));
     }
 
     #[test]
@@ -1352,5 +1784,43 @@ mod tests {
             scope.y,
         ));
         assert_eq!(app.scope, ScopeMode::All);
+    }
+
+    #[test]
+    fn playback_speed_and_gap_only_change_presentation_delay() {
+        let mut app = sample_app(3);
+        app.index = 0;
+        assert_eq!(app.playback_delay(), Duration::from_millis(180));
+        app.change_speed(1);
+        assert_eq!(app.playback_delay(), Duration::from_millis(90));
+        app.toggle_gap();
+        assert_eq!(app.playback_delay(), Duration::from_millis(500));
+        assert_eq!(app.index, 0);
+    }
+
+    #[test]
+    fn inspector_scroll_clamps_and_rearms_latest_at_top() {
+        let mut app = sample_app(1);
+        app.inspector_content_height = 40;
+        app.inspector_viewport_height = 10;
+        app.scroll_inspector(12);
+        assert_eq!(app.inspector_scroll, 12);
+        assert!(!app.inspector_follow_latest);
+        app.scroll_inspector(100);
+        assert_eq!(app.inspector_scroll, 30);
+        assert!(!app.inspector_follow_latest);
+        app.scroll_inspector(-3);
+        assert_eq!(app.inspector_scroll, 27);
+        assert!(!app.inspector_follow_latest);
+        app.scroll_inspector(-100);
+        assert_eq!(app.inspector_scroll, 0);
+        assert!(app.inspector_follow_latest);
+    }
+
+    #[test]
+    fn missing_terminal_timestamp_is_not_reported_as_running() {
+        let raw = json!({"started": 1_700_000_000.0});
+        assert!(timing_line(&raw, "running").ends_with(" · running"));
+        assert!(timing_line(&raw, "completed").ends_with(" · end unavailable"));
     }
 }

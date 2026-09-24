@@ -79,6 +79,13 @@ Press `a` to rotate through `focus`, `recent` and `all` while preserving complet
 cursor replay. Sparse background spacing, compact cards, clipped step edges,
 the minimap and a two-row activity timeline share one viewport model.
 
+Version 0.23 adds a scrollable, content-free Safe Inspector for related-run
+model, effort, timing, provider token/cost and controller-operation history.
+Cards show compact `R/W/P/C` operation chips; `monitor viewer --tree` emits the
+complete hierarchy including hidden runs and operation summaries. Replay adds
+0.25×–8× speed, timestamp-gap compression and run-era navigation through both
+keyboard and mouse controls.
+
 ## Choose the right workflow
 
 | Goal | Use | What it adds |
@@ -102,6 +109,7 @@ the controller yourself.
 
 ```bash
 claude_control monitor viewer
+claude_control monitor viewer --tree
 claude_control monitor tui
 claude_control monitor limits
 claude_control monitor agui stream --after 0 --limit 100
@@ -764,7 +772,7 @@ claude_control migrate --offline
 claude_control migrate --status
 ```
 
-New stores use schema 14. Existing schema 3–13 stores are upgraded step by step
+New stores use schema 15. Existing schema 3–14 stores are upgraded step by step
 with verified SQLite backups and a durable migration journal. Repeat
 `migrate --offline` on the original state directory after an interrupted
 migration. Never run jobs against a backup or replace the original database with

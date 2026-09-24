@@ -26,6 +26,8 @@ pub struct Card {
     pub model: Option<String>,
     pub activity: String,
     pub output_tokens: u64,
+    pub operation_counts: [u32; 4],
+    pub open_operations: u32,
     pub position: Point,
     pub width: i32,
     pub height: i32,
@@ -80,6 +82,7 @@ pub fn project_with_positions(
     }
 
     let root_key = "controller:local".to_owned();
+    let root_operations = operation_summary(state, &root_key);
     let mut cards = vec![Card {
         key: root_key.clone(),
         kind: "controller".to_owned(),
@@ -98,6 +101,8 @@ pub fn project_with_positions(
             .filter(|node| node.kind == "run")
             .map(|node| node.output_tokens)
             .sum(),
+        operation_counts: root_operations.0,
+        open_operations: root_operations.1,
         position: Point::default(),
         width: CARD_WIDTH,
         height: CARD_HEIGHT,
@@ -114,6 +119,7 @@ pub fn project_with_positions(
         } else {
             compact_activity(node)
         };
+        let operations = operation_summary(state, key);
         cards.push(Card {
             key: key.clone(),
             kind: node.kind.clone(),
@@ -123,6 +129,8 @@ pub fn project_with_positions(
             model: node.model.clone(),
             activity,
             output_tokens,
+            operation_counts: operations.0,
+            open_operations: operations.1,
             position: Point::default(),
             width: CARD_WIDTH,
             height: CARD_HEIGHT,
@@ -186,6 +194,26 @@ pub fn project_with_positions(
             .collect(),
         bounds,
     }
+}
+
+fn operation_summary(state: &GraphState, key: &str) -> ([u32; 4], u32) {
+    let mut counts = [0; 4];
+    let mut open = 0;
+    for operation in state.operations_for(key) {
+        if let Some(index) = match operation.kind.as_str() {
+            "read" => Some(0),
+            "write" => Some(1),
+            "patch" => Some(2),
+            "named_check" => Some(3),
+            _ => None,
+        } {
+            counts[index] += 1;
+        }
+        if operation.state == "started" {
+            open += 1;
+        }
+    }
+    (counts, open)
 }
 
 fn visible_kind(kind: &str) -> bool {
@@ -368,6 +396,18 @@ mod tests {
                 ..Node::default()
             },
         );
+        state.nodes.insert(
+            "operation:op:r1:0".to_owned(),
+            Node {
+                id: "op:r1:0".to_owned(),
+                kind: "operation".to_owned(),
+                state: "started".to_owned(),
+                raw: serde_json::json!({
+                    "run_id":"r1","seq":0,"operation":"read","state":"started"
+                }),
+                ..Node::default()
+            },
+        );
         let scene = project(&state);
         assert_eq!(scene.cards.len(), 2);
         let agent = scene
@@ -377,6 +417,8 @@ mod tests {
             .unwrap();
         assert_eq!(agent.output_tokens, 42);
         assert_eq!(agent.activity, "1 runs");
+        assert_eq!(agent.operation_counts, [1, 0, 0, 0]);
+        assert_eq!(agent.open_operations, 1);
         assert_eq!(scene.links[0].from, "controller:local");
     }
 

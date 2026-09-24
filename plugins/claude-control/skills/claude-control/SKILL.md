@@ -5,7 +5,7 @@ description: Manage multiple persistent Claude Code sessions on the current Linu
 
 # Claude Control
 
-Use the bundled `../../scripts/claude_control_cli.py`, resolving that path from this skill's directory. Public commands return JSON except the interactive monitors. Python 3.10+ and locally authenticated Claude Code are prerequisites; run `--help` for flags. Version 0.22 supports Linux and Windows supplied-text delegation, per-role versioned model and effort settings, a prompt-free signed-in account model catalog, JSON-schema task reports, base-hashed patch operations, one bounded format repair, reviewer vetoes, typed acceptance evidence, finite plan/edit/review compositions, routing provenance, fair multi-composition dispatch, verified scout reuse, guarded apply, telemetry, durable observation history, cursor replay, OTLP export, streaming AG-UI events and an optional mouse-driven Rataflow graph/replay viewer with focus/recent/all scopes. Claude native tools and MCP are disabled, with CLI safe mode and empty setting sources. The project-hook nonexecution test passed; administrator-managed policy still applies. For proposals, supply source text and inspect returned edits. For authorized file work, read [the workspace reference](references/workspaces.md) before creating a policy. The controller executes structured read/write/patch/named-check requests on private copies; source integration remains a Codex action.
+Use the bundled `../../scripts/claude_control_cli.py`, resolving that path from this skill's directory. Public commands return JSON except the interactive monitors. Python 3.10+ and locally authenticated Claude Code are prerequisites; run `--help` for flags. Version 0.23 supports Linux and Windows supplied-text delegation, per-role versioned model and effort settings, a prompt-free signed-in account model catalog, JSON-schema task reports, base-hashed patch operations, one bounded format repair, reviewer vetoes, typed acceptance evidence, finite plan/edit/review compositions, routing provenance, fair multi-composition dispatch, verified scout reuse, guarded apply, telemetry, durable observation history, cursor replay, OTLP export, streaming AG-UI events and an optional mouse-driven Rataflow graph/replay viewer with focus/recent/all scopes, scrollable Safe Inspector, controller-operation history, headless full-tree output, speed control, gap compression and run-era seeking. Claude native tools and MCP are disabled, with CLI safe mode and empty setting sources. The project-hook nonexecution test passed; administrator-managed policy still applies. For proposals, supply source text and inspect returned edits. For authorized file work, read [the workspace reference](references/workspaces.md) before creating a policy. The controller executes structured read/write/patch/named-check requests on private copies; source integration remains a Codex action.
 
 ## Execution settings
 
@@ -237,13 +237,13 @@ If no backend conversation was saved before the first turn stopped, a normal res
 
 Code updates should happen with managed runs stopped. Runtime data is separate from the plugin, and no uninstall or update should remove it. Process-group cleanup covers the managed tools-disabled execution; it is not a cgroup/filesystem sandbox or a promise about processes that escape their group. Do not enable shell/edit tools by modifying this CLI's fixed profile.
 
-New stores use schema 14. For an existing schema-3 through schema-13 store, finish/stop and reconcile all
+New stores use schema 15. For an existing schema-3 through schema-14 store, finish/stop and reconcile all
 managed work, stop all old CLI clients/workers, install the new code, then run
 `migrate --status` and `migrate --offline` on that same state directory. Migration
 makes a verified SQLite backup and a durable journal. If interrupted, repeat
 `migrate --offline` on the original directory; never run jobs against the backup.
 Active/unknown executions block migration. New code retains legacy diagnostic and
-stop/reconcile commands on schema 3; task lifecycle needs schema 4, queue commands schema 5, messages schema 6, workflows schema 7, workspaces schema 8, explicit effort schema 9, compositions schema 10, run telemetry schema 11, guarded workspace apply schema 12, portable platform execution identities schema 13, and durable observation history schema 14. Do not use
+stop/reconcile commands on schema 3; task lifecycle needs schema 4, queue commands schema 5, messages schema 6, workflows schema 7, workspaces schema 8, explicit effort schema 9, compositions schema 10, run telemetry schema 11, guarded workspace apply schema 12, portable platform execution identities schema 13, durable observation history schema 14, and content-free controller-operation projection schema 15. Do not use
 re-initialization, automatic downgrade or a fresh store to bypass uncertainty.
 
 The package launches workers for jobs, not an always-running coordinator. Codex is not automatically awakened after the conversation ends. A later Codex task can discover the same host-local records via `list`.
@@ -251,8 +251,10 @@ The package launches workers for jobs, not an always-running coordinator. Codex 
 ## Observe agents and usage
 
 Use `monitor viewer` for the optional read-only Rust/Rataflow semantic-zoom graph,
-focus/recent/all scopes, minimap, mouse/keyboard camera controls, semantic agent
-inspector, activity timeline and event-indexed historical replay. It receives
+focus/recent/all scopes, minimap, mouse/keyboard camera controls, scrollable Safe
+Inspector, content-free controller-operation history, activity timeline and
+event-indexed historical replay. Use `monitor viewer --tree` for a deterministic
+headless full hierarchy including hidden runs and operation summaries. It receives
 content-free AG-UI JSONL from one long-lived controller process and never reads
 SQLite or mutates work directly. Use `monitor tui` for the portable terminal
 graph and provider quota views when the viewer binary is not bundled. It shows

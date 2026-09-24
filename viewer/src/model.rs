@@ -35,6 +35,85 @@ pub struct GraphState {
     pub skipped: u64,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct OperationRecord {
+    pub id: String,
+    pub run_id: String,
+    pub seq: u64,
+    pub kind: String,
+    pub state: String,
+    pub started: Option<f64>,
+    pub finished: Option<f64>,
+}
+
+impl OperationRecord {
+    pub fn duration_seconds(&self) -> Option<f64> {
+        let duration = self.finished? - self.started?;
+        duration.is_finite().then_some(duration.max(0.0))
+    }
+}
+
+impl GraphState {
+    pub fn related_run_ids(&self, key: &str) -> std::collections::BTreeSet<String> {
+        let mut runs = std::collections::BTreeSet::new();
+        if key == "controller:local" {
+            runs.extend(
+                self.nodes
+                    .values()
+                    .filter(|node| node.kind == "run")
+                    .map(|node| node.id.clone()),
+            );
+            return runs;
+        }
+        let Some((kind, id)) = key.split_once(':') else {
+            return runs;
+        };
+        if kind == "session" {
+            runs.extend(
+                self.nodes
+                    .values()
+                    .filter(|node| node.kind == "run" && node.session_id.as_deref() == Some(id))
+                    .map(|node| node.id.clone()),
+            );
+        }
+        if kind == "run" {
+            runs.insert(id.to_owned());
+        }
+        if let Some(active) = self
+            .nodes
+            .get(key)
+            .and_then(|node| node.active_run_id.as_ref())
+        {
+            runs.insert(active.clone());
+        }
+        for edge in self.edges.values() {
+            if edge.from_kind == kind && edge.from_id == id && edge.to_kind == "run" {
+                runs.insert(edge.to_id.clone());
+            }
+        }
+        runs
+    }
+
+    pub fn operations_for(&self, key: &str) -> Vec<OperationRecord> {
+        let runs = self.related_run_ids(key);
+        let mut operations = self
+            .nodes
+            .values()
+            .filter(|node| node.kind == "operation")
+            .filter_map(operation_record)
+            .filter(|operation| runs.contains(&operation.run_id))
+            .collect::<Vec<_>>();
+        operations.sort_by(|left, right| {
+            left.started
+                .partial_cmp(&right.started)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| left.run_id.cmp(&right.run_id))
+                .then_with(|| left.seq.cmp(&right.seq))
+        });
+        operations
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct EventRecord {
     pub cursor: u64,
@@ -144,6 +223,61 @@ impl Timeline {
         }
         Ok(state)
     }
+
+    pub fn era_starts(&self) -> Vec<usize> {
+        let mut starts = vec![0];
+        starts.extend(
+            self.events
+                .iter()
+                .enumerate()
+                .filter(|(_, event)| is_run_start(&event.raw))
+                .map(|(index, _)| index)
+                .filter(|index| *index > 0),
+        );
+        starts.sort_unstable();
+        starts.dedup();
+        starts
+    }
+
+    pub fn previous_era(&self, index: usize) -> usize {
+        self.era_starts()
+            .into_iter()
+            .rfind(|start| *start < index)
+            .unwrap_or(0)
+    }
+
+    pub fn next_era(&self, index: usize) -> usize {
+        self.era_starts()
+            .into_iter()
+            .find(|start| *start > index)
+            .unwrap_or_else(|| self.latest_index())
+    }
+
+    pub fn era_ordinal(&self, index: usize) -> (usize, usize) {
+        let starts = self.era_starts();
+        let ordinal = starts.partition_point(|start| *start <= index).max(1);
+        (ordinal, starts.len())
+    }
+}
+
+fn is_run_start(event: &Value) -> bool {
+    event.get("type").and_then(Value::as_str) == Some("RUN_STARTED")
+        || (event.get("type").and_then(Value::as_str) == Some("CUSTOM")
+            && event.pointer("/value/kind").and_then(Value::as_str) == Some("node_created")
+            && event.pointer("/value/entity_kind").and_then(Value::as_str) == Some("run"))
+}
+
+fn operation_record(node: &Node) -> Option<OperationRecord> {
+    let raw = node.raw.as_object()?;
+    Some(OperationRecord {
+        id: node.id.clone(),
+        run_id: raw.get("run_id")?.as_str()?.to_owned(),
+        seq: raw.get("seq")?.as_u64()?,
+        kind: raw.get("operation")?.as_str()?.to_owned(),
+        state: raw.get("state")?.as_str()?.to_owned(),
+        started: raw.get("started").and_then(Value::as_f64),
+        finished: raw.get("finished").and_then(Value::as_f64),
+    })
 }
 
 fn cursor(event: &Value) -> Result<u64> {
@@ -588,5 +722,83 @@ mod tests {
             timeline.state_at(64).unwrap().nodes["session:s1"].state,
             "s65"
         );
+    }
+
+    #[test]
+    fn run_starts_define_deterministic_era_navigation() {
+        let mut timeline = Timeline::default();
+        timeline
+            .push(custom(
+                1,
+                "baseline",
+                "store",
+                "baseline",
+                serde_json::json!({"fidelity":"exact","nodes":{},"edges":{},"telemetry":[]}),
+            ))
+            .unwrap();
+        timeline
+            .push(custom(
+                2,
+                "node_created",
+                "run",
+                "r1",
+                serde_json::json!({"id":"r1","session_id":"s1","state":"pending"}),
+            ))
+            .unwrap();
+        timeline
+            .push(custom(
+                3,
+                "node_state",
+                "run",
+                "r1",
+                serde_json::json!({"id":"r1","session_id":"s1","state":"completed"}),
+            ))
+            .unwrap();
+        timeline
+            .push(custom(
+                4,
+                "node_created",
+                "run",
+                "r2",
+                serde_json::json!({"id":"r2","session_id":"s1","state":"pending"}),
+            ))
+            .unwrap();
+
+        assert_eq!(timeline.era_starts(), vec![0, 1, 3]);
+        assert_eq!(timeline.next_era(1), 3);
+        assert_eq!(timeline.previous_era(3), 1);
+        assert_eq!(timeline.era_ordinal(2), (2, 3));
+    }
+
+    #[test]
+    fn operation_history_is_related_through_runs_without_exposing_bodies() {
+        let mut state = GraphState::default();
+        state.nodes.insert(
+            "run:r1".into(),
+            Node {
+                id: "r1".into(),
+                kind: "run".into(),
+                session_id: Some("s1".into()),
+                ..Node::default()
+            },
+        );
+        state.nodes.insert(
+            "operation:op:r1:2".into(),
+            Node {
+                id: "op:r1:2".into(),
+                kind: "operation".into(),
+                state: "settled".into(),
+                raw: serde_json::json!({
+                    "node":"operation","id":"op:r1:2","run_id":"r1","seq":2,
+                    "operation":"patch","state":"settled","started":1.0,"finished":1.25
+                }),
+                ..Node::default()
+            },
+        );
+
+        let operations = state.operations_for("session:s1");
+        assert_eq!(operations.len(), 1);
+        assert_eq!(operations[0].kind, "patch");
+        assert_eq!(operations[0].duration_seconds(), Some(0.25));
     }
 }

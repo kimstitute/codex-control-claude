@@ -1,4 +1,4 @@
-"""Schema 14 appends a sanitized, append-only observation ledger beside the tables."""
+"""Schemas 14–15 provide sanitized durable observation and operation history."""
 
 from __future__ import annotations
 
@@ -175,6 +175,17 @@ def populate(store, workarea):
             (run_id, ids["space"], ids["worker"]),
         )
         db.execute(
+            "INSERT INTO workspace_requests(run_id,seq,action,created) VALUES(?,0,?,1.25)",
+            (
+                run_id,
+                '{"op":"patch","path":"secret-repo-path","content":"SECRET-BODY"}',
+            ),
+        )
+        db.execute(
+            "INSERT INTO workspace_receipts(run_id,seq,result,created) VALUES(?,0,?,1.5)",
+            (run_id, '{"outcome":"ok","message":"SECRET-PROMPT"}'),
+        )
+        db.execute(
             "INSERT INTO workspace_exports(workspace_id,run_id,manifest_sha256,"
             "result_sha256,created) VALUES(?,?,'manifest','result-sha',1.0)",
             (ids["space"], run_id),
@@ -223,8 +234,8 @@ class ObservationLedgerTests(unittest.TestCase):
 
             rows = events(store)
 
-            self.assertEqual(VERSION, 14)
-            self.assertEqual(store.config["schema"], 14)
+            self.assertEqual(VERSION, 15)
+            self.assertEqual(store.config["schema"], 15)
             self.assertEqual(OBSERVATION_CONTRACT, "claude-control.observation.v1")
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]["kind"], "baseline")
@@ -237,7 +248,15 @@ class ObservationLedgerTests(unittest.TestCase):
             self.assertEqual(payload["fidelity"], "baseline_only")
             self.assertEqual(
                 sorted(payload["nodes"]),
-                ["composition", "run", "session", "task", "workflow", "workspace"],
+                [
+                    "composition",
+                    "operation",
+                    "run",
+                    "session",
+                    "task",
+                    "workflow",
+                    "workspace",
+                ],
             )
             self.assertEqual(
                 sorted(payload["edges"]),
@@ -266,18 +285,19 @@ class ObservationLedgerTests(unittest.TestCase):
             with store.db() as db:
                 before = [tuple(row) for row in db.execute("SELECT rowid,* FROM runs")]
 
-            result = migration.migrate(state, offline=True, target=14)
+            result = migration.migrate(state, offline=True, target=15)
 
             current = Store(state)
             with current.db() as db:
                 after = [tuple(row) for row in db.execute("SELECT rowid,* FROM runs")]
                 violations = db.execute("PRAGMA foreign_key_check").fetchall()
             rows = events(current)
-            self.assertEqual(result["schema"], 14)
+            self.assertEqual(result["schema"], 15)
             self.assertEqual(after, before)
             self.assertEqual(violations, [])
-            # Only the baseline: the ten pre-migration mutations are summarised, not replayed.
-            self.assertEqual(len(rows), 1)
+            # Pre-observation state is summarised once. Schema 15 then appends one
+            # final operation summary without inventing its start/settle transition.
+            self.assertEqual(len(rows), 2)
             self.assertEqual(rows[0]["kind"], "baseline")
             payload = json.loads(rows[0]["payload"])
             self.assertEqual(payload["fidelity"], "baseline_only")
@@ -300,6 +320,20 @@ class ObservationLedgerTests(unittest.TestCase):
             ):
                 self.assertEqual(len(payload["edges"][kind]), 1)
             self.assertEqual(payload["telemetry"][0]["usage"]["input_tokens"], 10)
+            operation = json.loads(rows[1]["payload"])
+            self.assertEqual(
+                operation,
+                {
+                    "node": "operation",
+                    "id": f"op:{run_id}:0",
+                    "run_id": run_id,
+                    "seq": 0,
+                    "operation": "patch",
+                    "state": "settled",
+                    "started": 1.25,
+                    "finished": 1.5,
+                },
+            )
             for needle in FORBIDDEN + PLANTED:
                 self.assertNotIn(needle, rows[0]["payload"])
             with closing(sqlite3.connect(state / "schema-13-backup.sqlite3")) as backup:
@@ -348,6 +382,36 @@ class ObservationLedgerTests(unittest.TestCase):
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]["kind"], "baseline")
 
+    def test_operation_projection_is_closed_and_transactional(self):
+        with tempfile.TemporaryDirectory() as root:
+            store, workarea = fresh_store(root)
+            run_id = populate(store, workarea)
+            before = len(events(store))
+
+            with self.assertRaises(RuntimeError):
+                with store.db(write=True) as db:
+                    db.execute(
+                        "INSERT INTO workspace_requests(run_id,seq,action,created) "
+                        "VALUES(?,1,?,2.0)",
+                        (run_id, '{"op":"SECRET-UNKNOWN","path":"SECRET-PATH"}'),
+                    )
+                    self.assertEqual(
+                        db.execute("SELECT count(*) FROM observation_events").fetchone()[0],
+                        before + 1,
+                    )
+                    raise RuntimeError("rollback operation")
+
+            self.assertEqual(len(events(store)), before)
+            with store.db(write=True) as db:
+                db.execute(
+                    "INSERT INTO workspace_requests(run_id,seq,action,created) "
+                    "VALUES(?,1,?,2.0)",
+                    (run_id, '{"op":"SECRET-UNKNOWN","path":"SECRET-PATH"}'),
+                )
+            payload = json.loads(events(store)[-1]["payload"])
+            self.assertEqual(payload["operation"], "unknown")
+            self.assertNotIn("SECRET", json.dumps(payload))
+
     def test_representative_entity_events_append_in_cursor_order(self):
         with tempfile.TemporaryDirectory() as root:
             store, workarea = fresh_store(root)
@@ -379,6 +443,8 @@ class ObservationLedgerTests(unittest.TestCase):
                 ("node_state", "workspace"),
                 ("node_created", "composition"),
                 ("node_state", "composition"),
+                ("node_created", "operation"),
+                ("node_state", "operation"),
                 ("edge_created", "dependency"),
                 ("edge_created", "binding"),
                 ("edge_created", "review"),
@@ -411,6 +477,13 @@ class ObservationLedgerTests(unittest.TestCase):
                 json.loads(row["payload"]) for row in rows if row["entity_kind"] == "review"
             )
             self.assertEqual((edge["decision"], edge["recommendation"]), ("review", "approve"))
+            operations = [
+                json.loads(row["payload"])
+                for row in rows
+                if row["entity_kind"] == "operation"
+            ]
+            self.assertEqual([item["state"] for item in operations], ["started", "settled"])
+            self.assertEqual(operations[-1]["operation"], "patch")
 
     def test_no_serialized_payload_carries_private_content(self):
         with tempfile.TemporaryDirectory() as root:

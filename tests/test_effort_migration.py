@@ -87,7 +87,7 @@ class EffortMigrationTests(unittest.TestCase):
             migration.migrate(state, offline=True)
             new = Store(state)
 
-            self.assertEqual(new.config["schema"], 14)
+            self.assertEqual(new.config["schema"], 15)
             self.assertEqual(new.get_run(run_id)["fingerprint"], completed["fingerprint"])
             self.assertIsNone(new.get_run(run_id)["effort"])
             self.assertIsNone(new.session(completed["session_id"])["effort"])
@@ -141,7 +141,7 @@ class EffortMigrationTests(unittest.TestCase):
                 new = Store(state)
                 row = new.get_run(run_id)
 
-                self.assertEqual(new.config["schema"], 14)
+                self.assertEqual(new.config["schema"], 15)
                 self.assertEqual(row["fingerprint"], fingerprint)
                 self.assertIsNone(row["effort"])
                 self.assertIsNone(new.session(row["session_id"])["effort"])

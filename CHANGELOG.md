@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.23.0 — 2026-09-24
+
+- Add a scrollable Safe Inspector v2 with run timing, configured effort, actual
+  model IDs, provider usage/cost and content-free controller-operation history.
+- Project schema-15 controller operations as closed `read`, `write`, `patch`,
+  `named_check` or `unknown` metadata. Paths, commands, request bodies, results,
+  hashes and error text remain outside the observation contract.
+- Add compact `R/W/P/C` operation chips and open-operation counts to graph cards,
+  plus deterministic headless `monitor viewer --tree` output containing the full
+  hierarchy, hidden runs and operation summaries. Existing `--inspect` v1 counts
+  remain backward compatible.
+- Add 0.25×–8× replay speed, optional timestamp-gap compression, run-era seeking,
+  clickable footer controls and inspector wheel/PageUp/PageDown scrolling.
+
 ## 0.22.1 — 2026-09-24
 
 - Keep the interactive viewer's semantic palette enabled even when a parent

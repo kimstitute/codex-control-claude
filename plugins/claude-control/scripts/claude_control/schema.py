@@ -1,6 +1,6 @@
 """Additive schemas; existing sessions and runs retain their identity and rowids."""
 
-VERSION = 14
+VERSION = 15
 TASK_SCHEMA = """
 CREATE TABLE tasks (
  id TEXT PRIMARY KEY, name TEXT NOT NULL, session_id TEXT REFERENCES sessions(id),
@@ -755,9 +755,66 @@ def add_observation_schema(db):
     db.execute(
         f"{_EVENT} SELECT ?,'baseline','store','baseline',?,?,json_object("
         "'fidelity','baseline_only',"
-        f"'nodes',json_object({_snapshot(_NODES)}),"
+        f"'nodes',json_object({_snapshot(_NODES)},'operation',json('[]')) ,"
         f"'edges',json_object({_snapshot(_EDGES)}),"
         "'telemetry',json((SELECT json_group_array("
         f"{_TELEMETRY.format(p='')}) FROM run_telemetry)))",
         (OBSERVATION_CONTRACT, now, now),
+    )
+
+
+def add_observer_v2_schema(db):
+    """Project controller operations without copying their content-bearing fields."""
+
+    operation = (
+        "CASE json_extract({action},'$.op') "
+        "WHEN 'read' THEN 'read' WHEN 'write' THEN 'write' "
+        "WHEN 'patch' THEN 'patch' WHEN 'named_check' THEN 'named_check' "
+        "ELSE 'unknown' END"
+    )
+    request_payload = (
+        "json_object('node','operation','id','op:'||NEW.run_id||':'||NEW.seq,"
+        "'run_id',NEW.run_id,'seq',NEW.seq,'operation',"
+        + operation.format(action="NEW.action")
+        + ",'state','started','started',NEW.created)"
+    )
+    receipt_payload = (
+        "json_object('node','operation','id','op:'||NEW.run_id||':'||NEW.seq,"
+        "'run_id',NEW.run_id,'seq',NEW.seq,'operation',"
+        + operation.format(action="q.action")
+        + ",'state','settled','started',q.created,'finished',NEW.created)"
+    )
+    _apply(
+        db,
+        f"""
+CREATE TRIGGER observation_operation_created AFTER INSERT ON workspace_requests
+ BEGIN {_EVENT}
+ VALUES({_WIRE},'node_created','operation','op:'||NEW.run_id||':'||NEW.seq,
+        {_NOW},NEW.created,{request_payload}); END;
+CREATE TRIGGER observation_operation_settled AFTER INSERT ON workspace_receipts
+ BEGIN {_EVENT}
+ SELECT {_WIRE},'node_state','operation','op:'||NEW.run_id||':'||NEW.seq,
+        {_NOW},NEW.created,{receipt_payload}
+ FROM workspace_requests q WHERE q.run_id=NEW.run_id AND q.seq=NEW.seq; END;
+""",
+        15,
+    )
+    # Schema-14 stores have no operation history. Add one final summary per request,
+    # ordered deterministically, without inventing a start/settle transition.
+    db.execute(
+        f"""
+INSERT INTO observation_events
+ (contract,kind,entity_kind,entity_id,recorded_at,effective_at,payload)
+SELECT {_WIRE},'node_created','operation','op:'||q.run_id||':'||q.seq,
+       {_NOW},coalesce(r.created,q.created),
+       json_object('node','operation','id','op:'||q.run_id||':'||q.seq,
+                   'run_id',q.run_id,'seq',q.seq,'operation',
+                   {operation.format(action='q.action')},
+                   'state',CASE WHEN r.run_id IS NULL THEN 'started' ELSE 'settled' END,
+                   'started',q.created,
+                   'finished',CASE WHEN r.run_id IS NULL THEN NULL ELSE r.created END)
+FROM workspace_requests q
+LEFT JOIN workspace_receipts r ON r.run_id=q.run_id AND r.seq=q.seq
+ORDER BY q.created,q.run_id,q.seq
+"""
     )

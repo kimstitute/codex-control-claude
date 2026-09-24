@@ -79,6 +79,12 @@ scrub, minimap 이동, PLAY/LIVE transport를 터미널에서 직접 제어할 �
 순환하며, 모든 cursor의 과거 재생은 그대로 유지됩니다. 희소 배경, compact card,
 일관된 edge clipping, minimap과 2행 activity timeline을 같은 viewport에서 렌더합니다.
 
+0.23 버전은 선택 에이전트의 run·모델·effort·token·비용과 controller operation
+이력을 content-free Safe Inspector에서 스크롤해 확인할 수 있게 합니다. 카드에는
+`R/W/P/C` operation chip이 표시되고, `monitor viewer --tree`는 숨은 run과 operation까지
+포함한 결정적 전체 트리를 출력합니다. 재생은 0.25×–8× 속도, 실제 시간 간격 압축,
+run 시작 구간 이동을 키보드와 마우스로 제어할 수 있습니다.
+
 ## 어떤 명령을 선택해야 하나요?
 
 | 원하는 일 | 사용할 기능 | 추가되는 보장 |
@@ -101,6 +107,7 @@ Codex 앱에서 사용할 때는 설치된 `$claude-control` 스킬을 명시하
 
 ```bash
 claude_control monitor viewer
+claude_control monitor viewer --tree
 claude_control monitor tui
 claude_control monitor limits
 claude_control monitor agui stream --after 0 --limit 100
@@ -766,7 +773,7 @@ claude_control migrate --offline
 claude_control migrate --status
 ```
 
-새 저장소는 schema 14를 사용합니다. 기존 schema 3–13은 각 단계마다 검증된
+새 저장소는 schema 15를 사용합니다. 기존 schema 3–14는 각 단계마다 검증된
 SQLite 백업과 영속 migration journal을 만들면서 순서대로 이관됩니다.
 중단되었다면 원래 상태 디렉터리에서 같은 `migrate --offline`을 다시
 실행합니다. 백업 DB로 작업을 실행하거나 원본 DB를 단일 SQLite 파일

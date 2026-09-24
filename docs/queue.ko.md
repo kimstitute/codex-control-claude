@@ -57,6 +57,6 @@ claude_control task events --task <child-task-uuid> --after 0 --limit 100
 
 `task events [--task <uuid>] --after <cursor> --limit <1..1000>`는 추가 전용(append-only)인 revision, reservation, run-state, queue-state, decision 이벤트를 반환합니다. 중복을 피하려면 `next_cursor`를 재사용하세요. 변경 없이 반복되는 차단 관찰은 이벤트를 생성하지 않습니다. migration 이전의 이벤트는 새로 만들어지거나 소급 생성되지 않습니다.
 
-새 저장소는 schema 14를 사용하며, 대기열 자체는 schema 5 이상이 필요합니다. 기존 저장소는 대기열 기능을 사용하려면 명시적인 `migrate --offline`이 필요합니다. schema 3은 각 중간 schema를 거쳐 현재 버전까지 업그레이드되며, 각 단계는 검증된 SQLite 백업과 영속적인 journal을 만듭니다. 먼저 클라이언트/worker를 중단하고 unknown run을 해결하세요. 중단된 업그레이드는 같은 명령으로 재개됩니다. [migration과 복구](tasks.ko.md#schema-and-migration)를 참고하세요.
+새 저장소는 schema 15를 사용하며, 대기열 자체는 schema 5 이상이 필요합니다. 기존 저장소는 대기열 기능을 사용하려면 명시적인 `migrate --offline`이 필요합니다. schema 3은 각 중간 schema를 거쳐 현재 버전까지 업그레이드되며, 각 단계는 검증된 SQLite 백업과 영속적인 journal을 만듭니다. 먼저 클라이언트/worker를 중단하고 unknown run을 해결하세요. 중단된 업그레이드는 같은 명령으로 재개됩니다. [migration과 복구](tasks.ko.md#schema-and-migration)를 참고하세요.
 
 revision은 [다음 턴 메시지](messages.ko.md)를 명시적으로 선택할 수도 있습니다. dispatch는 run과 함께 해당 영수증을 예약하고 결합된 의존성과 메시지 입력 크기를 확인합니다. 메시지를 enqueue하는 것만으로는 새 task 턴이 대기열에 들어가지 않습니다.

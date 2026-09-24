@@ -1,4 +1,4 @@
-"""Bounded cursor queries and deterministic replay over the schema-14 observation ledger."""
+"""Bounded cursor queries and deterministic replay over the observation ledger."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from claude_control import observation, schema  # noqa: E402
 from claude_control.store import SCHEMA as BASE_SCHEMA  # noqa: E402
 from claude_control.store import ControlError  # noqa: E402
 
-# Schema 14 is built here from the committed builders in Store.initialize's order
+# The current schema is built here from the committed builders in Store.initialize's order
 # rather than through Store.initialize itself: this suite exercises the ledger, not
 # host identity, so it must not depend on /etc/machine-id or a private state directory.
 BUILDERS = (
@@ -31,6 +31,7 @@ BUILDERS = (
     schema.add_application_schema,
     schema.add_platform_schema,
     schema.add_observation_schema,
+    schema.add_observer_v2_schema,
 )
 
 # The exact ledger a populate() produces, in cursor order, including the baseline.
@@ -47,7 +48,7 @@ EXPECTED = (
     ("run_telemetry", "run"),
 )
 TOTAL = len(EXPECTED)
-NODE_KINDS = ["composition", "run", "session", "task", "workflow", "workspace"]
+NODE_KINDS = ["composition", "operation", "run", "session", "task", "workflow", "workspace"]
 EDGE_KINDS = [
     "binding",
     "composition_member",
@@ -70,7 +71,7 @@ def ledger_connection():
 
 
 def control_connection():
-    """A whole schema-14 database, so the committed triggers append the events."""
+    """A whole current database, so the committed triggers append the events."""
     # Autocommit matters: the migration ends in the baseline INSERT, and an open
     # implicit transaction would silently defer the foreign key pragma below.
     db = sqlite3.connect(":memory:", isolation_level=None)
@@ -85,7 +86,7 @@ def control_connection():
 class Ledger:
     """The minimal store surface the module uses, over an isolated database."""
 
-    def __init__(self, connection=None, version=14):
+    def __init__(self, connection=None, version=15):
         self.config = {"schema": version}
         self.connection = ledger_connection() if connection is None else connection
 

@@ -37,6 +37,7 @@ claude_control doctor --auth
 ```bash
 claude_control monitor viewer
 claude_control monitor viewer --inspect
+claude_control monitor viewer --tree
 claude_control monitor tui --refresh-seconds 0.5 --history 100
 claude_control monitor snapshot --history 100
 claude_control monitor limits
@@ -48,11 +49,12 @@ claude_control monitor agui events --after 0 --limit 100
 claude_control monitor agui stream --after 0 --follow
 ```
 
-Rust viewer는 spatial graph, minimap, camera와 과거 cursor 재생을 제공하며,
+Rust viewer는 spatial graph, minimap, camera, scrollable Safe Inspector와 과거 cursor 재생을 제공하며,
 Python TUI는 graph, agents, history, provider limits, cursor replay 화면을 제공합니다. 둘 다 원장을 변경하거나
 작업을 진행시키지 않습니다. 자동화용 `snapshot`은 관찰 정보를 JSON으로
 반환하고, `limits`는 로그인된 Codex, Claude Code, Gemini CLI, Cursor 한도를
-조회합니다. `events`와 `replay`는 schema 14의 영속 기록을 제공하고, `export`는
+조회합니다. `--tree`는 숨은 run과 content-free controller operation을 포함한 전체
+트리를 TTY 없이 출력합니다. `events`와 `replay`는 schema 14부터 이어지는 영속 기록을 제공하고, `export`는
 본문을 제외한 표준 OTLP/HTTP JSON trace 요청을 출력합니다. `agui`는 같은 기록을
 명시적 cursor 페이지와 장기 실행 JSONL stream이 있는 AG-UI 1.0 snapshot과 lifecycle event로 제공합니다.
 자세한 키 조작과 실시간 추정치·완료 확정값의 차이는
@@ -249,7 +251,7 @@ claude_control reconcile --run <run-uuid>
 
 같은 부팅 세션에서는 reconcile이 worker의 PID namespace 안에서 실행되어야 합니다. 기록된 worker와 프로세스 그룹이 더 이상 살아 있지 않거나, 호스트 재부팅으로 인해 이전 프로세스가 더 이상 실행 중일 수 없음이 증명된 경우에만 불확실성이 해소됩니다. 저장된 PID에 무작정 시그널을 보내지 않습니다. backend 세션이 일치하지 않는 대화는 계속 차단된 상태로 남습니다.
 
-새 저장소는 schema 14를 사용합니다. 기존 schema 3–13은 새 기능을 사용하려면 [명시적 오프라인 migration](tasks.ko.md#schema-and-migration)이 필요합니다. migration 전에도 레거시 진단과 stop/reconcile은 계속 사용할 수 있습니다. schema 1과 2는 지원되지 않습니다. 활성 또는 unknown 실행을 우회하기 위해 상태를 삭제하거나 교체하지 마세요.
+새 저장소는 schema 15를 사용합니다. 기존 schema 3–14는 새 기능을 사용하려면 [명시적 오프라인 migration](tasks.ko.md#schema-and-migration)이 필요합니다. migration 전에도 레거시 진단과 stop/reconcile은 계속 사용할 수 있습니다. schema 1과 2는 지원되지 않습니다. 활성 또는 unknown 실행을 우회하기 위해 상태를 삭제하거나 교체하지 마세요.
 
 ## 문제 해결
 

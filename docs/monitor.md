@@ -11,6 +11,7 @@ retrying, stopping, accepting or applying any work. It provides two interfaces:
 ```bash
 claude_control monitor viewer
 claude_control monitor viewer --inspect
+claude_control monitor viewer --tree
 tmux new -s claude-control-viewer 'claude_control monitor viewer'
 ```
 
@@ -29,20 +30,28 @@ when an explicitly monochrome screen is required.
 
 | Mouse | Action |
 |---|---|
-| Click a card | Select it and open the 30/70 metadata inspector |
+| Click a card | Select it and open the 30/70 Safe Inspector |
 | Drag a card | Reposition that card without changing controller state |
 | Drag empty canvas | Pan the graph in manual camera mode |
 | Wheel over the canvas | Zoom around the pointer |
+| Wheel over the inspector | Scroll detailed history by three lines |
 | Click or drag the timeline | Scrub the event cursor |
 | Click `PLAY` or `LIVE` | Toggle historical playback / return to the latest cursor |
 | Click `FOCUS`, `RECENT`, or `ALL` | Rotate to the next graph scope |
+| Click previous/next `ERA` | Jump to the previous or next run-start era |
+| Click the speed chip | Cycle 0.25× → 0.5× → 1× → 2× → 4× → 8× |
+| Click the `GAP` chip | Toggle uniform and timestamp-compressed playback |
 | Right-click | Close the inspector |
 
 | Key | Action |
 |---|---|
 | `[`, `]` | Seek by one historical event |
+| `{`, `}` | Jump to the previous or next run-start era |
+| `,`, `.` | Decrease or increase playback speed from 0.25× to 8× |
+| `z` | Toggle uniform (`GAP OFF`) and timestamp-compressed (`GAP ON`) playback |
 | `Home`, `End` | Jump to the baseline or latest live cursor |
 | `Space` | Play or pause from the selected cursor |
+| `PageUp`, `PageDown` | Scroll the open inspector by one viewport |
 | `Tab`, `Shift-Tab`, arrows | Select the next, previous, or spatially adjacent card |
 | `Enter` | Select the first card when nothing is selected |
 | `o`, `f`, `r`, `c` | Overview, follow latest work, relayout, or center selection |
@@ -53,18 +62,31 @@ when an explicitly monochrome screen is required.
 The viewer opens in `focus` scope with a fitted overview. Rataflow provides node
 scratch-buffer clipping, step-routed edges, semantic zoom, viewport interaction
 and the minimap in one coordinate system. Existing positions survive state-only
-updates; `r` is the explicit full relayout. Selecting a card opens a metadata-only
-inspector. The timeline separates event markers, weighted two-row activity and
-the playhead; its order comes from the monotonic observation cursor rather than
-wall-clock time.
+updates; `r` is the explicit full relayout. Selecting a card opens the Safe
+Inspector with related-run actual models, effort, timing, provider token/cost and
+controller-operation history. Active work follows newly appended rows until the
+operator scrolls away. Card `R/W/P/C` chips count reads, writes, patches and named
+checks; open operations are shown separately. The timeline separates event markers,
+weighted two-row activity and the playhead; its order comes from the monotonic
+observation cursor rather than wall-clock time.
 
-Headless `--inspect` prints the viewer contract, fidelity, cursor, node, edge and
-agent counts, and final output-token total as JSON.
+The inspector and operation projection are content-free. They exclude project
+paths, command argv, prompts, reasoning, request/response bodies, results, hashes
+and error text. Operation kind is normalized to the closed set `read`, `write`,
+`patch`, `named_check` or `unknown`.
+
+Headless `--inspect` preserves its v1 contract and prints fidelity, cursor, node,
+edge and agent counts plus final output-token total as JSON. Schema-15 operation
+nodes do not change those legacy counts. `--tree` emits a deterministic ASCII tree
+from the controller through every composition/workflow/workspace/task/session,
+including runs hidden by interactive scopes and their operation summaries. Both
+modes work without a TTY and contain only content-free fields.
 
 ```bash
 claude_control monitor agui stream > session.agui.jsonl
 claude_control monitor viewer --stream-file session.agui.jsonl
 claude_control monitor viewer --inspect --stream-file session.agui.jsonl
+claude_control monitor viewer --tree --stream-file session.agui.jsonl
 ```
 
 The JSONL file contains content-free AG-UI events. The viewer never opens SQLite
@@ -186,8 +208,9 @@ current `agents`, newest-first `runs`, and final ledger totals under
 
 ## Durable observation history and replay
 
-Schema 14 adds an append-only `claude-control.observation.v1` event ledger. The
-ledger is the durable source for the future graph viewer and time-travel replay;
+Schema 14 adds an append-only `claude-control.observation.v1` event ledger. Schema
+15 adds controller-operation start/settlement metadata to that ledger. The ledger
+is the durable source for the graph viewer and time-travel replay;
 wall-clock timestamps are descriptive while the monotonically increasing cursor
 defines order.
 
@@ -204,7 +227,9 @@ claude_control monitor agui events --after 100 --limit 100 --through 500
 `--through` high-water mark. `replay` folds the baseline plus later events into
 the exact graph state at an inclusive cursor. A migrated store reports
 `baseline_only` fidelity when pre-schema-14 transitions cannot be reconstructed;
-new transitions after that baseline remain exact.
+new transitions after that baseline remain exact. The schema-14-to-15 migration
+adds one final operation summary per existing request without inventing historical
+start/settlement transitions.
 
 The observation contract contains stable identifiers, lifecycle states,
 relationships, timestamps and numeric telemetry. It excludes prompts, results,

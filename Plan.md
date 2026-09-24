@@ -1,6 +1,6 @@
 # OMX 기능 도입 계획
 
-작성: 2026-09-20 · 갱신: 2026-09-24 · 기준: v0.22.1 · 상태: P1–P5, model catalog 및 Rataflow graph/replay 관측 구현
+작성: 2026-09-20 · 갱신: 2026-09-24 · 기준: v0.23.0 · 상태: P1–P5, model catalog 및 Safe Observer v2 구현
 
 이 문서는 도입 당시의 설계와 단계별 통과 조건을 보존한다. 단계별 구현 상태는 문서 끝의 진행 기록을 따른다. P5는 기존 Claude 도구 비활성화를 유지하는 컨트롤러 작업 요청 방식으로 구체화했다.
 
@@ -822,3 +822,18 @@ manifest JSON과 `git diff --check`가 통과했다. 실제 계정 상태 이관
 - 상태 색은 작은 glyph뿐 아니라 card border, role/action/status span과 edge에 적용한다.
   timeline의 cursor 이전 영역은 gold, 이후 영역은 neutral이며 minimap과 transport chip도
   같은 palette를 사용한다.
+
+## 32. Safe Observer v2와 고급 replay — v0.23.0
+
+- schema 15는 controller request/receipt를 `read`, `write`, `patch`, `named_check`,
+  `unknown`의 닫힌 operation node로 관측 원장에 투영한다. ID, run, sequence, 상태와
+  시각만 기록하고 경로, argv, 본문, 결과, hash, error text는 포함하지 않는다.
+- 카드는 `R/W/P/C` 횟수와 열린 operation을 compact chip으로 보여준다. 선택한 카드의
+  Safe Inspector는 연결된 run의 effort, 실제 model, 시간, provider token·비용과
+  operation 이력을 표시하며 PageUp/PageDown과 mouse wheel로 스크롤한다.
+- 기존 headless `--inspect` v1 count는 operation node 추가에도 바뀌지 않는다.
+  `monitor viewer --tree`는 controller부터 전체 계층, scope에서 숨은 run과 operation
+  요약을 결정적인 content-free ASCII tree로 출력한다.
+- replay는 0.25×–8× 속도, 고정 간격과 timestamp gap compression, 이전·다음 run 시작
+  era 이동을 제공한다. `[ ]`의 단일 event 이동은 그대로 보존하며 footer chip도 같은
+  기능을 마우스로 제공한다.

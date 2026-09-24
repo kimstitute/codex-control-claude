@@ -5,13 +5,13 @@ use std::process::Command;
 use anyhow::{Context, Result, bail};
 use claude_control_viewer::feed::{Feed, FeedConfig, read_jsonl, read_jsonl_file};
 use claude_control_viewer::graph::project;
+use claude_control_viewer::headless::{inspect_v1, render_tree};
 use claude_control_viewer::model::Timeline;
 use crossterm::style::force_color_output;
-use serde_json::json;
-
 #[derive(Debug)]
 struct Args {
     inspect: bool,
+    tree: bool,
     python: Option<PathBuf>,
     cli: Option<PathBuf>,
     state_dir: Option<PathBuf>,
@@ -30,7 +30,7 @@ fn main() {
 
 fn run() -> Result<()> {
     let args = parse_args()?;
-    if !args.inspect {
+    if !args.inspect && !args.tree {
         // Claude/Codex host processes commonly export NO_COLOR for machine-readable
         // command output. This application is an interactive visual surface, so color
         // remains on unless the viewer-specific flag disables it explicitly.
@@ -43,7 +43,7 @@ fn run() -> Result<()> {
         }
     }
 
-    if args.inspect {
+    if args.inspect || args.tree {
         if args.stream_file.is_none() {
             for event in snapshot_events(&args)? {
                 timeline.push(event)?;
@@ -51,27 +51,14 @@ fn run() -> Result<()> {
         }
         let state = timeline.state_at(timeline.latest_index())?;
         let scene = project(&state);
-        let output_tokens: u64 = state
-            .nodes
-            .values()
-            .filter(|node| node.kind == "run")
-            .map(|node| node.output_tokens)
-            .sum();
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&json!({
-                "contract": "claude-control.viewer.inspect.v1",
-                "version": env!("CARGO_PKG_VERSION"),
-                "events": timeline.len(),
-                "cursor": timeline.last_cursor(),
-                "fidelity": state.fidelity,
-                "nodes": state.nodes.len(),
-                "edges": state.edges.len(),
-                "cards": scene.cards.len(),
-                "agents": scene.cards.iter().filter(|card| card.kind == "session").count(),
-                "output_tokens": output_tokens,
-            }))?
-        );
+        if args.tree {
+            print!("{}", render_tree(&timeline, &state, &scene));
+        } else {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&inspect_v1(&timeline, &state, &scene))?
+            );
+        }
         return Ok(());
     }
 
@@ -99,17 +86,20 @@ fn parse_args() -> Result<Args> {
         println!("ccc-viewer {}", env!("CARGO_PKG_VERSION"));
         std::process::exit(0);
     }
-    let inspect = values.peek().is_some_and(|value| value == "inspect");
-    if inspect {
+    let mode = values.peek().map(String::as_str);
+    let inspect = mode == Some("inspect");
+    let tree = mode == Some("tree");
+    if inspect || tree {
         values.next();
     }
     let mut args = Args {
         inspect,
+        tree,
         python: None,
         cli: None,
         state_dir: None,
         stream_file: None,
-        follow: !inspect,
+        follow: !inspect && !tree,
         poll_seconds: 0.25,
         color: true,
     };
@@ -185,7 +175,8 @@ fn print_help() {
          Read-only real-time graph and replay viewer for Claude Control.\n\n\
          Usage:\n  ccc-viewer --python PATH --cli PATH [OPTIONS]\n  \
          ccc-viewer inspect --python PATH --cli PATH [OPTIONS]\n  \
-         ccc-viewer [inspect] --stream-file EVENTS.jsonl\n\n\
+         ccc-viewer tree --python PATH --cli PATH [OPTIONS]\n  \
+         ccc-viewer [inspect|tree] --stream-file EVENTS.jsonl\n\n\
          Options:\n  --state-dir PATH      Claude Control state directory\n  \
          --no-follow          Stop after the current high-water mark\n  \
          --no-color           Disable the semantic TUI palette\n  \

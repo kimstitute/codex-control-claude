@@ -221,6 +221,10 @@ def _fold(event, nodes, edges, telemetry):
     identity, payload, cursor = event["entity_id"], event["payload"], event["cursor"]
     if kind in (NODE_CREATED, NODE_STATE):
         group = nodes.get(entity_kind)
+        if group is None and entity_kind == "operation":
+            # Schema-14 baselines predate this additive node group. Schema 15 may
+            # append operation summaries after that immutable baseline.
+            group = nodes.setdefault(entity_kind, {})
         if group is None:
             raise _error(
                 "unknown_entity", cursor, f"names node kind {entity_kind!r}, absent from baseline."

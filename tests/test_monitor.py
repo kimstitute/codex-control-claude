@@ -55,6 +55,7 @@ class MonitorTests(ControllerTestCase):
                 {
                     "viewer_bin": binary,
                     "inspect": False,
+                    "tree": False,
                     "stream_file": None,
                     "state_dir": self.state,
                     "poll_seconds": 0.5,
@@ -64,12 +65,17 @@ class MonitorTests(ControllerTestCase):
             )()
 
             command = monitor_cli._viewer_command(args)
+            args.inspect = False
+            args.tree = True
+            tree_command = monitor_cli._viewer_command(args)
 
         self.assertEqual(command[0], str(binary.resolve()))
         self.assertIn(sys.executable, command)
         self.assertIn(str(self.state.resolve()), command)
         self.assertIn("--no-follow", command)
         self.assertEqual(command[-1], "--no-color")
+
+        self.assertEqual(tree_command[1], "tree")
 
     def test_bundled_viewer_manifest_detects_tampering(self) -> None:
         with tempfile.TemporaryDirectory() as root:

@@ -37,6 +37,7 @@ The executable and project paths are explicit. The store belongs to its originat
 ```bash
 claude_control monitor viewer
 claude_control monitor viewer --inspect
+claude_control monitor viewer --tree
 claude_control monitor tui --refresh-seconds 0.5 --history 100
 claude_control monitor snapshot --history 100
 claude_control monitor limits
@@ -48,11 +49,14 @@ claude_control monitor agui events --after 0 --limit 100
 claude_control monitor agui stream --after 0 --follow
 ```
 
-The Rust viewer provides a spatial graph, minimap, cameras and historical cursor
+The Rust viewer provides a spatial graph, minimap, cameras, a scrollable Safe
+Inspector and historical cursor
 replay. The Python TUI provides graph, agents, history, provider-limit and cursor-replay views. Neither mutates
 the ledger or advancing work. `snapshot` returns observation data as JSON;
 `limits` reads signed-in Codex, Claude Code, Gemini CLI and Cursor quota sources.
-`events` and `replay` expose schema-14 durable history; `export` emits a standard
+`--tree` emits the full hierarchy, hidden runs and content-free controller
+operations without a TTY. `events` and `replay` expose durable history beginning
+with schema 14; `export` emits a standard
 OTLP/HTTP JSON trace request with content bodies omitted. `agui` exposes the same
 history as AG-UI 1.0 snapshot and lifecycle events with explicit cursor paging
 and a long-lived JSONL stream.
@@ -294,7 +298,7 @@ claude_control reconcile --run <run-uuid>
 
 On the same boot, reconcile must run in the worker's PID namespace. It releases uncertainty only when the recorded worker and process group are no longer live, or when a host reboot proves the earlier processes cannot still be running. It does not blindly signal a saved PID. A conversation with a mismatched backend session remains blocked.
 
-New stores use schema 14. Existing schema 3–13 stores require [explicit offline migration](tasks.md#schema-and-migration) for newer features; legacy diagnosis and stop/reconcile remain available before migration. Schemas 1 and 2 are unsupported. Never delete or replace state to bypass an active or unknown execution.
+New stores use schema 15. Existing schema 3–14 stores require [explicit offline migration](tasks.md#schema-and-migration) for newer features; legacy diagnosis and stop/reconcile remain available before migration. Schemas 1 and 2 are unsupported. Never delete or replace state to bypass an active or unknown execution.
 
 ## Troubleshooting
 

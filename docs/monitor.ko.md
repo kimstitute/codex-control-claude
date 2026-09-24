@@ -12,6 +12,7 @@
 ```bash
 claude_control monitor viewer
 claude_control monitor viewer --inspect
+claude_control monitor viewer --tree
 tmux new -s claude-control-viewer 'claude_control monitor viewer'
 ```
 
@@ -29,20 +30,28 @@ Codex/Claude 프로세스가 기계 출력용 `NO_COLOR=1`을 설정해도 대�
 
 | 마우스 | 동작 |
 |---|---|
-| 카드 클릭 | 선택하고 30/70 metadata inspector 열기 |
+| 카드 클릭 | 선택하고 30/70 Safe Inspector 열기 |
 | 카드 드래그 | controller 상태를 바꾸지 않고 카드 위치 이동 |
 | 빈 canvas 드래그 | graph를 manual camera로 이동 |
 | canvas 위 휠 | pointer 중심 확대/축소 |
+| inspector 위 휠 | 상세 이력을 세 줄씩 스크롤 |
 | timeline 클릭·드래그 | event cursor scrub |
 | `PLAY`, `LIVE` 클릭 | 과거 재생 전환 / 최신 cursor 복귀 |
 | `FOCUS`, `RECENT`, `ALL` 클릭 | 다음 graph scope로 순환 |
+| `ERA` 이전·다음 클릭 | 이전·다음 run 시작 구간으로 이동 |
+| 속도 chip 클릭 | 0.25× → 0.5× → 1× → 2× → 4× → 8× 순환 |
+| `GAP` chip 클릭 | 고정 간격과 기록 시각 기반 압축 재생 전환 |
 | 우클릭 | inspector 닫기 |
 
 | 키 | 동작 |
 |---|---|
 | `[`, `]` | 과거 이벤트를 1개 이동 |
+| `{`, `}` | 이전·다음 run 시작 구간으로 이동 |
+| `,`, `.` | 재생 속도를 0.25×–8× 범위에서 낮추거나 높이기 |
+| `z` | 고정 간격(`GAP OFF`)과 시각 간격 압축(`GAP ON`) 전환 |
 | `Home`, `End` | baseline 또는 최신 live cursor로 이동 |
 | `Space` | 선택한 cursor부터 재생/일시정지 |
+| `PageUp`, `PageDown` | 열린 inspector를 한 화면씩 스크롤 |
 | `Tab`, `Shift-Tab`, 방향키 | 다음·이전·공간상 인접 카드 선택 |
 | `Enter` | 선택이 없을 때 첫 카드 선택 |
 | `o`, `f`, `r`, `c` | overview, 최신 작업 follow, 재배치, 선택 카드 중앙 정렬 |
@@ -53,18 +62,31 @@ Codex/Claude 프로세스가 기계 출력용 `NO_COLOR=1`을 설정해도 대�
 viewer는 `focus` scope의 fitted overview로 시작합니다. Rataflow가 node scratch-buffer
 clipping, step edge routing, semantic zoom, viewport interaction과 minimap을 한 좌표계에서
 처리합니다. 상태만 바뀌면 기존 위치를 유지하고 `r`을 눌렀을 때만 전체를 다시
-배치합니다. 카드를 선택하면 metadata-only inspector가 열립니다. timeline은 event
-marker, 가중 2행 activity와 playhead를 분리하며 순서는 시각이 아니라 단조 증가
-observation cursor로 결정됩니다.
+배치합니다. 카드를 선택하면 Safe Inspector가 열리고 연결된 run의 실제 모델,
+effort, 시작·종료 시각, provider token·비용과 controller operation 상세 이력을
+보여줍니다. 활성 작업은 새 행을 자동으로 따라가며, 수동으로 위로 스크롤하면 그
+위치를 유지합니다. 카드의 `R/W/P/C` chip은 각각 read, write, patch, named check
+횟수이고 열린 operation 수도 따로 표시됩니다. timeline은 event marker, 가중 2행
+activity와 playhead를 분리하며 순서는 시각이 아니라 단조 증가 observation cursor로
+결정됩니다.
 
-headless `--inspect`는 viewer contract, fidelity, cursor, node/edge/agent 수와 확정
-output token 합계를 JSON으로 출력합니다. 터미널 UI 없이 설치와 원장 호환성을 확인할
-때 사용합니다.
+Inspector와 operation projection은 content-free입니다. 프로젝트 경로, 명령 argv,
+prompt, reasoning, request/response body, 결과, hash와 error text를 표시하거나 AG-UI
+관측 이벤트에 추가하지 않습니다. operation kind도 `read`, `write`, `patch`,
+`named_check`, `unknown`의 닫힌 집합으로 정규화합니다.
+
+headless `--inspect`는 기존 v1 contract를 유지하며 fidelity, cursor,
+node/edge/agent 수와 확정 output token 합계를 JSON으로 출력합니다. schema 15에서
+추가된 operation node는 이 기존 count에 넣지 않습니다. `--tree`는 controller부터
+전체 composition/workflow/workspace/task/session, 화면 scope에서 숨은 run과 각 run의
+operation 요약까지 결정적 ASCII tree로 출력합니다. 둘 다 TTY 없이 사용할 수 있고
+content-free 필드만 포함합니다.
 
 ```bash
 claude_control monitor agui stream > session.agui.jsonl
 claude_control monitor viewer --stream-file session.agui.jsonl
 claude_control monitor viewer --inspect --stream-file session.agui.jsonl
+claude_control monitor viewer --tree --stream-file session.agui.jsonl
 ```
 
 JSONL 파일은 content-free AG-UI event입니다. viewer는 SQLite를 직접 열지 않고,
@@ -185,7 +207,8 @@ append-only 원장에 기록된 확정 누계입니다. `--no-live`는 실행 st
 ## 영속 관측 기록과 과거 재생
 
 Schema 14부터 append-only `claude-control.observation.v1` 이벤트 원장을
-사용합니다. 이 원장은 향후 그래프 뷰어와 과거 시점 재생의 기준입니다. 시각은
+사용합니다. Schema 15는 controller operation의 시작·종료 메타데이터를 같은 원장에
+추가합니다. 이 원장은 그래프 뷰어와 과거 시점 재생의 기준입니다. 시각은
 설명용 정보이고, 실제 순서는 단조 증가 cursor로 결정합니다.
 
 ```bash
@@ -199,8 +222,10 @@ claude_control monitor agui events --after 100 --limit 100 --through 500
 
 `events`의 `--after`는 배타 cursor이며 `--through`는 선택적인 포괄 상한입니다.
 `replay`는 baseline과 이후 이벤트를 접어 해당 포괄 cursor 시점의 그래프를
-복원합니다. 기존 저장소를 schema 14로 이관하면 이관 전 상태 변화는 복구할 수
-없으므로 fidelity가 `baseline_only`이며, baseline 이후 변화는 정확히 기록됩니다.
+복원합니다. 기존 저장소를 schema 14 이상으로 이관할 때 이관 전 상태 변화는 복구할
+수 없으므로 fidelity가 `baseline_only`이며, baseline 이후 변화는 정확히 기록됩니다.
+schema 14→15 이관은 기존 request마다 최종 operation 요약 하나만 만들며 존재하지
+않았던 시작·종료 전환을 꾸며내지 않습니다.
 
 관측 계약에는 안정적인 식별자, 생명주기 상태, 관계, 시각, 숫자 telemetry만
 들어갑니다. prompt, result, message 본문, policy, 프로젝트 경로, 작업 receipt,

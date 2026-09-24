@@ -4,7 +4,7 @@
 
 ## Schema와 Migration
 
-Task 생명주기는 schema 4 이상이 필요합니다. queue는 schema 5, message는 schema 6, workflow는 schema 7, workspace는 schema 8이 필요합니다. 명시적 effort 설정은 schema 9가, 계획·편집·검토 composition은 schema 10이, run telemetry는 schema 11이, guarded workspace apply는 schema 12가 필요합니다. portable platform 실행 identity는 schema 13, durable observation history는 schema 14가 필요합니다. 새로 설치(`claude_control init`)하면 schema 14로 시작합니다. 기존 schema-3 저장소는 `task` 하위 명령을 사용하기 전에 migration해야 하며, schema-3 저장소는 migration 전까지 task 명령을 거부합니다.
+Task 생명주기는 schema 4 이상이 필요합니다. queue는 schema 5, message는 schema 6, workflow는 schema 7, workspace는 schema 8이 필요합니다. 명시적 effort 설정은 schema 9가, 계획·편집·검토 composition은 schema 10이, run telemetry는 schema 11이, guarded workspace apply는 schema 12가 필요합니다. portable platform 실행 identity는 schema 13, durable observation history는 schema 14, content-free controller operation projection은 schema 15가 필요합니다. 새로 설치(`claude_control init`)하면 schema 15로 시작합니다. 기존 schema-3 저장소는 `task` 하위 명령을 사용하기 전에 migration해야 하며, schema-3 저장소는 migration 전까지 task 명령을 거부합니다.
 
 Migration은 백그라운드 서비스가 아니라 유지보수 작업입니다.
 
@@ -18,7 +18,7 @@ claude_control --state-dir /srv/project/.claude-control migrate --status
 claude_control --state-dir /srv/project/.claude-control migrate --offline
 ```
 
-Migration은 schema 3부터 14까지 모든 중간 단계를 순서대로 진행하며, 필요한 각 단계마다 SQLite의 backup API를 사용해 커밋된 WAL 데이터를 포함한 `schema-<source>-backup.sqlite3`를 만들고 검증합니다. 설정을 `migrating`으로 표시하고, 트랜잭션 안에서 데이터베이스를 변경한 뒤 설정과 journal을 마무리합니다. 일반 명령은 부분적으로 migration된 저장소를 거부합니다. `--offline`은 모든 오래된 클라이언트가 중단되었음을 확인하는 것이며, 활성 또는 unknown run에 대한 강제 옵션이 아닙니다. 새 버전의 데이터베이스 작업 역시 독점 migration 잠금에 참여합니다. DDL이 시작되기 전에 오래된 클라이언트가 유지보수 규칙을 위반하면 업그레이드는 중단되고, run 상태를 전혀 바꾸지 않은 채 schema-3 진단을 다시 엽니다. 해당 작업을 해결한 뒤 migration을 반복하세요. 이는 버전이 섞인 운영을 지원한다는 뜻이 아닙니다.
+Migration은 schema 3부터 15까지 모든 중간 단계를 순서대로 진행하며, 필요한 각 단계마다 SQLite의 backup API를 사용해 커밋된 WAL 데이터를 포함한 `schema-<source>-backup.sqlite3`를 만들고 검증합니다. 설정을 `migrating`으로 표시하고, 트랜잭션 안에서 데이터베이스를 변경한 뒤 설정과 journal을 마무리합니다. 일반 명령은 부분적으로 migration된 저장소를 거부합니다. `--offline`은 모든 오래된 클라이언트가 중단되었음을 확인하는 것이며, 활성 또는 unknown run에 대한 강제 옵션이 아닙니다. 새 버전의 데이터베이스 작업 역시 독점 migration 잠금에 참여합니다. DDL이 시작되기 전에 오래된 클라이언트가 유지보수 규칙을 위반하면 업그레이드는 중단되고, run 상태를 전혀 바꾸지 않은 채 schema-3 진단을 다시 엽니다. 해당 작업을 해결한 뒤 migration을 반복하세요. 이는 버전이 섞인 운영을 지원한다는 뜻이 아닙니다.
 
 migration이 중단된 후에는 같은 `migrate --offline` 명령을 **원래 상태 디렉터리**에 대해 실행하세요. 저장된 journal, DB 버전, 비공개 백업 덕분에 안전하게 완료할 수 있습니다. 다른 저장소를 초기화하거나, 실 DB를 `.sqlite3` 파일 복사본으로 교체하거나, 백업에 대해 모델 작업을 실행하지 마세요. 업그레이드된 schema 운영이 시작된 뒤에는 자동 다운그레이드가 제공되지 않습니다. schema 1과 2는 지원되지 않습니다.
 

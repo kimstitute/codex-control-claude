@@ -67,7 +67,9 @@ def register(commands):
     viewer.add_argument("--no-follow", action="store_true")
     viewer.add_argument("--no-color", action="store_true", help="Disable the semantic palette.")
     viewer.add_argument("--stream-file", type=Path, help="Open a saved AG-UI JSONL stream.")
-    viewer.add_argument("--inspect", action="store_true", help="Print a headless summary.")
+    headless = viewer.add_mutually_exclusive_group()
+    headless.add_argument("--inspect", action="store_true", help="Print a headless summary.")
+    headless.add_argument("--tree", action="store_true", help="Print the complete headless tree.")
 
 
 def _agui(store, args):
@@ -185,7 +187,7 @@ def _verify_bundled_viewer(candidate):
 def _viewer_command(args):
     command = [
         str(_viewer_binary(args.viewer_bin)),
-        *(["inspect"] if args.inspect else []),
+        *(["inspect"] if args.inspect else ["tree"] if getattr(args, "tree", False) else []),
     ]
     if args.stream_file is not None:
         command.extend(("--stream-file", str(args.stream_file.expanduser().resolve())))
@@ -211,7 +213,9 @@ def _viewer_command(args):
 
 
 def _run_viewer(args):
-    if not args.inspect and (not sys.stdin.isatty() or not sys.stdout.isatty()):
+    if not (args.inspect or getattr(args, "tree", False)) and (
+        not sys.stdin.isatty() or not sys.stdout.isatty()
+    ):
         raise ControlError("monitor_terminal", "Monitor viewer needs an interactive terminal.")
     if not math.isfinite(args.poll_seconds) or not 0.05 <= args.poll_seconds <= 10:
         raise ControlError("invalid_limit", "Viewer poll interval must be finite, 0.05–10 seconds.")

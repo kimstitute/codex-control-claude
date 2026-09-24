@@ -61,7 +61,7 @@ class WorkspaceMigrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             state, _ = legacy_store(root)
             result = migration.migrate(state, offline=True)
-            self.assertEqual((result["schema"], len(result["backups"])), (14, 11))
+            self.assertEqual((result["schema"], len(result["backups"])), (15, 12))
             with self.assertRaises(ControlError):
                 migration.migrate(state, offline=True, target=7)
 

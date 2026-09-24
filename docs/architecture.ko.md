@@ -161,8 +161,11 @@ manifest와 실제 바이트를 다시 검증한 뒤에만 보존합니다.
 `ccc-viewer`는 별도의 Rust/Ratatui 표시 process입니다. controller database를 직접
 열지 않습니다. Python controller가 observation 원장에서 content-free AG-UI JSONL을
 stream하고, viewer가 이를 결정적으로 fold한 뒤 제한된 agent card로 투영해 실시간
-또는 과거 상태를 그립니다. 원장 schema, privacy filtering과 변경 권한은 계속 Python
-controller에 남습니다.
+또는 과거 상태를 그립니다. schema 15는 controller request/receipt 생명주기를 닫힌
+content-free operation metadata로 투영하며 경로, argv, 본문, 결과, hash와 error text는
+이 경계를 넘지 않습니다. viewer는 compact operation chip, 스크롤 가능한 run/operation
+inspector, 결정적 headless 전체 tree와 cursor/run-era replay를 제공합니다. 원장 schema,
+privacy filtering과 변경 권한은 계속 Python controller에 남습니다.
 
 공개 저장소는 관리자의 GitHub 핸들만 사용합니다. 머신별 구현 노트, 계정
 기록, 자격 증명, 원본 실시간 세션 산출물은 의도적으로 포함되어 있지

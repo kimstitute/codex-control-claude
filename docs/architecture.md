@@ -114,8 +114,12 @@ is used to recover. See [the task guide](tasks.md#schema-and-migration).
 `ccc-viewer` is a separate Rust/Ratatui presentation process. It never opens the
 controller database. The Python controller streams content-free AG-UI JSONL from
 the observation ledger; the viewer folds those events deterministically, projects
-bounded agent cards and renders live or historical state. This keeps ledger schema,
-privacy filtering and mutation authority in the Python controller.
+bounded agent cards and renders live or historical state. Schema 15 projects
+controller request/receipt lifecycle as closed, content-free operation metadata;
+paths, argv, bodies, results, hashes and error text never cross this boundary. The
+viewer provides compact operation chips, scrollable run/operation inspection,
+deterministic headless full-tree output and cursor/run-era replay. This keeps ledger
+schema, privacy filtering and mutation authority in the Python controller.
 
 The public repository uses only the maintainer's GitHub handle. Machine-specific implementation notes, account records, credentials, and raw live-session artifacts are intentionally absent.
 
