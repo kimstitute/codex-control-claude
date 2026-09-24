@@ -19,6 +19,16 @@ session cards with directional relationships. Session cards aggregate role,
 model, current state, run counts and final output tokens. Runs do not become an
 unbounded set of cards, so graph size remains close to the number of agents.
 
+| Mouse | Action |
+|---|---|
+| Click / double-click a card | Select and inspect / follow the selected card |
+| Drag a card or empty canvas | Pan the graph in manual camera mode |
+| Wheel over the canvas | Zoom while preserving the world point under the pointer |
+| Click-drag / wheel on timeline | Scrub the event cursor / seek by ten events |
+| Click-drag the minimap | Move the camera to that graph location |
+| Click `PLAY` or `LIVE` | Toggle historical playback / return to the latest cursor |
+| Right-click | Close the inspector |
+
 | Key | Action |
 |---|---|
 | `←`, `→`, `[`, `]` | Seek by one or ten historical events |
@@ -26,13 +36,15 @@ unbounded set of cards, so graph size remains close to the number of agents.
 | `Space` | Play or pause from the selected cursor |
 | `Tab`, `↑`, `↓` | Select an agent/card |
 | `Enter`, `v` | Show safe observation details for the selected card |
-| `o`, `f`, `m` | Use overview, selected-card follow or manual camera |
+| `o`, `0`, `f`, `m`, `c` | Overview, follow, manual camera or center selection |
 | `WASD`, `HJKL`, `+`, `-` | Pan and zoom the manual camera |
-| `i`, `?`, `q` | Show session information, help or quit |
+| `x`, `i`, `?`, `q` | Toggle mouse capture, show information/help or quit |
 
-Overview packs large graphs into lanes and omits edges at very low zoom so line
-crossings do not cover the cards. Follow mode restores a readable scale for the
-selected card, and the minimap shows its location in the full graph. Timeline
+The viewer opens by following the controller card. Semantic zoom switches among
+full cards, compact cards and overview glyphs, while stable positions prevent
+new events from shuffling existing cards. Overview packs each kind into a
+deterministic grid and omits edges at low zoom. The minimap includes the current
+viewport. The histogram timeline separates `LIVE`, `PAUSED` and `PLAYING`; its
 order comes from the monotonic observation cursor rather than wall-clock time.
 
 Headless `--inspect` prints the viewer contract, fidelity, cursor, node, edge and

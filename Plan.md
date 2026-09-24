@@ -1,6 +1,6 @@
 # OMX 기능 도입 계획
 
-작성: 2026-09-20 · 갱신: 2026-09-23 · 기준: v0.20.0 · 상태: P1–P5, model catalog 및 Rust graph/replay 관측 구현
+작성: 2026-09-20 · 갱신: 2026-09-24 · 기준: v0.21.0 · 상태: P1–P5, model catalog 및 mouse graph/replay 관측 구현
 
 이 문서는 도입 당시의 설계와 단계별 통과 조건을 보존한다. 단계별 구현 상태는 문서 끝의 진행 기록을 따른다. P5는 기존 Claude 도구 비활성화를 유지하는 컨트롤러 작업 요청 방식으로 구체화했다.
 
@@ -777,3 +777,20 @@ manifest JSON과 `git diff --check`가 통과했다. 실제 계정 상태 이관
   fallback은 하지 않는다.
 - cross-host 작업 전달, viewer에서의 승인·재시도·apply, prompt/result/reasoning/tool
   본문 표시는 계속 범위 밖이다. AG-UI와 OTLP의 기존 privacy contract를 그대로 쓴다.
+
+## 29. Mouse-first graph observation — v0.21.0
+
+- 첫 화면은 controller를 읽을 수 있는 100% follow camera로 연다. zoom에 따라 full,
+  compact, glyph LOD를 사용하며 observation event가 추가되어도 기존 카드 위치는 바꾸지
+  않는다. 같은 종류의 노드는 8행 단위 안정 grid에 배치한다.
+- frame이 그린 실제 card, timeline, minimap, inspector와 transport rectangle로 hit map을
+  만든다. pointer press에서 drag owner를 고정하고 2열/1행 임계값 뒤에만 drag로 전환해
+  card click과 canvas pan을 구분한다.
+- card click은 semantic inspector, double-click은 follow, drag는 pan, wheel은 pointer 중심
+  zoom이다. timeline은 click/drag scrub과 wheel seek, minimap은 click/drag camera 이동,
+  footer는 PLAY/LIVE click을 제공한다. 같은 기능은 keyboard로도 접근할 수 있다.
+- histogram timeline은 event density와 현재 cursor, live edge를 분리하고 `LIVE`, `PAUSED`,
+  `PLAYING` 상태를 명시한다. low-detail overview에서는 edge를 숨겨 50개 이상의 agent도
+  선 교차 없이 탐색할 수 있다.
+- inspector에는 역할, 모델, 상태, 활동, 토큰, 연결 수와 안정 식별자만 표시한다. prompt,
+  result, reasoning, tool-call body는 UI와 observation 계약 모두에 계속 포함하지 않는다.

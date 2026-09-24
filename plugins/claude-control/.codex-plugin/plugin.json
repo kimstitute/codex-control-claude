@@ -1,6 +1,6 @@
 {
   "name": "claude-control",
-  "version": "0.20.0",
+  "version": "0.21.0",
   "description": "Manage persistent local Claude sessions from Codex with explicit models and verified results.",
   "author": {
     "name": "kimstitute",
@@ -10,7 +10,7 @@
   "interface": {
     "displayName": "Codex Control Claude",
     "shortDescription": "Manage versioned local Claude sessions by role.",
-    "longDescription": "Manage and monitor local Claude sessions, task revisions, queues, bounded review workflows and explicit plan-edit-review compositions. Configure versioned models per role and inspect the signed-in Claude account's model catalog without exposing account identity. The read-only Rust viewer shows the live multi-agent graph, minimap, durable event replay, camera modes and agent details; the portable Python TUI remains available for account limits and fallback use. Observation history exports as OTLP JSON or streaming AG-UI events without prompt, reasoning or tool-call bodies. Workspace policies add controller-mediated edits, isolated named checks and frozen results for Codex approval. Linux and Windows are supported; Windows session control uses a pinned native helper and Windows workspaces use WSL2 with Bubblewrap. Native Claude tools and cross-host dispatch remain disabled.",
+    "longDescription": "Manage and monitor local Claude sessions, task revisions, queues, bounded review workflows and explicit plan-edit-review compositions. Configure versioned models per role and inspect the signed-in Claude account's model catalog without exposing account identity. The read-only Rust viewer provides a stable live multi-agent graph, semantic zoom, minimap, histogram replay timeline, inspector and direct mouse navigation; the portable Python TUI remains available for account limits and fallback use. Observation history exports as OTLP JSON or streaming AG-UI events without prompt, reasoning or tool-call bodies. Workspace policies add controller-mediated edits, isolated named checks and frozen results for Codex approval. Linux and Windows are supported; Windows session control uses a pinned native helper and Windows workspaces use WSL2 with Bubblewrap. Native Claude tools and cross-host dispatch remain disabled.",
     "developerName": "kimstitute",
     "category": "Productivity",
     "capabilities": [

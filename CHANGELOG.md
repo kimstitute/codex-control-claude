@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.21.0 — 2026-09-24
+
+- Rebuild the Rust graph viewer around a stable world-space layout, semantic
+  zoom and a follow-first camera. Full cards, compact cards and overview glyphs
+  keep both single-agent and large multi-agent sessions legible.
+- Add direct mouse control: click a card to inspect it, double-click to follow,
+  drag cards or the canvas to pan, zoom at the pointer with the wheel, scrub the
+  event histogram, navigate from the minimap and use clickable PLAY/LIVE chips.
+- Add a responsive semantic inspector, animated active edges, an interactive
+  viewport minimap and a sparse replay histogram with explicit live, paused and
+  playing states. Raw prompts, reasoning and tool-call bodies remain excluded.
+- Preserve card positions as events arrive and pack large same-kind populations
+  into deterministic grids. Low-detail overview mode suppresses edge clutter.
+- Add pure geometry tests plus render and mouse interaction tests across 160×45,
+  100×30 and 60×18 terminal sizes.
+
 ## 0.20.0 — 2026-09-23
 
 - Add the independently implemented `ccc-viewer` Rust TUI for live multi-agent

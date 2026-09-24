@@ -4,8 +4,11 @@ use serde_json::Value;
 
 use crate::model::{GraphState, Node};
 
-pub const CARD_WIDTH: i32 = 30;
-pub const CARD_HEIGHT: i32 = 6;
+pub const CARD_WIDTH: i32 = 34;
+pub const CARD_HEIGHT: i32 = 7;
+const CARD_X_GAP: i32 = 12;
+const CARD_Y_GAP: i32 = 3;
+const ROWS_PER_COLUMN: i32 = 8;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Point {
@@ -57,6 +60,18 @@ impl Scene {
 }
 
 pub fn project(state: &GraphState) -> Scene {
+    project_with_positions(state, &mut BTreeMap::new())
+}
+
+/// Projects graph state while preserving every position already recorded in `positions`.
+///
+/// The caller can retain this cache for the lifetime of a viewer. Removed nodes remain in the
+/// cache, so a node that later returns occupies its original slot and newly discovered nodes never
+/// take a previously assigned position.
+pub fn project_with_positions(
+    state: &GraphState,
+    positions: &mut BTreeMap<String, Point>,
+) -> Scene {
     let mut nodes = BTreeMap::<String, Node>::new();
     for (key, node) in &state.nodes {
         if visible_kind(&node.kind) {
@@ -120,7 +135,7 @@ pub fn project(state: &GraphState) -> Scene {
             .then_with(|| left.title.to_lowercase().cmp(&right.title.to_lowercase()))
             .then_with(|| left.key.cmp(&right.key))
     });
-    layout(&mut cards);
+    layout_stable(&mut cards, positions);
 
     let known = cards
         .iter()
@@ -192,27 +207,52 @@ fn rank(kind: &str) -> u8 {
     }
 }
 
-fn layout(cards: &mut [Card]) {
-    let mut groups = BTreeMap::<u8, Vec<usize>>::new();
-    for (index, card) in cards.iter().enumerate() {
-        groups.entry(rank(&card.kind)).or_default().push(index);
-    }
-    let mut base_x = 0;
-    for indices in groups.values() {
-        let lanes = match indices.len() {
-            0..=5 => 1,
-            6..=12 => 2,
-            13..=24 => 3,
-            _ => 4,
-        };
-        for (offset, index) in indices.iter().enumerate() {
-            cards[*index].position = Point {
-                x: base_x + (offset % lanes) as i32 * (CARD_WIDTH + 8),
-                y: (offset / lanes) as i32 * (CARD_HEIGHT + 3),
-            };
+fn layout_stable(cards: &mut [Card], positions: &mut BTreeMap<String, Point>) {
+    let mut reserved = positions.values().copied().collect::<Vec<_>>();
+    for card in cards {
+        if let Some(position) = positions.get(&card.key) {
+            card.position = *position;
+            continue;
         }
-        base_x += lanes as i32 * (CARD_WIDTH + 8);
+
+        let mut slot = 0;
+        loop {
+            let candidate = grid_slot(&card.kind, slot);
+            if reserved
+                .iter()
+                .all(|occupied| !card_rects_overlap(candidate, *occupied))
+            {
+                card.position = candidate;
+                positions.insert(card.key.clone(), candidate);
+                reserved.push(candidate);
+                break;
+            }
+            slot += 1;
+        }
     }
+}
+
+fn grid_slot(kind: &str, slot: i32) -> Point {
+    let lane_x = match kind {
+        "controller" => 0,
+        "composition" => 54,
+        "workflow" => 180,
+        "workspace" => 306,
+        "task" => 432,
+        "session" => 684,
+        _ => 1_000,
+    };
+    Point {
+        x: lane_x + (slot / ROWS_PER_COLUMN) * (CARD_WIDTH + CARD_X_GAP),
+        y: (slot % ROWS_PER_COLUMN) * (CARD_HEIGHT + CARD_Y_GAP),
+    }
+}
+
+fn card_rects_overlap(left: Point, right: Point) -> bool {
+    left.x < right.x + CARD_WIDTH
+        && left.x + CARD_WIDTH > right.x
+        && left.y < right.y + CARD_HEIGHT
+        && left.y + CARD_HEIGHT > right.y
 }
 
 fn count_kind(nodes: &BTreeMap<String, Node>, kind: &str) -> usize {
@@ -292,6 +332,16 @@ fn short(value: &str) -> &str {
 mod tests {
     use super::*;
 
+    fn node(id: &str, kind: &str, label: &str) -> Node {
+        Node {
+            id: id.to_owned(),
+            kind: kind.to_owned(),
+            label: label.to_owned(),
+            state: "idle".to_owned(),
+            ..Node::default()
+        }
+    }
+
     #[test]
     fn projects_agents_and_collapses_runs_into_session_activity() {
         let mut state = GraphState::default();
@@ -328,5 +378,96 @@ mod tests {
         assert_eq!(agent.output_tokens, 42);
         assert_eq!(agent.activity, "1 runs");
         assert_eq!(scene.links[0].from, "controller:local");
+    }
+
+    #[test]
+    fn cached_positions_survive_addition_removal_and_return() {
+        let mut positions = BTreeMap::new();
+        let mut state = GraphState::default();
+        state
+            .nodes
+            .insert("task:t1".to_owned(), node("t1", "task", "first task"));
+        state.nodes.insert(
+            "session:s1".to_owned(),
+            node("s1", "session", "first session"),
+        );
+
+        let first = project_with_positions(&state, &mut positions);
+        let controller = first.cards[first.index_of("controller:local").unwrap()].position;
+        let task = first.cards[first.index_of("task:t1").unwrap()].position;
+        let session = first.cards[first.index_of("session:s1").unwrap()].position;
+
+        state.nodes.remove("task:t1");
+        state.nodes.insert(
+            "session:s2".to_owned(),
+            node("s2", "session", "second session"),
+        );
+        let second = project_with_positions(&state, &mut positions);
+        assert_eq!(
+            second.cards[second.index_of("controller:local").unwrap()].position,
+            controller
+        );
+        assert_eq!(
+            second.cards[second.index_of("session:s1").unwrap()].position,
+            session
+        );
+
+        state
+            .nodes
+            .insert("task:t1".to_owned(), node("t1", "task", "first task"));
+        let third = project_with_positions(&state, &mut positions);
+        assert_eq!(
+            third.cards[third.index_of("task:t1").unwrap()].position,
+            task
+        );
+        assert_eq!(
+            third.cards[third.index_of("session:s1").unwrap()].position,
+            session
+        );
+    }
+
+    #[test]
+    fn new_cards_use_deterministic_non_overlapping_hierarchical_slots() {
+        let mut positions = BTreeMap::new();
+        let mut state = GraphState::default();
+        for index in 0..12 {
+            let id = format!("s{index:02}");
+            state.nodes.insert(
+                format!("session:{id}"),
+                node(&id, "session", &format!("session {index:02}")),
+            );
+        }
+        state
+            .nodes
+            .insert("task:t1".to_owned(), node("t1", "task", "task"));
+        state
+            .nodes
+            .insert("workflow:w1".to_owned(), node("w1", "workflow", "workflow"));
+
+        let scene = project_with_positions(&state, &mut positions);
+        for (index, left) in scene.cards.iter().enumerate() {
+            for right in scene.cards.iter().skip(index + 1) {
+                assert!(
+                    !card_rects_overlap(left.position, right.position),
+                    "{} overlaps {}",
+                    left.key,
+                    right.key
+                );
+            }
+        }
+
+        let workflow_x = scene.cards[scene.index_of("workflow:w1").unwrap()]
+            .position
+            .x;
+        let task_x = scene.cards[scene.index_of("task:t1").unwrap()].position.x;
+        let session_x = scene.cards[scene.index_of("session:s00").unwrap()]
+            .position
+            .x;
+        assert!(workflow_x < task_x && task_x < session_x);
+
+        let mut second_positions = BTreeMap::new();
+        let second = project_with_positions(&state, &mut second_positions);
+        assert_eq!(positions, second_positions);
+        assert_eq!(scene.cards, second.cards);
     }
 }

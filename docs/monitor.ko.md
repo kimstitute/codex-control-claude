@@ -20,6 +20,16 @@ viewer는 controller, composition, workflow, workspace, task와 Claude session�
 실행 수와 확정 output token을 집계합니다. run마다 카드를 무한히 늘리지 않으므로
 장기간 원장도 agent graph의 크기에 가깝게 유지됩니다.
 
+| 마우스 | 동작 |
+|---|---|
+| 카드 클릭 / 더블 클릭 | 선택하고 inspector 열기 / 선택 카드를 follow |
+| 카드 또는 빈 canvas 드래그 | graph를 manual camera로 이동 |
+| canvas 위 휠 | pointer 아래 좌표를 유지하며 확대/축소 |
+| timeline 클릭·드래그 / 휠 | event cursor scrub / 10개씩 이동 |
+| minimap 클릭·드래그 | 해당 graph 위치로 camera 이동 |
+| `PLAY`, `LIVE` 클릭 | 과거 재생 전환 / 최신 cursor 복귀 |
+| 우클릭 | inspector 닫기 |
+
 | 키 | 동작 |
 |---|---|
 | `←`, `→`, `[`, `]` | 과거 이벤트를 1개 또는 10개 이동 |
@@ -27,14 +37,16 @@ viewer는 controller, composition, workflow, workspace, task와 Claude session�
 | `Space` | 선택한 cursor부터 재생/일시정지 |
 | `Tab`, `↑`, `↓` | agent/card 선택 |
 | `Enter`, `v` | 선택한 카드의 안전한 observation 세부 정보 |
-| `o`, `f`, `m` | overview, 선택 카드 follow, manual camera |
+| `o`, `0`, `f`, `m`, `c` | overview, 선택 카드 follow, manual camera, 선택 카드 중앙 정렬 |
 | `WASD`, `HJKL`, `+`, `-` | manual pan과 zoom |
-| `i`, `?`, `q` | session 정보, 도움말, 종료 |
+| `x`, `i`, `?`, `q` | mouse capture 전환, session 정보, 도움말, 종료 |
 
-overview는 큰 그래프를 여러 lane으로 압축하고 낮은 zoom에서는 edge를 생략해
-교차선이 화면을 덮지 않게 합니다. `f`는 선택 카드를 읽을 수 있는 배율로 따라가며,
-minimap은 전체 graph에서 현재 위치를 보여줍니다. 하단 timeline의 순서는 시각이 아니라
-단조 증가 observation cursor로 결정됩니다.
+viewer는 선택한 controller 카드의 follow 화면으로 시작합니다. zoom에 따라 full card,
+compact card, overview glyph로 바뀌며 기존 카드 위치는 새 event가 와도 유지됩니다.
+overview는 같은 종류의 노드를 결정적 grid로 배치하고 낮은 zoom에서는 edge를 생략해
+교차선이 화면을 덮지 않게 합니다. minimap은 전체 graph와 현재 viewport를 보여줍니다.
+하단 histogram timeline의 순서는 시각이 아니라 단조 증가 observation cursor로
+결정되며 `LIVE`, `PAUSED`, `PLAYING` 상태를 분리합니다.
 
 headless `--inspect`는 viewer contract, fidelity, cursor, node/edge/agent 수와 확정
 output token 합계를 JSON으로 출력합니다. 터미널 UI 없이 설치와 원장 호환성을 확인할
