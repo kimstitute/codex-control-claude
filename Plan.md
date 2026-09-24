@@ -1,6 +1,6 @@
 # OMX 기능 도입 계획
 
-작성: 2026-09-20 · 갱신: 2026-09-24 · 기준: v0.22.0 · 상태: P1–P5, model catalog 및 Rataflow graph/replay 관측 구현
+작성: 2026-09-20 · 갱신: 2026-09-24 · 기준: v0.22.1 · 상태: P1–P5, model catalog 및 Rataflow graph/replay 관측 구현
 
 이 문서는 도입 당시의 설계와 단계별 통과 조건을 보존한다. 단계별 구현 상태는 문서 끝의 진행 기록을 따른다. P5는 기존 Claude 도구 비활성화를 유지하는 컨트롤러 작업 요청 방식으로 구체화했다.
 
@@ -810,3 +810,15 @@ manifest JSON과 `git diff --check`가 통과했다. 실제 계정 상태 이관
   6행 timeline, 한 줄 transport/status bar로 구성한다.
 - prompt, reasoning, result, tool-call body는 계속 표시하거나 export하지 않는다. viewer는
   승인, 재시도, apply, 작업 전달을 수행하지 않는 read-only observation surface다.
+
+## 31. 터미널 전반의 semantic color 보존 — v0.22.1
+
+- Codex/Claude 부모 프로세스가 기계 출력에 쓰는 `NO_COLOR=1`을 상속하더라도 대화형
+  viewer는 색을 명시적으로 활성화한다. 단색 출력은 `monitor viewer --no-color`라는
+  viewer 전용 선택으로만 끈다.
+- RGB literal을 SSH/tmux에서 안정적인 xterm-256 semantic palette 하나로 통합한다.
+  gold는 선택·완료·재생 이력, green은 live 실행, amber는 대기, red는 실패, gray는
+  구조와 유휴 상태에만 사용한다.
+- 상태 색은 작은 glyph뿐 아니라 card border, role/action/status span과 edge에 적용한다.
+  timeline의 cursor 이전 영역은 gold, 이후 영역은 neutral이며 minimap과 transport chip도
+  같은 palette를 사용한다.

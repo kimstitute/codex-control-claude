@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.22.1 — 2026-09-24
+
+- Keep the interactive viewer's semantic palette enabled even when a parent
+  Codex or Claude process exports `NO_COLOR=1`; `monitor viewer --no-color` is
+  the explicit monochrome opt-out.
+- Replace mixed RGB literals with one xterm-256 semantic palette so SSH, tmux
+  and non-truecolor terminals preserve the same gold chronology, green live
+  paths, amber waits, red failures and neutral structure.
+- Carry lifecycle color through card borders, structured role/action/status
+  spans and graph edges. Completed and idle states no longer collapse into the
+  same low-contrast sage tone.
+- Color the played timeline region gold, strengthen transport chips and set
+  explicit minimap node, selection and viewport contrast.
+
 ## 0.22.0 — 2026-09-24
 
 - Replace the hand-written graph rasterizer with the public `rataflow` 0.1.0

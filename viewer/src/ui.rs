@@ -14,7 +14,7 @@ use crossterm::terminal::{
 };
 use rataflow::{
     Background, BackgroundStyle, BackgroundVariant, EventResponse, FlowEvent, MiniMap,
-    MiniMapPosition,
+    MiniMapPosition, MiniMapStyle,
 };
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
@@ -24,21 +24,17 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph, Wrap};
 
 use crate::feed::{Feed, FeedEvent};
-use crate::flow_view::{
-    ObserverFlow, compact_number, new_flow, relayout, state_color, sync as sync_flow,
-};
+use crate::flow_view::{ObserverFlow, compact_number, new_flow, relayout, sync as sync_flow};
 use crate::graph::{Card, Link, Point, Scene, project_with_positions};
 use crate::interaction::{ScreenPoint, point_in_rect, timeline_column_to_index};
 use crate::model::{GraphState, Timeline};
+use crate::theme::{
+    BORDER, CANVAS, GOLD, GREEN, GRID, MUTED, RED, SUBTLE, SURFACE, SURFACE_RAISED, TEXT,
+    state_color,
+};
 
 const FRAME_TIME: Duration = Duration::from_millis(32);
 const PLAY_TIME: Duration = Duration::from_millis(180);
-const GOLD: Color = Color::Indexed(178);
-const CANVAS: Color = Color::Rgb(13, 14, 13);
-const SURFACE: Color = Color::Rgb(27, 28, 27);
-const MUTED: Color = Color::Rgb(91, 93, 88);
-const SUBTLE: Color = Color::Rgb(135, 136, 129);
-const TEXT: Color = Color::Rgb(226, 227, 221);
 const RECENT_NODE_LIMIT: usize = 18;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -572,7 +568,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &mut App) {
         draw_info(frame, app);
     }
     if let Some(error) = app.error.take() {
-        draw_message(frame, " error ", &error, Color::Rgb(205, 92, 92));
+        draw_message(frame, " error ", &error, RED);
     }
 }
 
@@ -586,7 +582,7 @@ fn draw_canvas(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) {
             .gap(gap_x, gap_y)
             .style(
                 BackgroundStyle::default()
-                    .with_pattern_color(Color::Rgb(48, 49, 47))
+                    .with_pattern_color(GRID)
                     .with_bg_color(CANVAS),
             ),
         area,
@@ -596,13 +592,20 @@ fn draw_canvas(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Plain)
-            .border_style(Style::default().fg(Color::Rgb(47, 48, 46)))
+            .border_style(Style::default().fg(BORDER))
             .style(Style::default().bg(SURFACE));
         frame.render_widget(
             MiniMap::new(&app.flow)
                 .position(MiniMapPosition::TopRight)
                 .size(22, 8)
                 .margin(1)
+                .style(
+                    MiniMapStyle::default()
+                        .with_bg_color(SURFACE)
+                        .with_node_color(MUTED)
+                        .with_selected_node_color(GOLD)
+                        .with_viewport_color(BORDER),
+                )
                 .block(block),
             area,
         );
@@ -615,7 +618,7 @@ fn draw_inspector(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     };
     let block = Block::default()
         .borders(Borders::LEFT)
-        .border_style(Style::default().fg(Color::Rgb(54, 55, 52)))
+        .border_style(Style::default().fg(BORDER))
         .style(Style::default().bg(SURFACE))
         .padding(Padding::new(3, 2, 2, 1));
     let inner = block.inner(area);
@@ -678,7 +681,7 @@ fn draw_timeline(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(Color::Rgb(64, 65, 62)))
+        .border_style(Style::default().fg(MUTED))
         .style(Style::default().bg(SURFACE));
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -717,18 +720,14 @@ fn draw_timeline(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) {
         let x = inner.x + col as u16;
         let event_index = col * app.timeline.len() / width.max(1);
         let color = if event_index <= app.index {
-            Color::Indexed(242)
+            GOLD
         } else {
-            Color::Rgb(58, 59, 56)
+            BORDER
         };
         if marks[col] != ' ' {
             buffer[(x, markers.y)].set_char(marks[col]).set_style(
                 Style::default()
-                    .fg(if marks[col] == '×' {
-                        Color::Rgb(205, 92, 92)
-                    } else {
-                        GOLD
-                    })
+                    .fg(if marks[col] == '×' { RED } else { GOLD })
                     .bg(SURFACE),
             );
         }
@@ -771,7 +770,7 @@ fn draw_timeline(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) {
         tag,
         Style::default()
             .fg(if app.playback == Playback::Live {
-                Color::Rgb(102, 181, 91)
+                GREEN
             } else {
                 GOLD
             })
@@ -782,7 +781,7 @@ fn draw_timeline(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) {
 
 fn draw_footer(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) {
     let buffer = frame.buffer_mut();
-    buffer.set_style(area, Style::default().bg(Color::Rgb(19, 20, 19)));
+    buffer.set_style(area, Style::default().bg(CANVAS));
     app.regions.play = None;
     app.regions.live = None;
     app.regions.scope = None;
@@ -793,7 +792,7 @@ fn draw_footer(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) {
         area.y,
         brand,
         Style::default()
-            .fg(Color::Rgb(22, 20, 10))
+            .fg(CANVAS)
             .bg(GOLD)
             .add_modifier(Modifier::BOLD),
     );
@@ -808,7 +807,10 @@ fn draw_footer(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) {
         x,
         area.y,
         play,
-        Style::default().fg(GOLD).bg(Color::Rgb(38, 38, 34)),
+        Style::default()
+            .fg(CANVAS)
+            .bg(GOLD)
+            .add_modifier(Modifier::BOLD),
     );
     x += play.len() as u16 + 1;
     let live = " ● LIVE ";
@@ -817,9 +819,14 @@ fn draw_footer(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) {
         x,
         area.y,
         live,
-        Style::default()
-            .fg(Color::Rgb(102, 181, 91))
-            .bg(Color::Rgb(31, 36, 31)),
+        if app.playback == Playback::Live {
+            Style::default()
+                .fg(CANVAS)
+                .bg(GREEN)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(GREEN).bg(SURFACE_RAISED)
+        },
     );
     x += live.len() as u16 + 1;
     let scope = format!(" ◉ {} ", app.scope.label().to_ascii_uppercase());
@@ -829,8 +836,8 @@ fn draw_footer(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) {
         area.y,
         &scope,
         Style::default()
-            .fg(GOLD)
-            .bg(Color::Rgb(38, 36, 29))
+            .fg(CANVAS)
+            .bg(GOLD)
             .add_modifier(Modifier::BOLD),
     );
     x += scope.len() as u16 + 1;
@@ -857,7 +864,7 @@ fn draw_footer(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) {
         area.y,
         stats,
         usize::from(area.right().saturating_sub(x).saturating_sub(25)),
-        Style::default().fg(SUBTLE).bg(Color::Rgb(19, 20, 19)),
+        Style::default().fg(SUBTLE).bg(CANVAS),
     );
     let hints = "? help · q quit ";
     if area.width > hints.len() as u16 {
@@ -865,7 +872,7 @@ fn draw_footer(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) {
             area.right() - hints.len() as u16,
             area.y,
             hints,
-            Style::default().fg(MUTED).bg(Color::Rgb(19, 20, 19)),
+            Style::default().fg(MUTED).bg(CANVAS),
         );
     }
 }

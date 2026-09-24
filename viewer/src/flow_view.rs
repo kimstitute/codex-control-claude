@@ -12,12 +12,16 @@ use rataflow::{
 };
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Padding, Paragraph, Widget};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::graph::{Card, Scene};
+use crate::theme::{
+    AMBER, BORDER, BRIGHT_TEXT, CLAUDE_ORANGE, CODEX_TEAL, GOLD, GREEN, RED, StateTone,
+    flow_palette, state_color, state_tone,
+};
 
 const PRIMARY_DIMS: (f64, f64) = (30.0, 7.0);
 const SECONDARY_DIMS: (f64, f64) = (28.0, 6.0);
@@ -40,35 +44,66 @@ impl ObserverNode {
             Span::styled(format!("{glyph} "), bg.fg(state_color(&self.card.state))),
             Span::styled(
                 truncate(&self.card.title, title_budget),
-                bg.fg(palette.text).add_modifier(Modifier::BOLD),
+                bg.fg(BRIGHT_TEXT).add_modifier(Modifier::BOLD),
             ),
         ])];
 
-        let identity = match (&self.card.role, &self.card.model) {
-            (Some(role), Some(model)) if !model.is_empty() => format!("{role}  {model}"),
-            (Some(role), _) => role.clone(),
-            (_, Some(model)) => model.clone(),
-            _ => self.card.kind.clone(),
-        };
-        lines.push(Line::from(Span::styled(
-            truncate(&identity, usize::from(area.width)),
-            bg.fg(palette.subtle),
-        )));
-        lines.push(Line::from(Span::styled(
-            truncate(&self.card.activity, usize::from(area.width)),
-            bg.fg(palette.accent),
-        )));
+        let role = self.card.role.as_deref().unwrap_or(&self.card.kind);
+        let mut identity = vec![
+            Span::styled("◆ ", bg.fg(provider_color(&self.card))),
+            Span::styled(
+                truncate(role, usize::from(area.width).saturating_sub(2)),
+                bg.fg(palette.accent).add_modifier(Modifier::BOLD),
+            ),
+        ];
+        if let Some(model) = self.card.model.as_deref().filter(|model| !model.is_empty()) {
+            identity.extend([
+                Span::styled("  ", bg),
+                Span::styled(
+                    truncate(
+                        model,
+                        usize::from(area.width).saturating_sub(role.width() + 4),
+                    ),
+                    bg.fg(palette.subtle),
+                ),
+            ]);
+        }
+        lines.push(Line::from(identity));
+        lines.push(Line::from(vec![
+            Span::styled(
+                if state_tone(&self.card.state) == StateTone::Live {
+                    "▶ "
+                } else {
+                    "↳ "
+                },
+                bg.fg(if state_tone(&self.card.state) == StateTone::Live {
+                    GREEN
+                } else {
+                    GOLD
+                }),
+            ),
+            Span::styled(
+                truncate(
+                    &self.card.activity,
+                    usize::from(area.width).saturating_sub(2),
+                ),
+                bg.fg(palette.text),
+            ),
+        ]));
 
         let tokens = compact_number(self.card.output_tokens);
-        let footer = if self.card.output_tokens > 0 {
-            format!("{}  ·  {tokens} tok", self.card.state)
-        } else {
-            self.card.state.clone()
-        };
-        lines.push(Line::from(Span::styled(
-            truncate(&footer, usize::from(area.width)),
-            bg.fg(state_color(&self.card.state)),
-        )));
+        let mut footer = vec![Span::styled(
+            self.card.state.to_ascii_uppercase(),
+            bg.fg(state_color(&self.card.state))
+                .add_modifier(Modifier::BOLD),
+        )];
+        if self.card.output_tokens > 0 {
+            footer.push(Span::styled(
+                format!("  ·  {tokens} tok"),
+                bg.fg(palette.muted),
+            ));
+        }
+        lines.push(Line::from(footer));
         lines
     }
 }
@@ -90,10 +125,15 @@ impl NodeContent for ObserverNode {
         }
 
         let surface = Style::default().bg(palette.surface);
-        let border = if ctx.selected {
+        let border = if ctx.selected || ctx.dragging {
             palette.accent
         } else {
-            palette.muted
+            match state_tone(&self.card.state) {
+                StateTone::Live => GREEN,
+                StateTone::Waiting => AMBER,
+                StateTone::Failed => RED,
+                StateTone::Done | StateTone::Idle => BORDER,
+            }
         };
         let block = Block::default()
             .borders(Borders::ALL)
@@ -121,14 +161,14 @@ impl NodeContent for ObserverNode {
 #[derive(Clone, Debug, Default)]
 pub struct ObserverEdge {
     route: StepEdge,
-    active: bool,
+    tone: StateTone,
 }
 
 impl ObserverEdge {
-    fn new(active: bool) -> Self {
+    fn new(tone: StateTone) -> Self {
         Self {
             route: StepEdge::default(),
-            active,
+            tone,
         }
     }
 }
@@ -139,10 +179,11 @@ impl EdgeContent for ObserverEdge {
     }
 
     fn render(&self, ctx: &EdgeRenderContext, buf: &mut Buffer) {
-        let color = if self.active {
-            ctx.theme.palette().success
-        } else {
-            ctx.theme.palette().muted
+        let color = match self.tone {
+            StateTone::Live => GREEN,
+            StateTone::Waiting => AMBER,
+            StateTone::Failed => RED,
+            StateTone::Done | StateTone::Idle => BORDER,
         };
         let style = EdgeStyle::default().with_stroke_style(Style::default().fg(color));
         ctx.render_path(&style, None, buf);
@@ -150,17 +191,8 @@ impl EdgeContent for ObserverEdge {
 }
 
 pub fn new_flow() -> ObserverFlow {
-    let mut palette = Theme::Dark.palette();
-    palette.accent = Color::Indexed(178);
-    palette.canvas_bg = Color::Rgb(13, 14, 13);
-    palette.surface = Color::Rgb(27, 28, 27);
-    palette.muted = Color::Rgb(62, 64, 61);
-    palette.subtle = Color::Rgb(116, 117, 111);
-    palette.text = Color::Rgb(226, 227, 221);
-    palette.success = Color::Rgb(102, 181, 91);
-    palette.error = Color::Rgb(205, 92, 92);
     Flow::new()
-        .with_theme(Theme::Custom(palette))
+        .with_theme(Theme::Custom(flow_palette()))
         .with_min_zoom(0.08)
         .with_max_zoom(1.5)
         .with_deselect_on_pane_click(false)
@@ -217,7 +249,7 @@ pub fn sync(flow: &mut ObserverFlow, scene: &Scene, allow_layout: bool) -> bool 
         .iter()
         .map(|card| (card.key.as_str(), card))
         .collect::<BTreeMap<_, _>>();
-    let mut wanted_edges = BTreeMap::<String, (String, String, bool)>::new();
+    let mut wanted_edges = BTreeMap::<String, (String, String, StateTone)>::new();
     for link in &scene.links {
         let (Some(from), Some(to)) = (by_key.get(link.from.as_str()), by_key.get(link.to.as_str()))
         else {
@@ -229,21 +261,21 @@ pub fn sync(flow: &mut ObserverFlow, scene: &Scene, allow_layout: bool) -> bool 
             (to.key.clone(), from.key.clone(), *from)
         };
         let id = format!("{source}\u{2192}{target}");
-        wanted_edges.insert(id, (source, target, active_state(&target_card.state)));
+        wanted_edges.insert(id, (source, target, state_tone(&target_card.state)));
     }
 
     let before_edges = flow.edges().len();
     flow.retain_edges(|edge| wanted_edges.contains_key(&edge.id));
     structural |= flow.edges().len() != before_edges;
-    for (id, (source, target, active)) in wanted_edges {
+    for (id, (source, target, tone)) in wanted_edges {
         if let Some(content) = flow.edge_content_mut(&id) {
-            content.active = active;
-            flow.set_edge_animated(&id, active);
+            content.tone = tone;
+            flow.set_edge_animated(&id, tone == StateTone::Live);
             continue;
         }
         let edge = Edge::new(id, source, target)
-            .with_content(ObserverEdge::new(active))
-            .with_animated(active)
+            .with_content(ObserverEdge::new(tone))
+            .with_animated(tone == StateTone::Live)
             .with_selectable(false)
             .with_deletable(false)
             .with_reconnectable(Reconnectable::None);
@@ -267,16 +299,6 @@ pub fn relayout(flow: &mut ObserverFlow) {
     );
 }
 
-pub fn state_color(state: &str) -> Color {
-    match state {
-        "running" | "active" | "claimed" | "launching" => Color::Rgb(102, 181, 91),
-        "completed" | "accepted" | "idle" => Color::Rgb(132, 154, 124),
-        "failed" | "unknown" | "cancelled" | "blocked" => Color::Rgb(205, 92, 92),
-        "pending" | "queued" | "awaiting_codex" | "awaiting_leader" => Color::Rgb(206, 170, 58),
-        _ => Color::Rgb(138, 140, 134),
-    }
-}
-
 fn status_mark(state: &str) -> &'static str {
     match state {
         "running" | "active" | "claimed" | "launching" => "●",
@@ -287,8 +309,18 @@ fn status_mark(state: &str) -> &'static str {
     }
 }
 
-fn active_state(state: &str) -> bool {
-    matches!(state, "running" | "active" | "claimed" | "launching")
+fn provider_color(card: &Card) -> ratatui::style::Color {
+    if card.kind == "controller" {
+        CODEX_TEAL
+    } else if card
+        .model
+        .as_deref()
+        .is_some_and(|model| model.to_ascii_lowercase().contains("claude"))
+    {
+        CLAUDE_ORANGE
+    } else {
+        GOLD
+    }
 }
 
 fn kind_rank(kind: &str) -> u8 {

@@ -6,6 +6,7 @@ use anyhow::{Context, Result, bail};
 use claude_control_viewer::feed::{Feed, FeedConfig, read_jsonl, read_jsonl_file};
 use claude_control_viewer::graph::project;
 use claude_control_viewer::model::Timeline;
+use crossterm::style::force_color_output;
 use serde_json::json;
 
 #[derive(Debug)]
@@ -17,6 +18,7 @@ struct Args {
     stream_file: Option<PathBuf>,
     follow: bool,
     poll_seconds: f64,
+    color: bool,
 }
 
 fn main() {
@@ -28,6 +30,12 @@ fn main() {
 
 fn run() -> Result<()> {
     let args = parse_args()?;
+    if !args.inspect {
+        // Claude/Codex host processes commonly export NO_COLOR for machine-readable
+        // command output. This application is an interactive visual surface, so color
+        // remains on unless the viewer-specific flag disables it explicitly.
+        force_color_output(args.color);
+    }
     let mut timeline = Timeline::default();
     if let Some(path) = &args.stream_file {
         for event in read_jsonl_file(path)? {
@@ -103,6 +111,7 @@ fn parse_args() -> Result<Args> {
         stream_file: None,
         follow: !inspect,
         poll_seconds: 0.25,
+        color: true,
     };
     while let Some(value) = values.next() {
         match value.as_str() {
@@ -118,6 +127,7 @@ fn parse_args() -> Result<Args> {
                 args.poll_seconds = next_value(&mut values, "--poll-seconds")?.parse()?
             }
             "--no-follow" => args.follow = false,
+            "--no-color" => args.color = false,
             unknown => bail!("unknown argument {unknown:?}; run ccc-viewer --help"),
         }
     }
@@ -178,6 +188,7 @@ fn print_help() {
          ccc-viewer [inspect] --stream-file EVENTS.jsonl\n\n\
          Options:\n  --state-dir PATH      Claude Control state directory\n  \
          --no-follow          Stop after the current high-water mark\n  \
+         --no-color           Disable the semantic TUI palette\n  \
          --poll-seconds N     Live polling interval (default: 0.25)\n  \
          --stream-file PATH   Replay a saved AG-UI JSONL stream\n  \
          -h, --help           Show this help\n  -V, --version        Show version",

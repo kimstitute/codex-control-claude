@@ -65,6 +65,7 @@ def register(commands):
     viewer.add_argument("--viewer-bin", type=Path, help="Explicit ccc-viewer binary.")
     viewer.add_argument("--poll-seconds", type=float, default=0.25)
     viewer.add_argument("--no-follow", action="store_true")
+    viewer.add_argument("--no-color", action="store_true", help="Disable the semantic palette.")
     viewer.add_argument("--stream-file", type=Path, help="Open a saved AG-UI JSONL stream.")
     viewer.add_argument("--inspect", action="store_true", help="Print a headless summary.")
 
@@ -204,6 +205,8 @@ def _viewer_command(args):
         )
         if args.no_follow:
             command.append("--no-follow")
+    if getattr(args, "no_color", False):
+        command.append("--no-color")
     return command
 
 

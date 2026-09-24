@@ -22,6 +22,11 @@ viewer는 controller, composition, workflow, workspace, task와 Claude session�
 기본 `focus` scope는 최신 연결 작업만 따라갑니다. `a`를 누르면 `focus`, 제한된
 `recent`, cursor 시점 전체인 `all` graph를 순환합니다.
 
+viewer는 SSH와 tmux에서도 같은 의미가 유지되는 256색 팔레트를 사용합니다. 상위
+Codex/Claude 프로세스가 기계 출력용 `NO_COLOR=1`을 설정해도 대화형 viewer는 금색
+재생 구간, 녹색 live 경로, 주황색 대기, 빨간색 실패를 표시합니다. 단색 화면이
+필요할 때만 `claude_control monitor viewer --no-color`를 사용하세요.
+
 | 마우스 | 동작 |
 |---|---|
 | 카드 클릭 | 선택하고 30/70 metadata inspector 열기 |

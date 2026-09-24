@@ -21,6 +21,12 @@ unbounded set of cards, so graph size remains close to the number of agents.
 The default `focus` scope follows the latest connected work. Press `a` to rotate
 through `focus`, bounded `recent`, and the cursor-complete `all` graph.
 
+The viewer uses a semantic xterm-256 palette that remains stable over SSH and
+tmux. It keeps gold history, green live paths, amber waits and red failures
+visible even when a parent Codex or Claude process exports `NO_COLOR=1` for
+machine-readable commands. Use `claude_control monitor viewer --no-color` only
+when an explicitly monochrome screen is required.
+
 | Mouse | Action |
 |---|---|
 | Click a card | Select it and open the 30/70 metadata inspector |

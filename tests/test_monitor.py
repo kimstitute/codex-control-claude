@@ -59,6 +59,7 @@ class MonitorTests(ControllerTestCase):
                     "state_dir": self.state,
                     "poll_seconds": 0.5,
                     "no_follow": True,
+                    "no_color": True,
                 },
             )()
 
@@ -67,7 +68,8 @@ class MonitorTests(ControllerTestCase):
         self.assertEqual(command[0], str(binary.resolve()))
         self.assertIn(sys.executable, command)
         self.assertIn(str(self.state.resolve()), command)
-        self.assertEqual(command[-1], "--no-follow")
+        self.assertIn("--no-follow", command)
+        self.assertEqual(command[-1], "--no-color")
 
     def test_bundled_viewer_manifest_detects_tampering(self) -> None:
         with tempfile.TemporaryDirectory() as root:
