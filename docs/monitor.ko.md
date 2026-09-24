@@ -19,34 +19,38 @@ viewer는 controller, composition, workflow, workspace, task와 Claude session�
 카드와 방향 관계로 표시합니다. session 카드에는 역할, 실제/요청 모델, 현재 상태,
 실행 수와 확정 output token을 집계합니다. run마다 카드를 무한히 늘리지 않으므로
 장기간 원장도 agent graph의 크기에 가깝게 유지됩니다.
+기본 `focus` scope는 최신 연결 작업만 따라갑니다. `a`를 누르면 `focus`, 제한된
+`recent`, cursor 시점 전체인 `all` graph를 순환합니다.
 
 | 마우스 | 동작 |
 |---|---|
-| 카드 클릭 / 더블 클릭 | 선택하고 inspector 열기 / 선택 카드를 follow |
-| 카드 또는 빈 canvas 드래그 | graph를 manual camera로 이동 |
-| canvas 위 휠 | pointer 아래 좌표를 유지하며 확대/축소 |
-| timeline 클릭·드래그 / 휠 | event cursor scrub / 10개씩 이동 |
-| minimap 클릭·드래그 | 해당 graph 위치로 camera 이동 |
+| 카드 클릭 | 선택하고 30/70 metadata inspector 열기 |
+| 카드 드래그 | controller 상태를 바꾸지 않고 카드 위치 이동 |
+| 빈 canvas 드래그 | graph를 manual camera로 이동 |
+| canvas 위 휠 | pointer 중심 확대/축소 |
+| timeline 클릭·드래그 | event cursor scrub |
 | `PLAY`, `LIVE` 클릭 | 과거 재생 전환 / 최신 cursor 복귀 |
+| `FOCUS`, `RECENT`, `ALL` 클릭 | 다음 graph scope로 순환 |
 | 우클릭 | inspector 닫기 |
 
 | 키 | 동작 |
 |---|---|
-| `←`, `→`, `[`, `]` | 과거 이벤트를 1개 또는 10개 이동 |
+| `[`, `]` | 과거 이벤트를 1개 이동 |
 | `Home`, `End` | baseline 또는 최신 live cursor로 이동 |
 | `Space` | 선택한 cursor부터 재생/일시정지 |
-| `Tab`, `↑`, `↓` | agent/card 선택 |
-| `Enter`, `v` | 선택한 카드의 안전한 observation 세부 정보 |
-| `o`, `0`, `f`, `m`, `c` | overview, 선택 카드 follow, manual camera, 선택 카드 중앙 정렬 |
-| `WASD`, `HJKL`, `+`, `-` | manual pan과 zoom |
+| `Tab`, `Shift-Tab`, 방향키 | 다음·이전·공간상 인접 카드 선택 |
+| `Enter` | 선택이 없을 때 첫 카드 선택 |
+| `o`, `f`, `r`, `c` | overview, 최신 작업 follow, 재배치, 선택 카드 중앙 정렬 |
+| `a` | `focus` → `recent` → `all` graph scope 순환 |
+| `HJKL`, `+`, `-`, `0` | manual pan, zoom, zoom 초기화 |
 | `x`, `i`, `?`, `q` | mouse capture 전환, session 정보, 도움말, 종료 |
 
-viewer는 선택한 controller 카드의 follow 화면으로 시작합니다. zoom에 따라 full card,
-compact card, overview glyph로 바뀌며 기존 카드 위치는 새 event가 와도 유지됩니다.
-overview는 같은 종류의 노드를 결정적 grid로 배치하고 낮은 zoom에서는 edge를 생략해
-교차선이 화면을 덮지 않게 합니다. minimap은 전체 graph와 현재 viewport를 보여줍니다.
-하단 histogram timeline의 순서는 시각이 아니라 단조 증가 observation cursor로
-결정되며 `LIVE`, `PAUSED`, `PLAYING` 상태를 분리합니다.
+viewer는 `focus` scope의 fitted overview로 시작합니다. Rataflow가 node scratch-buffer
+clipping, step edge routing, semantic zoom, viewport interaction과 minimap을 한 좌표계에서
+처리합니다. 상태만 바뀌면 기존 위치를 유지하고 `r`을 눌렀을 때만 전체를 다시
+배치합니다. 카드를 선택하면 metadata-only inspector가 열립니다. timeline은 event
+marker, 가중 2행 activity와 playhead를 분리하며 순서는 시각이 아니라 단조 증가
+observation cursor로 결정됩니다.
 
 headless `--inspect`는 viewer contract, fidelity, cursor, node/edge/agent 수와 확정
 output token 합계를 JSON으로 출력합니다. 터미널 UI 없이 설치와 원장 호환성을 확인할
@@ -81,8 +85,10 @@ viewer가 번들되지 않았으면 `monitor viewer`는 `viewer_unavailable`로 
 바이너리가 모두 일치할 때만 기존 viewer를 보존합니다.
 
 viewer는 [Zoetrope](https://github.com/furkankly/zoetrope)의 spatial graph,
-camera와 timeline이라는 제품 방식을 참고했습니다. 소스나 asset은 가져오지 않았고
-event fold, graph projection, layout, UI와 launcher는 이 저장소에서 독립 구현했습니다.
+camera와 timeline이라는 제품 방식을 참고했습니다. Zoetrope 소스와 asset은 포함하지
+않습니다. 공개 MIT [Rataflow](https://github.com/furkankly/rataflow) crate를 사용하며
+고지는 [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md)에 보존했습니다. event fold,
+Claude Control projection, scope, card, timeline과 launcher는 이 저장소에서 구현했습니다.
 
 ## Python TUI 실행
 

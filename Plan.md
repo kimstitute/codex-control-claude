@@ -1,6 +1,6 @@
 # OMX 기능 도입 계획
 
-작성: 2026-09-20 · 갱신: 2026-09-24 · 기준: v0.21.0 · 상태: P1–P5, model catalog 및 mouse graph/replay 관측 구현
+작성: 2026-09-20 · 갱신: 2026-09-24 · 기준: v0.22.0 · 상태: P1–P5, model catalog 및 Rataflow graph/replay 관측 구현
 
 이 문서는 도입 당시의 설계와 단계별 통과 조건을 보존한다. 단계별 구현 상태는 문서 끝의 진행 기록을 따른다. P5는 기존 Claude 도구 비활성화를 유지하는 컨트롤러 작업 요청 방식으로 구체화했다.
 
@@ -794,3 +794,19 @@ manifest JSON과 `git diff --check`가 통과했다. 실제 계정 상태 이관
   선 교차 없이 탐색할 수 있다.
 - inspector에는 역할, 모델, 상태, 활동, 토큰, 연결 수와 안정 식별자만 표시한다. prompt,
   result, reasoning, tool-call body는 UI와 observation 계약 모두에 계속 포함하지 않는다.
+
+## 30. Rataflow canvas와 scope 기반 관측 — v0.22.0
+
+- 직접 구현한 문자 단위 node/edge/minimap 렌더러를 공개 `rataflow` 0.1.0 crate로
+  교체한다. node scratch-buffer clipping, step edge routing, viewport transform, selection,
+  drag/zoom과 minimap을 한 좌표계에서 처리한다. Zoetrope 소스와 asset은 vendoring하지
+  않으며 Rataflow MIT 고지는 `THIRD_PARTY_NOTICES.md`에 보존한다.
+- 기본 `focus` scope는 최신 node에서 root edge를 제외한 실제 관계를 따라 연결된 작업만
+  표시한다. `recent`는 종류별 최신/진행 항목을 제한된 수로 구성하고 `all`은 cursor 시점의
+  전체 graph를 표시한다. `a`로 순환하며 관측 원장과 replay 데이터는 어느 scope에서도
+  삭제하거나 축약하지 않는다.
+- 화면은 near-black canvas, zoom과 무관한 희소 dot 간격, 150% 상한의 compact card,
+  selection 때만 열리는 30/70 inspector, marker strip + 2행 weighted activity + info 행의
+  6행 timeline, 한 줄 transport/status bar로 구성한다.
+- prompt, reasoning, result, tool-call body는 계속 표시하거나 export하지 않는다. viewer는
+  승인, 재시도, apply, 작업 전달을 수행하지 않는 read-only observation surface다.

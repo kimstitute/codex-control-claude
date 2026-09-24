@@ -73,6 +73,12 @@ Version 0.21 rebuilds the viewer around semantic zoom and a stable grid layout,
 then adds direct mouse control for card inspection, drag panning, pointer-centred
 wheel zoom, timeline scrubbing, minimap navigation and PLAY/LIVE transport.
 
+Version 0.22 replaces the hand-written character graph with the public
+`rataflow` engine and opens in a focused view of the latest connected work.
+Press `a` to rotate through `focus`, `recent` and `all` while preserving complete
+cursor replay. Sparse background spacing, compact cards, clipped step edges,
+the minimap and a two-row activity timeline share one viewport model.
+
 ## Choose the right workflow
 
 | Goal | Use | What it adds |
@@ -85,7 +91,7 @@ wheel zoom, timeline scrubbing, minimap navigation and PLAY/LIVE transport.
 | Plan, implement and review | `composition` | P4 planning plus P5 editing and frozen Fable verification |
 | Schedule dependent tasks | `task enqueue` + `dispatch` | FIFO admission and exact accepted-parent gates |
 | Save instructions for the next turn | `message` | Explicit next-revision delivery and result handoff |
-| Observe the multi-agent graph and past execution | `monitor viewer` | Semantic zoom graph, minimap, mouse cameras, histogram replay and per-agent run tokens |
+| Observe the multi-agent graph and past execution | `monitor viewer` | Focus/recent/all graph, minimap, mouse cameras, activity replay and per-agent run tokens |
 | Inspect account limits or use the portable fallback | `monitor tui` / `monitor limits` | Codex, Claude, Gemini and Cursor quotas plus a Python-only screen |
 | List models available to the account | `models catalog` | Current selectors, resolved models and effort levels with account identity removed |
 | Configure model and effort per role | `models show/configure/reset` | Aliases, exact version IDs, atomic replacement and frozen existing work |

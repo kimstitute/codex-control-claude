@@ -5,7 +5,7 @@ description: Manage multiple persistent Claude Code sessions on the current Linu
 
 # Claude Control
 
-Use the bundled `../../scripts/claude_control_cli.py`, resolving that path from this skill's directory. Public commands return JSON except the interactive monitors. Python 3.10+ and locally authenticated Claude Code are prerequisites; run `--help` for flags. Version 0.21 supports Linux and Windows supplied-text delegation, per-role versioned model and effort settings, a prompt-free signed-in account model catalog, JSON-schema task reports, base-hashed patch operations, one bounded format repair, reviewer vetoes, typed acceptance evidence, finite plan/edit/review compositions, routing provenance, fair multi-composition dispatch, verified scout reuse, guarded apply, telemetry, durable observation history, cursor replay, OTLP export, streaming AG-UI events and an optional mouse-driven Rust graph/replay viewer. Claude native tools and MCP are disabled, with CLI safe mode and empty setting sources. The project-hook nonexecution test passed; administrator-managed policy still applies. For proposals, supply source text and inspect returned edits. For authorized file work, read [the workspace reference](references/workspaces.md) before creating a policy. The controller executes structured read/write/patch/named-check requests on private copies; source integration remains a Codex action.
+Use the bundled `../../scripts/claude_control_cli.py`, resolving that path from this skill's directory. Public commands return JSON except the interactive monitors. Python 3.10+ and locally authenticated Claude Code are prerequisites; run `--help` for flags. Version 0.22 supports Linux and Windows supplied-text delegation, per-role versioned model and effort settings, a prompt-free signed-in account model catalog, JSON-schema task reports, base-hashed patch operations, one bounded format repair, reviewer vetoes, typed acceptance evidence, finite plan/edit/review compositions, routing provenance, fair multi-composition dispatch, verified scout reuse, guarded apply, telemetry, durable observation history, cursor replay, OTLP export, streaming AG-UI events and an optional mouse-driven Rataflow graph/replay viewer with focus/recent/all scopes. Claude native tools and MCP are disabled, with CLI safe mode and empty setting sources. The project-hook nonexecution test passed; administrator-managed policy still applies. For proposals, supply source text and inspect returned edits. For authorized file work, read [the workspace reference](references/workspaces.md) before creating a policy. The controller executes structured read/write/patch/named-check requests on private copies; source integration remains a Codex action.
 
 ## Execution settings
 
@@ -250,9 +250,9 @@ The package launches workers for jobs, not an always-running coordinator. Codex 
 
 ## Observe agents and usage
 
-Use `monitor viewer` for the optional read-only Rust semantic-zoom graph, minimap,
-mouse/keyboard camera controls, semantic agent inspector, histogram timeline and
-event-indexed historical replay. It receives
+Use `monitor viewer` for the optional read-only Rust/Rataflow semantic-zoom graph,
+focus/recent/all scopes, minimap, mouse/keyboard camera controls, semantic agent
+inspector, activity timeline and event-indexed historical replay. It receives
 content-free AG-UI JSONL from one long-lived controller process and never reads
 SQLite or mutates work directly. Use `monitor tui` for the portable terminal
 graph and provider quota views when the viewer binary is not bundled. It shows

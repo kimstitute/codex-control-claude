@@ -1,6 +1,6 @@
 [package]
 name = "claude-control-viewer"
-version = "0.21.0"
+version = "0.22.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Read-only terminal graph and replay viewer for Claude Control"
@@ -15,5 +15,6 @@ path = "src/main.rs"
 anyhow = "1"
 crossterm = "0.29"
 ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
+rataflow = { version = "0.1.0", default-features = false, features = ["crossterm", "sugiyama"] }
 serde_json = "1"
 unicode-width = "0.2"

@@ -74,6 +74,11 @@ minimap, overview/follow/manual camera와 event timeline을 제공하며 AG-UI J
 조작을 추가합니다. 카드 선택·inspector, drag pan, pointer 중심 wheel zoom, timeline
 scrub, minimap 이동, PLAY/LIVE transport를 터미널에서 직접 제어할 수 있습니다.
 
+0.22 버전은 직접 만든 문자 그래프를 `rataflow` 엔진으로 교체하고 기본 화면을 최신
+연결 작업에 집중하는 `focus` scope로 정리합니다. `a`로 `focus → recent → all`을
+순환하며, 모든 cursor의 과거 재생은 그대로 유지됩니다. 희소 배경, compact card,
+일관된 edge clipping, minimap과 2행 activity timeline을 같은 viewport에서 렌더합니다.
+
 ## 어떤 명령을 선택해야 하나요?
 
 | 원하는 일 | 사용할 기능 | 추가되는 보장 |
@@ -86,7 +91,7 @@ scrub, minimap 이동, PLAY/LIVE transport를 터미널에서 직접 제어할 �
 | 계획부터 구현·검토까지 연결하기 | `composition` | P4 계획과 P5 편집·동결 검토의 명시적 연결 |
 | 의존 작업을 순서대로 실행하기 | `task enqueue` + `dispatch` | FIFO 대기열과 정확한 부모 승인 조건 |
 | 다음 턴에 전달할 지시를 저장하기 | `message` | 선택된 개정에만 전달되는 지시와 결과 인수인계 |
-| multi-agent graph와 과거 실행 관찰하기 | `monitor viewer` | semantic zoom graph, minimap, mouse camera, histogram replay, agent별 실행 토큰 |
+| multi-agent graph와 과거 실행 관찰하기 | `monitor viewer` | focus/recent/all graph, minimap, mouse camera, activity replay, agent별 실행 토큰 |
 | 계정 한도와 portable fallback 보기 | `monitor tui` / `monitor limits` | Codex·Claude·Gemini·Cursor quota와 Python-only 화면 |
 | 계정에서 선택 가능한 모델 확인하기 | `models catalog` | 현재 selector·해석된 모델·지원 effort, 계정 식별자 제거 |
 | 역할별 모델과 effort 바꾸기 | `models show/configure/reset` | 별칭·정확한 버전 ID, 원자적 설정 교체, 기존 작업 동결 |

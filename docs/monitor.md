@@ -18,34 +18,39 @@ The viewer renders controller, composition, workflow, workspace, task and Claude
 session cards with directional relationships. Session cards aggregate role,
 model, current state, run counts and final output tokens. Runs do not become an
 unbounded set of cards, so graph size remains close to the number of agents.
+The default `focus` scope follows the latest connected work. Press `a` to rotate
+through `focus`, bounded `recent`, and the cursor-complete `all` graph.
 
 | Mouse | Action |
 |---|---|
-| Click / double-click a card | Select and inspect / follow the selected card |
-| Drag a card or empty canvas | Pan the graph in manual camera mode |
-| Wheel over the canvas | Zoom while preserving the world point under the pointer |
-| Click-drag / wheel on timeline | Scrub the event cursor / seek by ten events |
-| Click-drag the minimap | Move the camera to that graph location |
+| Click a card | Select it and open the 30/70 metadata inspector |
+| Drag a card | Reposition that card without changing controller state |
+| Drag empty canvas | Pan the graph in manual camera mode |
+| Wheel over the canvas | Zoom around the pointer |
+| Click or drag the timeline | Scrub the event cursor |
 | Click `PLAY` or `LIVE` | Toggle historical playback / return to the latest cursor |
+| Click `FOCUS`, `RECENT`, or `ALL` | Rotate to the next graph scope |
 | Right-click | Close the inspector |
 
 | Key | Action |
 |---|---|
-| `←`, `→`, `[`, `]` | Seek by one or ten historical events |
+| `[`, `]` | Seek by one historical event |
 | `Home`, `End` | Jump to the baseline or latest live cursor |
 | `Space` | Play or pause from the selected cursor |
-| `Tab`, `↑`, `↓` | Select an agent/card |
-| `Enter`, `v` | Show safe observation details for the selected card |
-| `o`, `0`, `f`, `m`, `c` | Overview, follow, manual camera or center selection |
-| `WASD`, `HJKL`, `+`, `-` | Pan and zoom the manual camera |
+| `Tab`, `Shift-Tab`, arrows | Select the next, previous, or spatially adjacent card |
+| `Enter` | Select the first card when nothing is selected |
+| `o`, `f`, `r`, `c` | Overview, follow latest work, relayout, or center selection |
+| `a` | Rotate graph scope: `focus` → `recent` → `all` |
+| `HJKL`, `+`, `-`, `0` | Pan, zoom, or reset zoom |
 | `x`, `i`, `?`, `q` | Toggle mouse capture, show information/help or quit |
 
-The viewer opens by following the controller card. Semantic zoom switches among
-full cards, compact cards and overview glyphs, while stable positions prevent
-new events from shuffling existing cards. Overview packs each kind into a
-deterministic grid and omits edges at low zoom. The minimap includes the current
-viewport. The histogram timeline separates `LIVE`, `PAUSED` and `PLAYING`; its
-order comes from the monotonic observation cursor rather than wall-clock time.
+The viewer opens in `focus` scope with a fitted overview. Rataflow provides node
+scratch-buffer clipping, step-routed edges, semantic zoom, viewport interaction
+and the minimap in one coordinate system. Existing positions survive state-only
+updates; `r` is the explicit full relayout. Selecting a card opens a metadata-only
+inspector. The timeline separates event markers, weighted two-row activity and
+the playhead; its order comes from the monotonic observation cursor rather than
+wall-clock time.
 
 Headless `--inspect` prints the viewer contract, fidelity, cursor, node, edge and
 agent counts, and final output-token total as JSON.
@@ -81,8 +86,11 @@ manifest and bytes still verify.
 
 The product interaction takes inspiration from
 [Zoetrope](https://github.com/furkankly/zoetrope)'s spatial graph, camera and
-timeline. No Zoetrope source or assets are vendored; event folding, projection,
-layout, rendering and the launcher are implemented independently in this repo.
+timeline. No Zoetrope source or assets are vendored. The viewer uses the public
+MIT-licensed [Rataflow](https://github.com/furkankly/rataflow) crate; its notice
+is preserved in [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md). Event
+folding, Claude Control projection, scopes, cards, timeline and launcher are
+implemented in this repository.
 
 ## Run the Python TUI
 

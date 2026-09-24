@@ -1,5 +1,4 @@
-use std::cmp::min;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::time::{Duration, Instant};
 
@@ -7,40 +6,71 @@ use anyhow::{Context, Result};
 use crossterm::cursor::{Hide, Show};
 use crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
-    MouseButton, MouseEvent, MouseEventKind,
+    KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
+use rataflow::{
+    Background, BackgroundStyle, BackgroundVariant, EventResponse, FlowEvent, MiniMap,
+    MiniMapPosition,
+};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
-use ratatui::buffer::Buffer;
-use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph, Wrap};
 
 use crate::feed::{Feed, FeedEvent};
-use crate::graph::{Card, Point, Scene, project_with_positions};
-use crate::interaction::{
-    ScreenPoint, WorldBounds, WorldPoint, cursor_centered_zoom, drag_pan_delta,
-    minimap_point_to_camera_center, point_in_rect, timeline_column_to_index, world_to_screen,
+use crate::flow_view::{
+    ObserverFlow, compact_number, new_flow, relayout, state_color, sync as sync_flow,
 };
+use crate::graph::{Card, Link, Point, Scene, project_with_positions};
+use crate::interaction::{ScreenPoint, point_in_rect, timeline_column_to_index};
 use crate::model::{GraphState, Timeline};
 
-const FRAME_TIME: Duration = Duration::from_millis(50);
+const FRAME_TIME: Duration = Duration::from_millis(32);
 const PLAY_TIME: Duration = Duration::from_millis(180);
-const MIN_ZOOM: f32 = 0.08;
-const MAX_ZOOM: f32 = 2.0;
-const INSPECTOR_WIDTH: u16 = 44;
+const GOLD: Color = Color::Indexed(178);
+const CANVAS: Color = Color::Rgb(13, 14, 13);
+const SURFACE: Color = Color::Rgb(27, 28, 27);
+const MUTED: Color = Color::Rgb(91, 93, 88);
+const SUBTLE: Color = Color::Rgb(135, 136, 129);
+const TEXT: Color = Color::Rgb(226, 227, 221);
+const RECENT_NODE_LIMIT: usize = 18;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CameraMode {
     Overview,
     Follow,
     Manual,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ScopeMode {
+    Focus,
+    Recent,
+    All,
+}
+
+impl ScopeMode {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Focus => "focus",
+            Self::Recent => "recent",
+            Self::All => "all",
+        }
+    }
+
+    fn next(self) -> Self {
+        match self {
+            Self::Focus => Self::Recent,
+            Self::Recent => Self::All,
+            Self::All => Self::Focus,
+        }
+    }
 }
 
 impl CameraMode {
@@ -51,14 +81,6 @@ impl CameraMode {
             Self::Manual => "manual",
         }
     }
-}
-
-#[derive(Clone, Copy, Debug)]
-struct Camera {
-    x: f32,
-    y: f32,
-    zoom: f32,
-    mode: CameraMode,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -78,46 +100,15 @@ impl Playback {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum HitTarget {
-    Card(usize),
-    Canvas,
-    Timeline,
-    Minimap,
-    Inspector,
-    Play,
-    Live,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct PressState {
-    target: HitTarget,
-    origin: ScreenPoint,
-    last: ScreenPoint,
-    dragging: bool,
-}
-
 #[derive(Clone, Debug, Default)]
 struct UiRegions {
     canvas: Rect,
     timeline: Rect,
     timeline_track: Rect,
     inspector: Option<Rect>,
-    minimap: Option<Rect>,
     play: Option<Rect>,
     live: Option<Rect>,
-    cards: Vec<(usize, Rect)>,
-}
-
-impl Default for Camera {
-    fn default() -> Self {
-        Self {
-            x: -2.0,
-            y: -2.0,
-            zoom: 1.0,
-            mode: CameraMode::Follow,
-        }
-    }
+    scope: Option<Rect>,
 }
 
 pub struct App {
@@ -125,25 +116,22 @@ pub struct App {
     feed: Option<Feed>,
     state: GraphState,
     scene: Scene,
+    display_scene: Scene,
     positions: BTreeMap<String, Point>,
+    flow: ObserverFlow,
     index: usize,
     stream_open: bool,
     playback: Playback,
-    selected: usize,
-    camera: Camera,
+    camera: CameraMode,
+    scope: ScopeMode,
     show_help: bool,
     show_info: bool,
-    show_detail: bool,
     quit: bool,
     status: String,
     error: Option<String>,
     last_play: Instant,
-    started: Instant,
+    last_frame: Instant,
     regions: UiRegions,
-    press: Option<PressState>,
-    hovered: Option<usize>,
-    last_card_click: Option<(usize, Instant)>,
-    inspector_scroll: u16,
     mouse_capture: bool,
 }
 
@@ -153,13 +141,19 @@ impl App {
         let state = timeline.state_at(index)?;
         let mut positions = BTreeMap::new();
         let scene = project_with_positions(&state, &mut positions);
+        let display_scene = scope_scene(&state, &scene, ScopeMode::Focus);
         let stream_open = feed.is_some();
+        let mut flow = new_flow();
+        sync_flow(&mut flow, &display_scene, true);
+        flow.request_fit_view();
         Ok(Self {
             timeline,
             feed,
             state,
             scene,
+            display_scene,
             positions,
+            flow,
             index,
             stream_open,
             playback: if stream_open {
@@ -167,40 +161,49 @@ impl App {
             } else {
                 Playback::Paused
             },
-            selected: 0,
-            camera: Camera::default(),
+            camera: CameraMode::Overview,
+            scope: ScopeMode::Focus,
             show_help: false,
             show_info: false,
-            show_detail: false,
             quit: false,
-            status: "connecting to Claude Control event ledger".to_owned(),
+            status: "observation ledger ready".to_owned(),
             error: None,
             last_play: Instant::now(),
-            started: Instant::now(),
+            last_frame: Instant::now(),
             regions: UiRegions::default(),
-            press: None,
-            hovered: None,
-            last_card_click: None,
-            inspector_scroll: 0,
             mouse_capture: true,
         })
     }
 
+    fn selected_id(&self) -> Option<String> {
+        self.flow.first_selected_node_id()
+    }
+
+    fn selected_card(&self) -> Option<&Card> {
+        let id = self.selected_id()?;
+        self.display_scene.cards.iter().find(|card| card.key == id)
+    }
+
     fn refresh_projection(&mut self) {
+        let selected = self.selected_id();
         match self.timeline.state_at(self.index) {
             Ok(state) => {
-                let key = self
-                    .scene
-                    .cards
-                    .get(self.selected)
-                    .map(|card| card.key.clone());
                 self.state = state;
                 self.scene = project_with_positions(&self.state, &mut self.positions);
-                self.selected = key
-                    .as_deref()
-                    .and_then(|key| self.scene.index_of(key))
-                    .unwrap_or(0)
-                    .min(self.scene.cards.len().saturating_sub(1));
+                self.display_scene = scope_scene(&self.state, &self.scene, self.scope);
+                let changed = sync_flow(
+                    &mut self.flow,
+                    &self.display_scene,
+                    self.camera != CameraMode::Manual,
+                );
+                if let Some(id) = selected.filter(|id| self.display_scene.index_of(id).is_some()) {
+                    self.flow.select_node(&id);
+                }
+                if changed && self.camera == CameraMode::Overview {
+                    self.flow.request_fit_view();
+                } else if self.camera == CameraMode::Follow {
+                    self.follow_activity();
+                }
             }
             Err(error) => self.error = Some(error.to_string()),
         }
@@ -217,7 +220,7 @@ impl App {
                                 self.index = self.timeline.latest_index();
                                 self.refresh_projection();
                             }
-                            self.status = format!("live cursor {}", self.timeline.last_cursor());
+                            self.status = format!("cursor {}", self.timeline.last_cursor());
                         }
                         Ok(false) => {}
                         Err(error) => self.error = Some(error.to_string()),
@@ -225,17 +228,13 @@ impl App {
                     FeedEvent::Diagnostic(message) => self.status = message,
                     FeedEvent::Error(message) => {
                         self.stream_open = false;
-                        if self.playback == Playback::Live {
-                            self.playback = Playback::Paused;
-                        }
+                        self.playback = Playback::Paused;
                         self.error = Some(message);
                     }
                     FeedEvent::Eof => {
                         self.stream_open = false;
-                        if self.playback == Playback::Live {
-                            self.playback = Playback::Paused;
-                        }
-                        self.status = "event stream ended; replay remains available".to_owned();
+                        self.playback = Playback::Paused;
+                        self.status = "stream ended · replay available".to_owned();
                     }
                 }
             }
@@ -253,6 +252,11 @@ impl App {
             }
             self.last_play = Instant::now();
         }
+        let now = Instant::now();
+        let elapsed = now.saturating_duration_since(self.last_frame);
+        self.flow.tick_animation(elapsed);
+        let _ = self.flow.tick_auto_pan(elapsed);
+        self.last_frame = now;
     }
 
     fn seek(&mut self, delta: isize) {
@@ -260,9 +264,7 @@ impl App {
             return;
         }
         let latest = self.timeline.latest_index() as isize;
-        self.index = (self.index as isize + delta).clamp(0, latest) as usize;
-        self.playback = Playback::Paused;
-        self.refresh_projection();
+        self.seek_to((self.index as isize + delta).clamp(0, latest) as usize);
     }
 
     fn seek_to(&mut self, index: usize) {
@@ -292,339 +294,199 @@ impl App {
         self.last_play = Instant::now();
     }
 
-    fn handle_key(&mut self, key: KeyEvent) {
-        if key.kind != KeyEventKind::Press {
-            return;
+    fn follow_activity(&mut self) {
+        let candidate = self
+            .display_scene
+            .cards
+            .iter()
+            .rev()
+            .find(|card| active_state(&card.state))
+            .or_else(|| self.scene.cards.first())
+            .map(|card| card.key.clone());
+        if let Some(id) = candidate {
+            self.flow.select_node(&id);
+            self.flow.center_on_selected();
         }
-        if self.show_help || self.show_info {
-            match key.code {
-                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter => {
-                    self.show_help = false;
-                    self.show_info = false;
+    }
+
+    fn cycle_scope(&mut self) {
+        self.scope = self.scope.next();
+        self.display_scene = scope_scene(&self.state, &self.scene, self.scope);
+        sync_flow(&mut self.flow, &self.display_scene, true);
+        self.camera = CameraMode::Overview;
+        self.flow.request_fit_view();
+    }
+
+    fn process_flow_response(&mut self, response: EventResponse) {
+        for event in response.into_events() {
+            match event {
+                FlowEvent::ViewportChanged { .. }
+                | FlowEvent::NodeDragged { .. }
+                | FlowEvent::NodeDragEnded { .. } => self.camera = CameraMode::Manual,
+                FlowEvent::NodeClicked { node_id } => self.flow.select_node(&node_id),
+                FlowEvent::SelectionChanged { node_ids, .. } if !node_ids.is_empty() => {
+                    self.flow.center_on_selected();
                 }
                 _ => {}
             }
+        }
+    }
+
+    fn handle_key(&mut self, key: KeyEvent) {
+        if key.kind == KeyEventKind::Release {
             return;
         }
-        if self.show_detail && matches!(key.code, KeyCode::Esc | KeyCode::Char('v')) {
-            self.show_detail = false;
+        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            self.quit = true;
+            return;
+        }
+        if self.show_help || self.show_info {
+            if matches!(key.code, KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter) {
+                self.show_help = false;
+                self.show_info = false;
+            }
             return;
         }
         match key.code {
-            KeyCode::Char('q') | KeyCode::Esc => self.quit = true,
+            KeyCode::Char('q') => self.quit = true,
+            KeyCode::Esc => self.flow.clear_selection(),
             KeyCode::Char('?') => self.show_help = true,
             KeyCode::Char('i') => self.show_info = true,
-            KeyCode::Char('v') | KeyCode::Enter => self.show_detail = true,
             KeyCode::Char(' ') => self.toggle_play(),
-            KeyCode::Left => self.seek(-1),
-            KeyCode::Right => self.seek(1),
-            KeyCode::Char('[') => self.seek(-10),
-            KeyCode::Char(']') => self.seek(10),
-            KeyCode::Home => {
-                self.index = 0;
-                self.playback = Playback::Paused;
-                self.refresh_projection();
+            KeyCode::Char('[') => self.seek(-1),
+            KeyCode::Char(']') => self.seek(1),
+            KeyCode::Home => self.seek_to(0),
+            KeyCode::End | KeyCode::Char('g') | KeyCode::Char('G') => self.go_live(),
+            KeyCode::Char('o') | KeyCode::Char('O') => {
+                self.camera = CameraMode::Overview;
+                self.flow.clear_selection();
+                self.flow.request_fit_view();
             }
-            KeyCode::End | KeyCode::Char('g') => self.go_live(),
-            KeyCode::Tab | KeyCode::Down => {
-                if !self.scene.cards.is_empty() {
-                    self.selected = (self.selected + 1) % self.scene.cards.len();
-                }
+            KeyCode::Char('f') | KeyCode::Char('F') => {
+                self.camera = CameraMode::Follow;
+                self.follow_activity();
             }
-            KeyCode::BackTab | KeyCode::Up => {
-                if !self.scene.cards.is_empty() {
-                    self.selected = self
-                        .selected
-                        .checked_sub(1)
-                        .unwrap_or(self.scene.cards.len() - 1);
-                }
+            KeyCode::Char('r') | KeyCode::Char('R') => {
+                relayout(&mut self.flow);
+                self.camera = CameraMode::Overview;
+                self.flow.request_fit_view();
             }
-            KeyCode::Char('o') => self.camera.mode = CameraMode::Overview,
-            KeyCode::Char('f') => {
-                self.camera.mode = CameraMode::Follow;
-                self.camera.zoom = self.camera.zoom.max(0.85);
+            KeyCode::Char('a') | KeyCode::Char('A') => {
+                self.cycle_scope();
             }
-            KeyCode::Char('m') => self.camera.mode = CameraMode::Manual,
-            KeyCode::Char('c') => self.center_selected(),
-            KeyCode::Char('0') => self.camera.mode = CameraMode::Overview,
+            KeyCode::Char('c') => self.flow.center_on_selected(),
             KeyCode::Char('x') => self.mouse_capture = !self.mouse_capture,
-            KeyCode::Char('+') | KeyCode::Char('=') => {
-                self.camera.mode = CameraMode::Manual;
-                self.camera.zoom = (self.camera.zoom + 0.1).min(MAX_ZOOM);
+            KeyCode::Char('+')
+            | KeyCode::Char('=')
+            | KeyCode::Char('-')
+            | KeyCode::Char('_')
+            | KeyCode::Char('0') => {
+                self.camera = CameraMode::Manual;
+                let response = self.flow.handle_controls_key_event(key);
+                self.process_flow_response(response);
             }
-            KeyCode::Char('-') => {
-                self.camera.mode = CameraMode::Manual;
-                self.camera.zoom = (self.camera.zoom - 0.1).max(MIN_ZOOM);
+            KeyCode::Tab
+            | KeyCode::BackTab
+            | KeyCode::Up
+            | KeyCode::Down
+            | KeyCode::Left
+            | KeyCode::Right
+            | KeyCode::Char('h')
+            | KeyCode::Char('j')
+            | KeyCode::Char('k')
+            | KeyCode::Char('l') => {
+                self.camera = CameraMode::Manual;
+                let response = self.flow.handle_key_event(key);
+                self.process_flow_response(response);
             }
-            KeyCode::Char('w') => self.pan(0.0, -3.0),
-            KeyCode::Char('s') => self.pan(0.0, 3.0),
-            KeyCode::Char('a') => self.pan(-5.0, 0.0),
-            KeyCode::Char('d') => self.pan(5.0, 0.0),
-            KeyCode::Char('l') => self.pan(5.0, 0.0),
-            KeyCode::Char('h') => self.pan(-5.0, 0.0),
-            KeyCode::Char('j') => self.pan(0.0, 3.0),
-            KeyCode::Char('k') => self.pan(0.0, -3.0),
-            _ => {}
-        }
-    }
-
-    fn center_selected(&mut self) {
-        let Some(card) = self.scene.cards.get(self.selected) else {
-            return;
-        };
-        self.camera.mode = CameraMode::Manual;
-        self.camera.zoom = self.camera.zoom.max(0.85);
-        self.camera.x = card.position.x as f32 + card.width as f32 / 2.0
-            - self.regions.canvas.width as f32 / self.camera.zoom / 2.0;
-        self.camera.y = card.position.y as f32 + card.height as f32 / 2.0
-            - self.regions.canvas.height as f32 / self.camera.zoom / 2.0;
-    }
-
-    fn pan(&mut self, x: f32, y: f32) {
-        self.camera.mode = CameraMode::Manual;
-        self.camera.x += x / self.camera.zoom;
-        self.camera.y += y / self.camera.zoom;
-    }
-
-    fn update_camera(&mut self, area: Rect) {
-        match self.camera.mode {
-            CameraMode::Overview => {
-                let width = (self.scene.bounds.max_x - self.scene.bounds.min_x + 5).max(1) as f32;
-                let height = (self.scene.bounds.max_y - self.scene.bounds.min_y + 5).max(1) as f32;
-                self.camera.zoom = ((area.width as f32 / width).min(area.height as f32 / height))
-                    .clamp(MIN_ZOOM, 1.25);
-                self.camera.x = self.scene.bounds.min_x as f32 - 2.0;
-                self.camera.y = self.scene.bounds.min_y as f32 - 2.0;
-            }
-            CameraMode::Follow => {
-                if let Some(card) = self.scene.cards.get(self.selected) {
-                    self.camera.x = card.position.x as f32 + card.width as f32 / 2.0
-                        - area.width as f32 / self.camera.zoom / 2.0;
-                    self.camera.y = card.position.y as f32 + card.height as f32 / 2.0
-                        - area.height as f32 / self.camera.zoom / 2.0;
+            KeyCode::Enter => {
+                if self.selected_id().is_none()
+                    && let Some(card) = self.display_scene.cards.first()
+                {
+                    self.flow.select_node(&card.key);
+                    self.flow.center_on_selected();
                 }
             }
-            CameraMode::Manual => {}
+            _ => {}
         }
     }
 
     fn handle_mouse(&mut self, mouse: MouseEvent) {
         let point = ScreenPoint::new(f32::from(mouse.column), f32::from(mouse.row));
-        match mouse.kind {
-            MouseEventKind::Moved => {
-                self.hovered = self.card_at(point);
-            }
-            MouseEventKind::Down(MouseButton::Left) => {
-                let target = self.target_at(point);
-                self.press = Some(PressState {
-                    target,
-                    origin: point,
-                    last: point,
-                    dragging: matches!(target, HitTarget::Timeline | HitTarget::Minimap),
-                });
-                if target == HitTarget::Timeline {
-                    self.scrub(point);
-                } else if target == HitTarget::Minimap {
-                    self.recenter_from_minimap(point);
-                }
-            }
-            MouseEventKind::Drag(MouseButton::Left) => {
-                if let Some(mut press) = self.press {
-                    if (point.x - press.origin.x).abs() >= 2.0
-                        || (point.y - press.origin.y).abs() >= 1.0
-                    {
-                        press.dragging = true;
-                    }
-                    match press.target {
-                        HitTarget::Timeline => self.scrub(point),
-                        HitTarget::Minimap => self.recenter_from_minimap(point),
-                        HitTarget::Canvas | HitTarget::Card(_) if press.dragging => {
-                            if let Some(delta) = drag_pan_delta(press.last, point, self.camera.zoom)
-                            {
-                                self.camera.mode = CameraMode::Manual;
-                                self.camera.x += delta.x;
-                                self.camera.y += delta.y;
-                            }
-                        }
-                        _ => {}
-                    }
-                    press.last = point;
-                    self.press = Some(press);
-                }
-            }
-            MouseEventKind::Up(MouseButton::Left) => {
-                if let Some(press) = self.press.take()
-                    && !press.dragging
-                {
-                    self.activate(press.target);
-                }
-            }
-            MouseEventKind::Down(MouseButton::Right) => {
-                self.show_detail = false;
-            }
-            MouseEventKind::ScrollUp => self.scroll(point, -1),
-            MouseEventKind::ScrollDown => self.scroll(point, 1),
-            _ => {}
-        }
-    }
-
-    fn target_at(&self, point: ScreenPoint) -> HitTarget {
-        if self
-            .regions
-            .inspector
-            .is_some_and(|area| point_in_rect(point, area))
+        if point_in_rect(point, self.regions.timeline_track)
+            && matches!(
+                mouse.kind,
+                MouseEventKind::Down(MouseButton::Left) | MouseEventKind::Drag(MouseButton::Left)
+            )
         {
-            return HitTarget::Inspector;
-        }
-        if self
-            .regions
-            .play
-            .is_some_and(|area| point_in_rect(point, area))
-        {
-            return HitTarget::Play;
-        }
-        if self
-            .regions
-            .live
-            .is_some_and(|area| point_in_rect(point, area))
-        {
-            return HitTarget::Live;
-        }
-        if self.regions.timeline.width > 0 && point_in_rect(point, self.regions.timeline) {
-            return HitTarget::Timeline;
-        }
-        if self
-            .regions
-            .minimap
-            .is_some_and(|area| point_in_rect(point, area))
-        {
-            return HitTarget::Minimap;
-        }
-        if let Some(index) = self.card_at(point) {
-            return HitTarget::Card(index);
-        }
-        HitTarget::Canvas
-    }
-
-    fn card_at(&self, point: ScreenPoint) -> Option<usize> {
-        self.regions
-            .cards
-            .iter()
-            .rev()
-            .find_map(|(index, area)| point_in_rect(point, *area).then_some(*index))
-    }
-
-    fn activate(&mut self, target: HitTarget) {
-        match target {
-            HitTarget::Card(index) => {
-                let double = self.last_card_click.is_some_and(|(last, at)| {
-                    last == index && at.elapsed() <= Duration::from_millis(320)
-                });
-                self.selected = index;
-                self.show_detail = true;
-                self.inspector_scroll = 0;
-                self.last_card_click = Some((index, Instant::now()));
-                if double {
-                    self.camera.mode = CameraMode::Follow;
-                    self.camera.zoom = self.camera.zoom.max(0.85);
-                }
+            if let Some(index) = timeline_column_to_index(
+                self.regions.timeline_track,
+                mouse.column,
+                self.timeline.len(),
+            ) {
+                self.seek_to(index);
             }
-            HitTarget::Canvas => self.show_detail = false,
-            HitTarget::Timeline => {}
-            HitTarget::Minimap => {}
-            HitTarget::Inspector => {}
-            HitTarget::Play => self.toggle_play(),
-            HitTarget::Live => self.go_live(),
-        }
-    }
-
-    fn scrub(&mut self, point: ScreenPoint) {
-        if let Some(index) = timeline_column_to_index(
-            self.regions.timeline_track,
-            point.x as u16,
-            self.timeline.len(),
-        ) {
-            self.seek_to(index);
-        }
-    }
-
-    fn scroll(&mut self, point: ScreenPoint, direction: isize) {
-        if self
-            .regions
-            .inspector
-            .is_some_and(|area| point_in_rect(point, area))
-        {
-            self.inspector_scroll = if direction < 0 {
-                self.inspector_scroll.saturating_sub(2)
-            } else {
-                self.inspector_scroll.saturating_add(2)
-            };
             return;
         }
-        if point_in_rect(point, self.regions.timeline) {
-            self.seek(direction * 10);
+        if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+            if self
+                .regions
+                .play
+                .is_some_and(|area| point_in_rect(point, area))
+            {
+                self.toggle_play();
+                return;
+            }
+            if self
+                .regions
+                .live
+                .is_some_and(|area| point_in_rect(point, area))
+            {
+                self.go_live();
+                return;
+            }
+            if self
+                .regions
+                .scope
+                .is_some_and(|area| point_in_rect(point, area))
+            {
+                self.cycle_scope();
+                return;
+            }
+        }
+        if self
+            .regions
+            .inspector
+            .is_some_and(|area| point_in_rect(point, area))
+        {
+            return;
+        }
+        if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Right)) {
+            self.flow.clear_selection();
             return;
         }
         if point_in_rect(point, self.regions.canvas) {
-            let next = if direction < 0 {
-                (self.camera.zoom * 1.18).min(MAX_ZOOM)
-            } else {
-                (self.camera.zoom / 1.18).max(MIN_ZOOM)
-            };
-            if let Some(origin) = cursor_centered_zoom(
-                self.regions.canvas,
-                WorldPoint::new(self.camera.x, self.camera.y),
-                self.camera.zoom,
-                next,
-                point,
-            ) {
-                self.camera.mode = CameraMode::Manual;
-                self.camera.x = origin.x;
-                self.camera.y = origin.y;
-                self.camera.zoom = next;
-            }
-        }
-    }
-
-    fn recenter_from_minimap(&mut self, point: ScreenPoint) {
-        let Some(map) = self.regions.minimap else {
-            return;
-        };
-        let bounds = WorldBounds::new(
-            WorldPoint::new(
-                self.scene.bounds.min_x as f32,
-                self.scene.bounds.min_y as f32,
-            ),
-            WorldPoint::new(
-                self.scene.bounds.max_x as f32,
-                self.scene.bounds.max_y as f32,
-            ),
-        );
-        if let Some(center) = minimap_point_to_camera_center(map, point, bounds) {
-            self.camera.mode = CameraMode::Manual;
-            self.camera.x = center.x - self.regions.canvas.width as f32 / self.camera.zoom / 2.0;
-            self.camera.y = center.y - self.regions.canvas.height as f32 / self.camera.zoom / 2.0;
+            let response = self.flow.handle_mouse_event(mouse);
+            self.process_flow_response(response);
         }
     }
 }
 
 pub fn run(timeline: Timeline, feed: Option<Feed>) -> Result<()> {
     let _screen = ScreenGuard::enter()?;
-    let stdout = io::stdout();
-    let backend = CrosstermBackend::new(stdout);
+    let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend).context("could not initialize terminal")?;
     terminal.clear()?;
     let mut app = App::new(timeline, feed)?;
-
     while !app.quit {
         app.update();
         terminal.draw(|frame| draw(frame, &mut app))?;
         if event::poll(FRAME_TIME)? {
             match event::read()? {
                 Event::Key(key) => {
-                    let mouse_before = app.mouse_capture;
+                    let before = app.mouse_capture;
                     app.handle_key(key);
-                    if mouse_before != app.mouse_capture {
+                    if before != app.mouse_capture {
                         if app.mouse_capture {
                             execute!(terminal.backend_mut(), EnableMouseCapture)?;
                         } else {
@@ -633,7 +495,10 @@ pub fn run(timeline: Timeline, feed: Option<Feed>) -> Result<()> {
                     }
                 }
                 Event::Mouse(mouse) if app.mouse_capture => app.handle_mouse(mouse),
-                Event::Resize(_, _) => app.camera.mode = CameraMode::Overview,
+                Event::Resize(_, _) => {
+                    app.camera = CameraMode::Overview;
+                    app.flow.request_fit_view();
+                }
                 _ => {}
             }
         }
@@ -668,960 +533,666 @@ impl Drop for ScreenGuard {
 }
 
 fn draw(frame: &mut ratatui::Frame<'_>, app: &mut App) {
-    if frame.area().width < 60 || frame.area().height < 18 {
+    if frame.area().width < 64 || frame.area().height < 20 {
         frame.render_widget(
-            Paragraph::new("terminal too small · need at least 60×18")
+            Paragraph::new("terminal too small · need at least 64×20")
                 .alignment(Alignment::Center)
-                .style(Style::default().fg(Color::Yellow)),
+                .style(Style::default().fg(GOLD).bg(CANVAS)),
             frame.area(),
         );
         app.regions = UiRegions::default();
         return;
     }
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Min(10),
-            Constraint::Length(if frame.area().height >= 32 { 5 } else { 4 }),
-            Constraint::Length(1),
-        ])
-        .split(frame.area());
-    let graph_parts = if app.show_detail && chunks[0].width >= 112 {
-        Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Min(50), Constraint::Length(INSPECTOR_WIDTH)])
-            .split(chunks[0])
+    let [main, timeline, footer] = Layout::vertical([
+        Constraint::Fill(1),
+        Constraint::Length(6),
+        Constraint::Length(1),
+    ])
+    .areas(frame.area());
+    let (canvas, inspector) = if app.selected_id().is_some() && main.width >= 100 {
+        let [left, right] =
+            Layout::horizontal([Constraint::Percentage(30), Constraint::Percentage(70)])
+                .areas(main);
+        (left, Some(right))
     } else {
-        Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(100), Constraint::Length(0)])
-            .split(chunks[0])
+        (main, None)
     };
-    app.regions.canvas = graph_parts[0];
-    app.regions.timeline = chunks[1];
-    app.regions.cards.clear();
-    app.regions.inspector = (graph_parts[1].width > 0).then_some(graph_parts[1]);
-    app.update_camera(graph_parts[0]);
-    draw_graph(frame, graph_parts[0], app);
-    if graph_parts[1].width > 0 {
-        draw_inspector(frame, graph_parts[1], app);
+    app.regions.canvas = canvas;
+    app.regions.timeline = timeline;
+    app.regions.inspector = inspector;
+    draw_canvas(frame, canvas, app);
+    if let Some(area) = inspector {
+        draw_inspector(frame, area, app);
     }
-    draw_timeline(frame, chunks[1], app);
-    draw_footer(frame, chunks[2], app);
+    draw_timeline(frame, timeline, app);
+    draw_footer(frame, footer, app);
     if app.show_help {
         draw_help(frame);
     } else if app.show_info {
         draw_info(frame, app);
-    } else if app.show_detail && graph_parts[1].width == 0 {
-        draw_detail(frame, app);
+    }
+    if let Some(error) = app.error.take() {
+        draw_message(frame, " error ", &error, Color::Rgb(205, 92, 92));
     }
 }
 
-fn draw_graph(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) {
-    let buffer = frame.buffer_mut();
-    fill(
-        buffer,
-        area,
-        " ",
-        Style::default().bg(Color::Rgb(12, 14, 13)),
-    );
-    if app.camera.zoom >= 0.22 {
-        for y in (area.y..area.bottom()).step_by(4) {
-            for x in (area.x..area.right()).step_by(8) {
-                set(
-                    buffer,
-                    area,
-                    i32::from(x),
-                    i32::from(y),
-                    "·",
-                    Style::default().fg(Color::Rgb(43, 47, 44)),
-                );
-            }
-        }
-    }
-
-    let selected_key = app
-        .scene
-        .cards
-        .get(app.selected)
-        .map(|card| card.key.as_str());
-    if app.camera.zoom >= 0.32 {
-        for link in &app.scene.links {
-            let from = app.scene.cards.iter().find(|card| card.key == link.from);
-            let to = app.scene.cards.iter().find(|card| card.key == link.to);
-            if let (Some(from), Some(to)) = (from, to) {
-                draw_link(
-                    buffer,
-                    area,
-                    app.camera,
-                    from,
-                    to,
-                    selected_key,
-                    app.started.elapsed(),
-                );
-            }
-        }
-    }
-    let mut card_regions = Vec::new();
-    for (index, card) in app.scene.cards.iter().enumerate() {
-        if let Some(rect) = draw_card(
-            buffer,
-            area,
-            app.camera,
-            card,
-            index == app.selected,
-            app.hovered == Some(index),
-        ) {
-            card_regions.push((index, rect));
-        }
-    }
-    app.regions.cards = card_regions;
-
-    let breadcrumb = app
-        .scene
-        .cards
-        .get(app.selected)
-        .map(|card| format!(" CLAUDE CONTROL  ›  {}  ›  {} ", card.kind, card.title))
-        .unwrap_or_else(|| " CLAUDE CONTROL ".to_owned());
-    set_text(
-        buffer,
-        area,
-        i32::from(area.x) + 1,
-        i32::from(area.y),
-        i32::from(area.width).saturating_sub(2),
-        &breadcrumb,
-        Style::default()
-            .fg(Color::Rgb(215, 177, 48))
-            .bg(Color::Rgb(12, 14, 13))
-            .add_modifier(Modifier::BOLD),
-    );
-    let newer = app.timeline.latest_index().saturating_sub(app.index);
-    if newer > 0 {
-        let label = format!(" +{newer} newer ");
-        set_text(
-            buffer,
-            area,
-            i32::from(area.right()) - label.len() as i32 - 1,
-            i32::from(area.y),
-            label.len() as i32,
-            &label,
-            Style::default()
-                .fg(Color::Rgb(11, 15, 12))
-                .bg(Color::Rgb(112, 190, 101))
-                .add_modifier(Modifier::BOLD),
-        );
-    }
-    draw_minimap(buffer, area, app);
-}
-
-fn draw_link(
-    buffer: &mut Buffer,
-    area: Rect,
-    camera: Camera,
-    from: &Card,
-    to: &Card,
-    selected: Option<&str>,
-    elapsed: Duration,
-) {
-    let start = screen_point(
-        area,
-        camera,
-        from.position.x as f32 + from.width as f32,
-        from.position.y as f32 + from.height as f32 / 2.0,
-    );
-    let end = screen_point(
-        area,
-        camera,
-        to.position.x as f32,
-        to.position.y as f32 + to.height as f32 / 2.0,
-    );
-    let endpoint_visible = |point: (i32, i32)| {
-        point.0 >= i32::from(area.x).saturating_sub(2)
-            && point.0 < i32::from(area.right()).saturating_add(2)
-            && point.1 >= i32::from(area.y).saturating_sub(1)
-            && point.1 < i32::from(area.bottom()).saturating_add(1)
-    };
-    if !endpoint_visible(start) || !endpoint_visible(end) {
-        return;
-    }
-    let mid = (start.0 + end.0) / 2;
-    let selected_edge = selected.is_some_and(|key| key == from.key || key == to.key);
-    let active_edge = active_state(&from.state) || active_state(&to.state);
-    let color = if selected_edge {
-        Color::Rgb(223, 181, 52)
-    } else if active_edge {
-        Color::Rgb(88, 158, 91)
-    } else {
-        Color::Rgb(54, 62, 57)
-    };
-    let style = Style::default().fg(color);
-    line_h(buffer, area, start.0, mid, start.1, "─", style);
-    line_v(buffer, area, start.1, end.1, mid, "│", style);
-    line_h(buffer, area, mid, end.0, end.1, "─", style);
-    set(buffer, area, mid, start.1, "┐", style);
-    set(buffer, area, mid, end.1, "└", style);
-    set(buffer, area, end.0, end.1, "▶", style);
-    if active_edge && (start.0 - mid).abs() > 2 {
-        let length = (mid - start.0).unsigned_abs().max(1) as u128;
-        let step = (elapsed.as_millis() / 140) % length;
-        let direction = if mid >= start.0 { 1 } else { -1 };
-        let x = start.0 + direction * step as i32;
-        set(
-            buffer,
-            area,
-            x,
-            start.1,
-            "◆",
-            Style::default().fg(Color::Rgb(120, 207, 111)),
-        );
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum CardLod {
-    Dot,
-    Compact,
-    Full,
-}
-
-fn draw_card(
-    buffer: &mut Buffer,
-    area: Rect,
-    camera: Camera,
-    card: &Card,
-    selected: bool,
-    hovered: bool,
-) -> Option<Rect> {
-    let (x, y) = screen_point(area, camera, card.position.x as f32, card.position.y as f32);
-    let lod = if camera.zoom < 0.28 {
-        CardLod::Dot
-    } else if camera.zoom < 0.78 {
-        CardLod::Compact
-    } else {
-        CardLod::Full
-    };
-    let (width, height) = match lod {
-        CardLod::Dot => (3, 1),
-        CardLod::Compact => (24, 4),
-        CardLod::Full => (34, 7),
-    };
-    let visible = clipped_rect(area, x, y, width, height)?;
-    if lod == CardLod::Dot {
-        let glyph = if selected { " ◈ " } else { " ◆ " };
-        set_text(
-            buffer,
-            area,
-            x,
-            y,
-            width,
-            glyph,
-            Style::default().fg(if selected {
-                Color::Rgb(229, 186, 48)
-            } else {
-                state_color(&card.state)
-            }),
-        );
-        return Some(visible);
-    }
-
-    let surface = if hovered {
-        Color::Rgb(34, 38, 34)
-    } else {
-        Color::Rgb(25, 28, 25)
-    };
-    draw_shadow(buffer, area, x, y, width, height);
-    fill_rect(buffer, area, x, y, width, height, surface);
-    box_border_variant(buffer, area, x, y, width, height, selected, surface);
-    set_text(
-        buffer,
-        area,
-        x + 2,
-        y + 1,
-        width - 4,
-        &format!("{}  {}", status_mark(&card.state), card.title),
-        Style::default()
-            .fg(if selected {
-                Color::Rgb(238, 198, 64)
-            } else {
-                Color::Rgb(224, 226, 219)
-            })
-            .bg(surface)
-            .add_modifier(Modifier::BOLD),
-    );
-    set_text(
-        buffer,
-        area,
-        x + 2,
-        y + 2,
-        width - 4,
-        &format!(
-            "{}  {}",
-            card.role.as_deref().unwrap_or(&card.kind),
-            card.model.as_deref().unwrap_or("")
-        ),
-        Style::default().fg(Color::Rgb(112, 183, 190)).bg(surface),
-    );
-    set_text(
-        buffer,
-        area,
-        x + 2,
-        y + 3,
-        width - 4,
-        &format!("{} · {}", card.state, card.activity),
-        Style::default().fg(state_color(&card.state)).bg(surface),
-    );
-    if lod == CardLod::Full {
-        set_text(
-            buffer,
-            area,
-            x + 2,
-            y + 4,
-            width - 4,
-            &format!(
-                "{}  ·  {} tokens",
-                short_key(&card.key),
-                compact_number(card.output_tokens)
+fn draw_canvas(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) {
+    let zoom = app.flow.viewport.zoom.max(0.08);
+    let gap_x = (14.0 / zoom).round().clamp(8.0, 160.0) as u16;
+    let gap_y = (7.0 / zoom).round().clamp(4.0, 80.0) as u16;
+    frame.render_widget(
+        Background::new(&app.flow)
+            .variant(BackgroundVariant::Dots)
+            .gap(gap_x, gap_y)
+            .style(
+                BackgroundStyle::default()
+                    .with_pattern_color(Color::Rgb(48, 49, 47))
+                    .with_bg_color(CANVAS),
             ),
-            Style::default().fg(Color::Rgb(143, 146, 137)).bg(surface),
-        );
-        set_text(
-            buffer,
+        area,
+    );
+    frame.render_widget(&mut app.flow, area);
+    if area.width >= 74 && area.height >= 18 && app.display_scene.cards.len() > 1 {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Plain)
+            .border_style(Style::default().fg(Color::Rgb(47, 48, 46)))
+            .style(Style::default().bg(SURFACE));
+        frame.render_widget(
+            MiniMap::new(&app.flow)
+                .position(MiniMapPosition::TopRight)
+                .size(22, 8)
+                .margin(1)
+                .block(block),
             area,
-            x + 2,
-            y + 5,
-            width - 4,
-            "click inspect · drag · dbl follow",
-            Style::default().fg(Color::Rgb(91, 96, 89)).bg(surface),
         );
     }
-    Some(visible)
 }
 
-fn draw_minimap(buffer: &mut Buffer, area: Rect, app: &mut App) {
-    app.regions.minimap = None;
-    if area.width < 80 || area.height < 20 || app.scene.cards.len() < 8 {
+fn draw_inspector(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let Some(card) = app.selected_card() else {
         return;
-    }
-    let width = if area.width >= 120 { 24 } else { 19 };
-    let height = if area.height >= 28 { 9 } else { 7 };
-    let x = i32::from(area.right()) - width - 2;
-    let y = i32::from(area.y) + 2;
-    fill_rect(buffer, area, x, y, width, height, Color::Rgb(20, 22, 20));
-    box_border_variant(
-        buffer,
-        area,
-        x,
-        y,
-        width,
-        height,
-        false,
-        Color::Rgb(20, 22, 20),
-    );
-    set_text(
-        buffer,
-        area,
-        x + 2,
-        y,
-        width - 4,
-        " overview ",
-        Style::default()
-            .fg(Color::Rgb(130, 132, 125))
-            .bg(Color::Rgb(20, 22, 20)),
-    );
-    let inner = Rect::new(
-        (x + 1) as u16,
-        (y + 1) as u16,
-        (width - 2) as u16,
-        (height - 2) as u16,
-    );
-    app.regions.minimap = Some(inner);
-    let min_x = app.scene.bounds.min_x as f32;
-    let min_y = app.scene.bounds.min_y as f32;
-    let span_x = (app.scene.bounds.max_x - app.scene.bounds.min_x).max(1) as f32;
-    let span_y = (app.scene.bounds.max_y - app.scene.bounds.min_y).max(1) as f32;
-    let map_x = |world: f32| {
-        f32::from(inner.x)
-            + ((world - min_x) / span_x).clamp(0.0, 1.0) * f32::from(inner.width.saturating_sub(1))
     };
-    let map_y = |world: f32| {
-        f32::from(inner.y)
-            + ((world - min_y) / span_y).clamp(0.0, 1.0) * f32::from(inner.height.saturating_sub(1))
-    };
-    for (index, card) in app.scene.cards.iter().enumerate() {
-        set(
-            buffer,
-            inner,
-            map_x(card.position.x as f32).round() as i32,
-            map_y(card.position.y as f32).round() as i32,
-            if index == app.selected { "◆" } else { "·" },
-            Style::default()
-                .fg(if index == app.selected {
-                    Color::Rgb(232, 188, 48)
-                } else {
-                    kind_color(&card.kind)
-                })
-                .bg(Color::Rgb(20, 22, 20)),
-        );
+    let block = Block::default()
+        .borders(Borders::LEFT)
+        .border_style(Style::default().fg(Color::Rgb(54, 55, 52)))
+        .style(Style::default().bg(SURFACE))
+        .padding(Padding::new(3, 2, 2, 1));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let heading = Style::default()
+        .fg(TEXT)
+        .bg(SURFACE)
+        .add_modifier(Modifier::BOLD);
+    let key = Style::default().fg(GOLD).bg(SURFACE);
+    let value = Style::default().fg(TEXT).bg(SURFACE);
+    let dim = Style::default().fg(SUBTLE).bg(SURFACE);
+    let mut lines = vec![
+        Line::from(vec![
+            Span::styled(
+                "● ",
+                Style::default().fg(state_color(&card.state)).bg(SURFACE),
+            ),
+            Span::styled(card.title.clone(), heading),
+        ]),
+        Line::from(""),
+        detail_line("state", &card.state, key, value),
+        detail_line("kind", &card.kind, key, value),
+        detail_line("role", card.role.as_deref().unwrap_or("—"), key, value),
+        detail_line("model", card.model.as_deref().unwrap_or("—"), key, value),
+        detail_line("activity", &card.activity, key, value),
+        detail_line("tokens", &compact_number(card.output_tokens), key, value),
+        Line::from(""),
+        Line::from(Span::styled("identity", key)),
+        Line::from(Span::styled(card.key.clone(), dim)),
+    ];
+    if inner.height > 14 {
+        lines.extend([
+            Line::from(""),
+            Line::from(Span::styled(
+                "Observation contains state metadata only.",
+                dim,
+            )),
+            Line::from(Span::styled(
+                "Prompts, reasoning, and tool bodies are excluded.",
+                dim,
+            )),
+        ]);
     }
-    let view_left = map_x(app.camera.x).round() as i32;
-    let view_top = map_y(app.camera.y).round() as i32;
-    let view_right = map_x(app.camera.x + f32::from(area.width) / app.camera.zoom).round() as i32;
-    let view_bottom = map_y(app.camera.y + f32::from(area.height) / app.camera.zoom).round() as i32;
-    let view_style = Style::default().fg(Color::Rgb(178, 181, 171));
-    line_h(
-        buffer, inner, view_left, view_right, view_top, "─", view_style,
-    );
-    line_h(
-        buffer,
+    frame.render_widget(
+        Paragraph::new(lines)
+            .style(Style::default().bg(SURFACE))
+            .wrap(Wrap { trim: true }),
         inner,
-        view_left,
-        view_right,
-        view_bottom,
-        "─",
-        view_style,
     );
-    line_v(
-        buffer,
-        inner,
-        view_top,
-        view_bottom,
-        view_left,
-        "│",
-        view_style,
-    );
-    line_v(
-        buffer,
-        inner,
-        view_top,
-        view_bottom,
-        view_right,
-        "│",
-        view_style,
-    );
+}
+
+fn detail_line(label: &'static str, content: &str, key: Style, value: Style) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(format!("{label:<10}"), key),
+        Span::styled(content.to_owned(), value),
+    ])
 }
 
 fn draw_timeline(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) {
     let block = Block::default()
-        .title(format!(
-            " REPLAY  event {}/{}  cursor {}  {} ",
-            if app.timeline.is_empty() {
-                0
-            } else {
-                app.index + 1
-            },
-            app.timeline.len(),
-            app.timeline
-                .event(app.index)
-                .map(|event| event.cursor)
-                .unwrap_or(0),
-            app.playback.label()
-        ))
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Rgb(75, 78, 72)))
-        .style(Style::default().bg(Color::Rgb(18, 20, 18)));
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::Rgb(64, 65, 62)))
+        .style(Style::default().bg(SURFACE));
     let inner = block.inner(area);
     frame.render_widget(block, area);
     app.regions.timeline_track = Rect::default();
-    if app.timeline.is_empty() || inner.width == 0 {
+    if app.timeline.is_empty() || inner.width < 4 || inner.height < 4 {
         frame.render_widget(
-            Paragraph::new("waiting for events")
+            Paragraph::new("waiting for observation events")
                 .alignment(Alignment::Center)
-                .style(Style::default().fg(Color::DarkGray)),
+                .style(Style::default().fg(MUTED).bg(SURFACE)),
             inner,
         );
         return;
     }
-    let label = app
-        .timeline
-        .event(app.index)
-        .map(|event| event.summary.as_str())
-        .unwrap_or("event");
-    let summary = Rect::new(inner.x, inner.y, inner.width, 1);
-    let track = Rect::new(inner.x, inner.y.saturating_add(1), inner.width, 1);
-    let pointer =
-        (inner.height >= 3).then(|| Rect::new(inner.x, inner.y.saturating_add(2), inner.width, 1));
-    app.regions.timeline_track = track;
-    frame.render_widget(
-        Paragraph::new(format!(" {}", label)).style(Style::default().fg(Color::Rgb(184, 187, 178))),
-        summary,
-    );
-    let buffer = frame.buffer_mut();
-    let columns = usize::from(track.width.max(1));
-    let mut counts = vec![0_usize; columns];
-    for event_index in 0..app.timeline.len() {
-        let column = if app.timeline.len() <= 1 {
-            0
-        } else {
-            event_index * columns.saturating_sub(1) / app.timeline.len().saturating_sub(1)
-        };
-        counts[column] += 1;
+    let [markers, upper, lower, info] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+    ])
+    .areas(inner);
+    app.regions.timeline_track = Rect::new(markers.x, markers.y, markers.width, 3);
+    let width = usize::from(inner.width);
+    let mut counts = vec![0_u64; width];
+    let mut marks = vec![' '; width];
+    for (index, event) in app.timeline.events().iter().enumerate() {
+        let col = event_column(index, app.timeline.len(), width);
+        counts[col] += event_weight(&event.summary);
+        let mark = event_mark(&event.summary);
+        if mark != ' ' {
+            marks[col] = mark;
+        }
     }
     let max_count = counts.iter().copied().max().unwrap_or(1).max(1);
-    let histogram = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
-    for (column, count) in counts.into_iter().enumerate() {
-        let event_index = column * app.timeline.len() / columns;
-        let level = ((count.saturating_sub(1) * (histogram.len() - 1)) / max_count).min(7);
+    let buffer = frame.buffer_mut();
+    for col in 0..width {
+        let x = inner.x + col as u16;
+        let event_index = col * app.timeline.len() / width.max(1);
         let color = if event_index <= app.index {
-            Color::Rgb(161, 139, 53)
+            Color::Indexed(242)
         } else {
-            Color::Rgb(62, 67, 61)
+            Color::Rgb(58, 59, 56)
         };
-        set(
-            buffer,
-            track,
-            i32::from(track.x) + column as i32,
-            i32::from(track.y),
-            if count == 0 { " " } else { histogram[level] },
-            Style::default().fg(color).bg(Color::Rgb(18, 20, 18)),
-        );
+        if marks[col] != ' ' {
+            buffer[(x, markers.y)].set_char(marks[col]).set_style(
+                Style::default()
+                    .fg(if marks[col] == '×' {
+                        Color::Rgb(205, 92, 92)
+                    } else {
+                        GOLD
+                    })
+                    .bg(SURFACE),
+            );
+        }
+        let level = (counts[col] * 16).div_ceil(max_count).min(16) as usize;
+        buffer[(x, upper.y)]
+            .set_symbol(bar_glyph(level.saturating_sub(8)))
+            .set_style(Style::default().fg(color).bg(SURFACE));
+        buffer[(x, lower.y)]
+            .set_symbol(bar_glyph(level.min(8)))
+            .set_style(Style::default().fg(color).bg(SURFACE));
     }
-    let current_x = track.x
-        + ((app.index as u64 * track.width.saturating_sub(1) as u64)
-            / app.timeline.len().saturating_sub(1).max(1) as u64) as u16;
-    set(
-        buffer,
-        track,
-        i32::from(current_x),
-        i32::from(track.y),
-        "●",
-        Style::default().fg(if app.index == app.timeline.latest_index() {
-            Color::Rgb(102, 205, 94)
-        } else {
-            Color::Rgb(245, 193, 37)
-        }),
+    let head = inner.x + event_column(app.index, app.timeline.len(), width) as u16;
+    for y in markers.y..=lower.y {
+        buffer[(head, y)]
+            .set_char('│')
+            .set_style(Style::default().fg(GOLD).bg(SURFACE));
+    }
+    let event = app.timeline.event(app.index);
+    let clock = event
+        .map(|event| format_clock(event.timestamp))
+        .unwrap_or_else(|| "--:--:--".to_owned());
+    let summary = event.map(|event| event.summary.as_str()).unwrap_or("event");
+    let left = format!(" {clock}  {summary}");
+    buffer.set_stringn(
+        info.x,
+        info.y,
+        left,
+        usize::from(info.width.saturating_sub(18)),
+        Style::default().fg(SUBTLE).bg(SURFACE),
     );
-    if app.index != app.timeline.latest_index() {
-        set(
-            buffer,
-            track,
-            i32::from(track.right().saturating_sub(1)),
-            i32::from(track.y),
-            "│",
-            Style::default().fg(Color::Rgb(102, 190, 96)),
-        );
-    }
-    if let Some(pointer) = pointer {
-        let timestamp = app
-            .timeline
-            .event(app.index)
-            .map(|event| format_clock(event.timestamp))
-            .unwrap_or_default();
-        set_text(
-            buffer,
-            pointer,
-            i32::from(pointer.x),
-            i32::from(pointer.y),
-            i32::from(pointer.width.saturating_sub(2)),
-            &timestamp,
-            Style::default().fg(Color::Rgb(133, 135, 128)),
-        );
-        set(
-            buffer,
-            pointer,
-            i32::from(current_x),
-            i32::from(pointer.y),
-            "▲",
-            Style::default().fg(Color::Rgb(235, 184, 39)),
-        );
-    }
+    let tag = format!(
+        " {}/{} {} ",
+        app.index + 1,
+        app.timeline.len(),
+        app.playback.label()
+    );
+    buffer.set_string(
+        info.right().saturating_sub(tag.len() as u16),
+        info.y,
+        tag,
+        Style::default()
+            .fg(if app.playback == Playback::Live {
+                Color::Rgb(102, 181, 91)
+            } else {
+                GOLD
+            })
+            .bg(SURFACE)
+            .add_modifier(Modifier::BOLD),
+    );
 }
 
 fn draw_footer(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) {
     let buffer = frame.buffer_mut();
-    fill(
-        buffer,
-        area,
-        " ",
-        Style::default().bg(Color::Rgb(17, 19, 17)),
-    );
+    buffer.set_style(area, Style::default().bg(Color::Rgb(19, 20, 19)));
     app.regions.play = None;
     app.regions.live = None;
+    app.regions.scope = None;
     let mut x = area.x;
-    let brand = " CCC VIEWER ";
-    set_text(
-        buffer,
-        area,
-        i32::from(x),
-        i32::from(area.y),
-        brand.len() as i32,
+    let brand = " observer ";
+    buffer.set_string(
+        x,
+        area.y,
         brand,
         Style::default()
-            .fg(Color::Rgb(20, 18, 8))
-            .bg(Color::Rgb(230, 184, 41))
+            .fg(Color::Rgb(22, 20, 10))
+            .bg(GOLD)
             .add_modifier(Modifier::BOLD),
     );
-    x = x.saturating_add(brand.len() as u16 + 1);
+    x += brand.len() as u16 + 1;
     let play = if app.playback == Playback::Playing {
         " Ⅱ PAUSE "
     } else {
         " ▶ PLAY "
     };
     app.regions.play = Some(Rect::new(x, area.y, play.len() as u16, 1));
-    set_text(
-        buffer,
-        area,
-        i32::from(x),
-        i32::from(area.y),
-        play.len() as i32,
+    buffer.set_string(
+        x,
+        area.y,
         play,
-        Style::default()
-            .fg(Color::Rgb(224, 181, 45))
-            .bg(Color::Rgb(35, 35, 29))
-            .add_modifier(Modifier::BOLD),
+        Style::default().fg(GOLD).bg(Color::Rgb(38, 38, 34)),
     );
-    x = x.saturating_add(play.len() as u16 + 1);
+    x += play.len() as u16 + 1;
     let live = " ● LIVE ";
     app.regions.live = Some(Rect::new(x, area.y, live.len() as u16, 1));
-    set_text(
-        buffer,
-        area,
-        i32::from(x),
-        i32::from(area.y),
-        live.len() as i32,
+    buffer.set_string(
+        x,
+        area.y,
         live,
         Style::default()
-            .fg(if app.playback == Playback::Live {
-                Color::Rgb(128, 219, 112)
-            } else {
-                Color::Rgb(93, 99, 91)
-            })
-            .bg(Color::Rgb(28, 31, 27)),
+            .fg(Color::Rgb(102, 181, 91))
+            .bg(Color::Rgb(31, 36, 31)),
     );
-    x = x.saturating_add(live.len() as u16 + 1);
-    let agents = app
+    x += live.len() as u16 + 1;
+    let scope = format!(" ◉ {} ", app.scope.label().to_ascii_uppercase());
+    app.regions.scope = Some(Rect::new(x, area.y, scope.len() as u16, 1));
+    buffer.set_string(
+        x,
+        area.y,
+        &scope,
+        Style::default()
+            .fg(GOLD)
+            .bg(Color::Rgb(38, 36, 29))
+            .add_modifier(Modifier::BOLD),
+    );
+    x += scope.len() as u16 + 1;
+    let total_agents = app
         .scene
         .cards
         .iter()
         .filter(|card| card.kind == "session")
         .count();
-    let tokens = app
-        .scene
+    let visible_agents = app
+        .display_scene
         .cards
         .iter()
         .filter(|card| card.kind == "session")
-        .map(|card| card.output_tokens)
-        .sum::<u64>();
-    let state = format!(
-        "{} agents · {} tokens · {} {:.0}%",
-        agents,
+        .count();
+    let tokens: u64 = app.scene.cards.iter().map(|card| card.output_tokens).sum();
+    let stats = format!(
+        "{visible_agents}/{total_agents} agents · {} tok · {}",
         compact_number(tokens),
-        app.camera.mode.label(),
-        app.camera.zoom * 100.0
+        app.camera.label()
     );
-    let right = " ? help · q quit ";
-    let usable = area
-        .right()
-        .saturating_sub(x)
-        .saturating_sub(right.len() as u16) as usize;
-    let message = app.error.as_deref().unwrap_or(&state);
-    set_text(
-        buffer,
-        area,
-        i32::from(x),
-        i32::from(area.y),
-        usable as i32,
-        &truncate(message, usable),
-        Style::default()
-            .fg(if app.error.is_some() {
-                Color::LightRed
-            } else {
-                Color::Rgb(133, 137, 129)
-            })
-            .bg(Color::Rgb(17, 19, 17)),
+    buffer.set_stringn(
+        x,
+        area.y,
+        stats,
+        usize::from(area.right().saturating_sub(x).saturating_sub(25)),
+        Style::default().fg(SUBTLE).bg(Color::Rgb(19, 20, 19)),
     );
-    set_text(
-        buffer,
-        area,
-        i32::from(area.right()) - right.len() as i32,
-        i32::from(area.y),
-        right.len() as i32,
-        right,
-        Style::default()
-            .fg(Color::Rgb(152, 154, 146))
-            .bg(Color::Rgb(17, 19, 17)),
-    );
+    let hints = "? help · q quit ";
+    if area.width > hints.len() as u16 {
+        buffer.set_string(
+            area.right() - hints.len() as u16,
+            area.y,
+            hints,
+            Style::default().fg(MUTED).bg(Color::Rgb(19, 20, 19)),
+        );
+    }
 }
 
 fn draw_help(frame: &mut ratatui::Frame<'_>) {
-    let text = Text::from(vec![
-        Line::from(Span::styled(
-            "Viewer controls",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )),
-        Line::raw(""),
-        Line::raw("Mouse"),
-        Line::raw("Click card   select + inspect       Double-click follow"),
-        Line::raw("Drag canvas  pan graph              Wheel zoom at pointer"),
-        Line::raw("Drag replay  scrub history          Click/drag minimap move"),
-        Line::raw("Click PLAY/LIVE transport           Right-click close inspector"),
-        Line::raw(""),
-        Line::raw("Keyboard"),
-        Line::raw("Left/Right  replay one event     [/]  replay ten events"),
-        Line::raw("Home/End    first/live event      Space play or pause"),
-        Line::raw("Tab/Up/Down select agent          Enter/V details"),
-        Line::raw("O/0 overview  F follow   C center   WASD/HJKL pan"),
-        Line::raw("+/- zoom      X mouse capture      I info   Q quit"),
-        Line::raw(""),
-        Line::raw(
-            "The viewer is read-only. It never accepts work, edits tasks, or invokes models.",
-        ),
-    ]);
-    overlay(frame, 78, 22, " controls ", text);
+    let lines = vec![
+        Line::from(vec![
+            Span::styled("mouse", Style::default().fg(GOLD)),
+            Span::raw("   click node · drag canvas/node · wheel zoom · drag timeline"),
+        ]),
+        Line::from(vec![
+            Span::styled("view", Style::default().fg(GOLD)),
+            Span::raw("    o overview · f follow · r relayout · a scope · +/- zoom"),
+        ]),
+        Line::from(vec![
+            Span::styled("graph", Style::default().fg(GOLD)),
+            Span::raw("   tab/arrows select · h/j/k/l pan · esc close detail"),
+        ]),
+        Line::from(vec![
+            Span::styled("replay", Style::default().fg(GOLD)),
+            Span::raw("  space play/pause · [ ] step · home start · g/end live"),
+        ]),
+        Line::from(vec![
+            Span::styled("system", Style::default().fg(GOLD)),
+            Span::raw("  i info · x mouse capture · q quit"),
+        ]),
+    ];
+    draw_overlay(frame, 74, 11, " controls ", Text::from(lines));
 }
 
 fn draw_info(frame: &mut ratatui::Frame<'_>, app: &App) {
-    let event = app.timeline.event(app.index);
-    let text = Text::from(vec![
-        Line::raw(format!("fidelity       {}", app.state.fidelity)),
-        Line::raw(format!("events         {}", app.timeline.len())),
-        Line::raw(format!(
-            "ledger cursor  {}",
-            event.map(|event| event.cursor).unwrap_or(0)
-        )),
-        Line::raw(format!("duplicate rows {}", app.timeline.duplicates())),
-        Line::raw(format!(
-            "nodes / edges  {} / {}",
-            app.state.nodes.len(),
-            app.state.edges.len()
-        )),
-        Line::raw(format!(
-            "camera         {} at {:.0}%",
-            app.camera.mode.label(),
-            app.camera.zoom * 100.0
-        )),
-        Line::raw(format!(
-            "stream         {}",
-            if app.stream_open {
-                "attached"
-            } else {
-                "closed/offline"
-            }
-        )),
-        Line::raw(""),
-        Line::raw("AG-UI metadata is content-free and sourced from the durable local ledger."),
-    ]);
-    overlay(frame, 68, 14, " session info ", text);
-}
-
-fn draw_inspector(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
-    let Some(card) = app.scene.cards.get(app.selected) else {
-        return;
+    let fidelity = if app.state.fidelity.is_empty() {
+        "unknown"
+    } else {
+        &app.state.fidelity
     };
-    let block = Block::default()
-        .title(format!(" {} ", card.title))
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Rgb(218, 178, 49)))
-        .style(Style::default().bg(Color::Rgb(20, 22, 20)));
-    frame.render_widget(
-        Paragraph::new(card_detail_text(app, card))
-            .block(block)
-            .scroll((app.inspector_scroll, 0))
-            .wrap(Wrap { trim: false }),
-        area,
-    );
-}
-
-fn draw_detail(frame: &mut ratatui::Frame<'_>, app: &App) {
-    let Some(card) = app.scene.cards.get(app.selected) else {
-        return;
-    };
-    overlay(
-        frame,
-        70,
-        18,
-        &format!(" {} ", card.title),
-        card_detail_text(app, card),
-    );
-}
-
-fn card_detail_text(app: &App, card: &Card) -> Text<'static> {
-    let inbound = app
-        .scene
-        .links
-        .iter()
-        .filter(|link| link.to == card.key)
-        .count();
-    let outbound = app
-        .scene
-        .links
-        .iter()
-        .filter(|link| link.from == card.key)
-        .count();
-    Text::from(vec![
+    let lines = vec![
         Line::from(vec![
-            Span::styled(
-                format!("{} ", status_mark(&card.state)),
-                Style::default().fg(state_color(&card.state)),
-            ),
-            Span::styled(
-                card.state.to_uppercase(),
-                Style::default()
-                    .fg(state_color(&card.state))
-                    .add_modifier(Modifier::BOLD),
-            ),
+            Span::styled("source    ", Style::default().fg(GOLD)),
+            Span::raw("Claude Control observation ledger"),
         ]),
-        Line::raw(""),
-        Line::raw(format!(
-            "Role        {}",
-            card.role.as_deref().unwrap_or("—")
+        Line::from(vec![
+            Span::styled("fidelity  ", Style::default().fg(GOLD)),
+            Span::raw(fidelity.to_owned()),
+        ]),
+        Line::from(vec![
+            Span::styled("cursor    ", Style::default().fg(GOLD)),
+            Span::raw(app.timeline.last_cursor().to_string()),
+        ]),
+        Line::from(vec![
+            Span::styled("events    ", Style::default().fg(GOLD)),
+            Span::raw(app.timeline.len().to_string()),
+        ]),
+        Line::from(vec![
+            Span::styled("status    ", Style::default().fg(GOLD)),
+            Span::raw(app.status.clone()),
+        ]),
+        Line::from(vec![
+            Span::styled("scope     ", Style::default().fg(GOLD)),
+            Span::raw(match app.scope {
+                ScopeMode::Focus => "latest connected work",
+                ScopeMode::Recent => "active + recent nodes",
+                ScopeMode::All => "all historical nodes",
+            }),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Read-only · content-free · replayable",
+            Style::default().fg(SUBTLE),
         )),
-        Line::raw(format!(
-            "Model       {}",
-            card.model.as_deref().unwrap_or("—")
-        )),
-        Line::raw(format!("Type        {}", card.kind)),
-        Line::raw(format!("Activity    {}", card.activity)),
-        Line::raw(format!(
-            "Tokens      {}",
-            compact_number(card.output_tokens)
-        )),
-        Line::raw(format!("Connections {inbound} in · {outbound} out")),
-        Line::raw(""),
-        Line::styled(
-            "IDENTITY",
-            Style::default()
-                .fg(Color::Rgb(215, 177, 48))
-                .add_modifier(Modifier::BOLD),
-        ),
-        Line::raw(card.key.clone()),
-        Line::raw(""),
-        Line::styled(
-            "VIEWER",
-            Style::default()
-                .fg(Color::Rgb(215, 177, 48))
-                .add_modifier(Modifier::BOLD),
-        ),
-        Line::raw(format!(
-            "Event {}/{} · {}",
-            app.index.saturating_add(1),
-            app.timeline.len(),
-            app.playback.label()
-        )),
-        Line::raw(format!(
-            "Camera {} · {:.0}%",
-            app.camera.mode.label(),
-            app.camera.zoom * 100.0
-        )),
-        Line::raw(""),
-        Line::styled(
-            "Read-only semantic metadata. Prompt, reasoning, and tool bodies are never rendered.",
-            Style::default().fg(Color::Rgb(112, 116, 108)),
-        ),
-    ])
+    ];
+    draw_overlay(frame, 66, 13, " observation ", Text::from(lines));
 }
 
-fn overlay(frame: &mut ratatui::Frame<'_>, width: u16, height: u16, title: &str, text: Text<'_>) {
+fn draw_overlay(
+    frame: &mut ratatui::Frame<'_>,
+    width: u16,
+    height: u16,
+    title: &str,
+    text: Text<'_>,
+) {
     let area = centered_rect(
-        width.min(frame.area().width.saturating_sub(2)),
-        height.min(frame.area().height.saturating_sub(2)),
+        width.min(frame.area().width),
+        height.min(frame.area().height),
         frame.area(),
     );
     frame.render_widget(Clear, area);
     let block = Block::default()
-        .title(title)
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Yellow))
-        .style(Style::default().bg(Color::Rgb(20, 21, 21)));
+        .border_type(BorderType::Rounded)
+        .title(Line::from(title.to_owned()).centered())
+        .title_bottom(Line::from(" esc to close ").centered())
+        .border_style(Style::default().fg(GOLD))
+        .style(Style::default().bg(SURFACE))
+        .padding(Padding::uniform(1));
     frame.render_widget(
-        Paragraph::new(text).block(block).wrap(Wrap { trim: false }),
+        Paragraph::new(text)
+            .block(block)
+            .style(Style::default().fg(TEXT).bg(SURFACE))
+            .wrap(Wrap { trim: true }),
+        area,
+    );
+}
+
+fn draw_message(frame: &mut ratatui::Frame<'_>, title: &str, message: &str, color: Color) {
+    let area = centered_rect(
+        68.min(frame.area().width),
+        7.min(frame.area().height),
+        frame.area(),
+    );
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(message.to_owned())
+            .alignment(Alignment::Center)
+            .wrap(Wrap { trim: true })
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .title(title.to_owned())
+                    .border_style(Style::default().fg(color))
+                    .style(Style::default().bg(SURFACE))
+                    .padding(Padding::uniform(1)),
+            )
+            .style(Style::default().fg(TEXT).bg(SURFACE)),
         area,
     );
 }
 
 fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
-    Rect {
-        x: area.x + area.width.saturating_sub(width) / 2,
-        y: area.y + area.height.saturating_sub(height) / 2,
+    Rect::new(
+        area.x + area.width.saturating_sub(width) / 2,
+        area.y + area.height.saturating_sub(height) / 2,
         width,
         height,
-    }
-}
-
-fn screen_point(area: Rect, camera: Camera, x: f32, y: f32) -> (i32, i32) {
-    world_to_screen(
-        area,
-        WorldPoint::new(camera.x, camera.y),
-        camera.zoom,
-        WorldPoint::new(x, y),
     )
-    .map(|point| (point.x.round() as i32, point.y.round() as i32))
-    .unwrap_or((i32::MIN, i32::MIN))
 }
 
-fn clipped_rect(area: Rect, x: i32, y: i32, width: i32, height: i32) -> Option<Rect> {
-    let left = x.max(i32::from(area.x));
-    let top = y.max(i32::from(area.y));
-    let right = (x + width).min(i32::from(area.right()));
-    let bottom = (y + height).min(i32::from(area.bottom()));
-    (left < right && top < bottom).then_some(Rect::new(
-        left as u16,
-        top as u16,
-        (right - left) as u16,
-        (bottom - top) as u16,
-    ))
+fn event_column(index: usize, len: usize, width: usize) -> usize {
+    if len <= 1 || width <= 1 {
+        0
+    } else {
+        index.saturating_mul(width - 1) / (len - 1)
+    }
 }
 
-fn fill(buffer: &mut Buffer, area: Rect, symbol: &str, style: Style) {
-    for y in area.y..area.bottom() {
-        for x in area.x..area.right() {
-            buffer[(x, y)].set_symbol(symbol).set_style(style);
+fn event_mark(summary: &str) -> char {
+    let lower = summary.to_ascii_lowercase();
+    if lower.contains("fail") || lower.contains("error") {
+        '×'
+    } else if lower.contains("node_created") || lower.contains("created") {
+        '✦'
+    } else if lower.contains("run started") || lower.contains("run_started") {
+        '◇'
+    } else {
+        ' '
+    }
+}
+
+fn event_weight(summary: &str) -> u64 {
+    let lower = summary.to_ascii_lowercase();
+    if lower.contains("fail") || lower.contains("error") {
+        7
+    } else if lower.contains("run started") || lower.contains("run_started") {
+        5
+    } else if lower.contains("node_created") || lower.contains("created") {
+        3
+    } else if lower.contains("telemetry") {
+        2
+    } else {
+        1
+    }
+}
+
+fn scope_scene(state: &GraphState, scene: &Scene, scope: ScopeMode) -> Scene {
+    if scope == ScopeMode::All {
+        return scene.clone();
+    }
+    let mut keep = BTreeSet::from(["controller:local".to_owned()]);
+    match scope {
+        ScopeMode::Focus => {
+            let seed = scene
+                .cards
+                .iter()
+                .filter(|card| card.kind != "controller")
+                .max_by(|left, right| {
+                    created_at(state, &left.key)
+                        .total_cmp(&created_at(state, &right.key))
+                        .then_with(|| left.key.cmp(&right.key))
+                })
+                .map(|card| card.key.clone());
+            if let Some(seed) = seed {
+                keep.insert(seed);
+            }
+            keep.extend(
+                scene
+                    .cards
+                    .iter()
+                    .filter(|card| live_state(&card.state))
+                    .map(|card| card.key.clone()),
+            );
+            expand_connected(scene, &mut keep, 12);
         }
+        ScopeMode::Recent => {
+            if scene.cards.len() <= RECENT_NODE_LIMIT + 1 {
+                return scene.clone();
+            }
+            for (kind, quota) in [
+                ("composition", 2_usize),
+                ("workflow", 2),
+                ("workspace", 5),
+                ("task", 6),
+                ("session", 8),
+            ] {
+                let mut candidates = scene
+                    .cards
+                    .iter()
+                    .filter(|card| card.kind == kind)
+                    .collect::<Vec<_>>();
+                candidates.sort_by(|left, right| {
+                    active_state(&right.state)
+                        .cmp(&active_state(&left.state))
+                        .then_with(|| {
+                            created_at(state, &right.key).total_cmp(&created_at(state, &left.key))
+                        })
+                        .then_with(|| left.key.cmp(&right.key))
+                });
+                keep.extend(
+                    candidates
+                        .into_iter()
+                        .take(quota)
+                        .map(|card| card.key.clone()),
+                );
+            }
+        }
+        ScopeMode::All => unreachable!(),
     }
+    scoped_scene(scene, &keep)
 }
 
-fn set(buffer: &mut Buffer, area: Rect, x: i32, y: i32, symbol: &str, style: Style) {
-    if x >= area.x as i32
-        && x < area.right() as i32
-        && y >= area.y as i32
-        && y < area.bottom() as i32
-    {
-        buffer[(x as u16, y as u16)]
-            .set_symbol(symbol)
-            .set_style(style);
-    }
-}
-
-fn set_text(
-    buffer: &mut Buffer,
-    area: Rect,
-    x: i32,
-    y: i32,
-    width: i32,
-    value: &str,
-    style: Style,
-) {
-    if width <= 0 || y < area.y as i32 || y >= area.bottom() as i32 {
-        return;
-    }
-    let text = truncate(value, width as usize);
-    if x >= area.x as i32 && x < area.right() as i32 {
-        let available = (area.right() as i32 - x).min(width) as usize;
-        buffer.set_stringn(x as u16, y as u16, text, available, style);
-    }
-}
-
-fn truncate(value: &str, width: usize) -> String {
-    if width == 0 {
-        return String::new();
-    }
-    if UnicodeWidthStr::width(value) <= width {
-        return value.to_owned();
-    }
-    let target = width.saturating_sub(1);
-    let mut result = String::new();
-    let mut used = 0;
-    for character in value.chars() {
-        let character_width = UnicodeWidthChar::width(character).unwrap_or(0);
-        if used + character_width > target {
+fn expand_connected(scene: &Scene, keep: &mut BTreeSet<String>, limit: usize) {
+    loop {
+        let mut additions = Vec::new();
+        for link in scene
+            .links
+            .iter()
+            .filter(|link| !matches!(link.kind.as_str(), "root" | "scope"))
+        {
+            if keep.contains(&link.from) && !keep.contains(&link.to) {
+                additions.push(link.to.clone());
+            } else if keep.contains(&link.to) && !keep.contains(&link.from) {
+                additions.push(link.from.clone());
+            }
+        }
+        additions.sort();
+        additions.dedup();
+        let remaining = limit.saturating_sub(keep.len().saturating_sub(1));
+        if additions.is_empty() || remaining == 0 {
             break;
         }
-        result.push(character);
-        used += character_width;
+        keep.extend(additions.into_iter().take(remaining));
     }
-    result.push('…');
-    result
+}
+
+fn scoped_scene(scene: &Scene, keep: &BTreeSet<String>) -> Scene {
+    let cards = scene
+        .cards
+        .iter()
+        .filter(|card| keep.contains(&card.key))
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut links = scene
+        .links
+        .iter()
+        .filter(|link| keep.contains(&link.from) && keep.contains(&link.to))
+        .cloned()
+        .collect::<Vec<_>>();
+    let connected = links
+        .iter()
+        .flat_map(|link| [link.from.clone(), link.to.clone()])
+        .collect::<BTreeSet<_>>();
+    for card in cards.iter().filter(|card| card.kind != "controller") {
+        if !connected.contains(&card.key) {
+            links.push(Link {
+                from: "controller:local".to_owned(),
+                to: card.key.clone(),
+                kind: "scope".to_owned(),
+            });
+        }
+    }
+    Scene {
+        cards,
+        links,
+        ..Scene::default()
+    }
+}
+
+fn created_at(state: &GraphState, key: &str) -> f64 {
+    state
+        .nodes
+        .get(key)
+        .and_then(|node| node.raw.get("created"))
+        .and_then(serde_json::Value::as_f64)
+        .filter(|value| value.is_finite())
+        .unwrap_or(0.0)
+}
+
+fn bar_glyph(level: usize) -> &'static str {
+    [" ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"][level.min(8)]
+}
+
+fn active_state(state: &str) -> bool {
+    matches!(
+        state,
+        "running"
+            | "active"
+            | "claimed"
+            | "launching"
+            | "pending"
+            | "queued"
+            | "awaiting_codex"
+            | "awaiting_leader"
+    )
+}
+
+fn live_state(state: &str) -> bool {
+    matches!(state, "running" | "active" | "claimed" | "launching")
 }
 
 fn format_clock(timestamp: f64) -> String {
@@ -1637,170 +1208,9 @@ fn format_clock(timestamp: f64) -> String {
     )
 }
 
-fn line_h(
-    buffer: &mut Buffer,
-    area: Rect,
-    start: i32,
-    end: i32,
-    y: i32,
-    symbol: &str,
-    style: Style,
-) {
-    for x in min(start, end)..=start.max(end) {
-        set(buffer, area, x, y, symbol, style);
-    }
-}
-
-fn line_v(
-    buffer: &mut Buffer,
-    area: Rect,
-    start: i32,
-    end: i32,
-    x: i32,
-    symbol: &str,
-    style: Style,
-) {
-    for y in min(start, end)..=start.max(end) {
-        set(buffer, area, x, y, symbol, style);
-    }
-}
-
-fn fill_rect(
-    buffer: &mut Buffer,
-    area: Rect,
-    x: i32,
-    y: i32,
-    width: i32,
-    height: i32,
-    color: Color,
-) {
-    let style = Style::default().bg(color);
-    for row in y..y + height {
-        for column in x..x + width {
-            set(buffer, area, column, row, " ", style);
-        }
-    }
-}
-
-fn draw_shadow(buffer: &mut Buffer, area: Rect, x: i32, y: i32, width: i32, height: i32) {
-    let style = Style::default().bg(Color::Rgb(6, 7, 6));
-    line_h(buffer, area, x + 2, x + width, y + height, " ", style);
-    line_v(buffer, area, y + 1, y + height, x + width, " ", style);
-}
-
-#[allow(clippy::too_many_arguments)]
-fn box_border_variant(
-    buffer: &mut Buffer,
-    area: Rect,
-    x: i32,
-    y: i32,
-    width: i32,
-    height: i32,
-    selected: bool,
-    surface: Color,
-) {
-    let color = if selected {
-        Color::Rgb(229, 184, 43)
-    } else {
-        Color::Rgb(72, 76, 70)
-    };
-    let style = Style::default().fg(color).bg(surface);
-    let (horizontal, vertical, top_left, top_right, bottom_left, bottom_right) = if selected {
-        ("═", "║", "╔", "╗", "╚", "╝")
-    } else {
-        ("─", "│", "╭", "╮", "╰", "╯")
-    };
-    line_h(buffer, area, x + 1, x + width - 2, y, horizontal, style);
-    line_h(
-        buffer,
-        area,
-        x + 1,
-        x + width - 2,
-        y + height - 1,
-        horizontal,
-        style,
-    );
-    line_v(buffer, area, y + 1, y + height - 2, x, vertical, style);
-    line_v(
-        buffer,
-        area,
-        y + 1,
-        y + height - 2,
-        x + width - 1,
-        vertical,
-        style,
-    );
-    set(buffer, area, x, y, top_left, style);
-    set(buffer, area, x + width - 1, y, top_right, style);
-    set(buffer, area, x, y + height - 1, bottom_left, style);
-    set(
-        buffer,
-        area,
-        x + width - 1,
-        y + height - 1,
-        bottom_right,
-        style,
-    );
-}
-
-fn compact_number(value: u64) -> String {
-    if value >= 1_000_000 {
-        format!("{:.1}m", value as f64 / 1_000_000.0)
-    } else if value >= 1_000 {
-        format!("{:.1}k", value as f64 / 1_000.0)
-    } else {
-        value.to_string()
-    }
-}
-
-fn short_key(key: &str) -> String {
-    let tail = key.rsplit(':').next().unwrap_or(key);
-    truncate(tail, 12)
-}
-
-fn active_state(state: &str) -> bool {
-    matches!(
-        state,
-        "pending" | "claimed" | "launching" | "running" | "stopping" | "active"
-    )
-}
-
-fn kind_color(kind: &str) -> Color {
-    match kind {
-        "controller" => Color::Yellow,
-        "composition" => Color::LightMagenta,
-        "workflow" => Color::LightBlue,
-        "workspace" => Color::LightCyan,
-        "task" => Color::LightGreen,
-        "session" => Color::Rgb(124, 184, 111),
-        _ => Color::White,
-    }
-}
-
-fn state_color(state: &str) -> Color {
-    match state {
-        "running" | "active" | "claimed" | "launching" => Color::LightGreen,
-        "completed" | "accepted" | "idle" => Color::Rgb(121, 157, 112),
-        "failed" | "unknown" | "cancelled" | "blocked" => Color::LightRed,
-        "pending" | "queued" | "awaiting_codex" | "awaiting_leader" => Color::Yellow,
-        _ => Color::Gray,
-    }
-}
-
-fn status_mark(state: &str) -> &'static str {
-    match state {
-        "running" | "active" | "claimed" | "launching" => "◐",
-        "completed" | "accepted" => "✓",
-        "failed" | "unknown" | "cancelled" | "blocked" => "×",
-        "pending" | "queued" | "awaiting_codex" | "awaiting_leader" => "◆",
-        _ => "○",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crossterm::event::KeyModifiers;
     use ratatui::backend::TestBackend;
     use serde_json::{Value, json};
 
@@ -1833,10 +1243,9 @@ mod tests {
             ))
             .unwrap();
         for index in 0..agent_count {
-            let cursor = index as u64 + 2;
             timeline
                 .push(observation(
-                    cursor,
+                    index as u64 + 2,
                     "node_created",
                     "session",
                     &format!("session-{index}"),
@@ -1862,52 +1271,79 @@ mod tests {
         }
     }
 
-    #[test]
-    fn renderer_populates_click_regions_at_supported_sizes() {
-        for (width, height) in [(160, 45), (100, 30), (60, 18)] {
-            let mut app = sample_app(10);
-            let backend = TestBackend::new(width, height);
-            let mut terminal = Terminal::new(backend).unwrap();
-            terminal.draw(|frame| draw(frame, &mut app)).unwrap();
-            assert!(app.regions.canvas.width > 0);
-            assert!(app.regions.timeline_track.width > 0);
-            assert!(!app.regions.cards.is_empty());
-            if width >= 80 && height >= 20 {
-                assert!(app.regions.minimap.is_some());
-            }
-        }
+    fn buffer_text(terminal: &Terminal<TestBackend>) -> String {
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
     }
 
     #[test]
-    fn card_click_and_canvas_drag_have_distinct_results() {
-        let mut app = sample_app(2);
-        app.regions.canvas = Rect::new(0, 0, 100, 30);
-        app.regions.cards = vec![(1, Rect::new(10, 5, 20, 5))];
-
-        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 12, 6));
-        app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), 12, 6));
-        assert_eq!(app.selected, 1);
-        assert!(app.show_detail);
-
-        app.show_detail = false;
-        app.regions.cards.clear();
-        let before = (app.camera.x, app.camera.y);
-        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 40, 15));
-        app.handle_mouse(mouse(MouseEventKind::Drag(MouseButton::Left), 46, 18));
-        app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), 46, 18));
-        assert_ne!((app.camera.x, app.camera.y), before);
-        assert!(!app.show_detail);
-        assert_eq!(app.camera.mode, CameraMode::Manual);
+    fn wide_render_has_graph_timeline_and_compact_chrome() {
+        let mut app = sample_app(8);
+        let backend = TestBackend::new(160, 45);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+        let screen = buffer_text(&terminal);
+        assert!(screen.contains("Claude"), "{screen}");
+        assert!(screen.contains("observer"));
+        assert!(screen.contains("PLAY"));
+        assert!(app.regions.timeline_track.width > 0);
+        assert!(app.regions.inspector.is_none());
     }
 
     #[test]
-    fn timeline_press_scrubs_and_pauses() {
+    fn selection_opens_a_large_detail_panel() {
+        let mut app = sample_app(3);
+        app.flow.select_node("session:session-2");
+        let backend = TestBackend::new(160, 45);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+        let panel = app.regions.inspector.expect("selection should open detail");
+        assert!(panel.width > app.regions.canvas.width);
+        assert!(buffer_text(&terminal).contains("Observation contains state metadata only"));
+    }
+
+    #[test]
+    fn timeline_drag_scrubs_and_pauses() {
         let mut app = sample_app(10);
-        app.regions.timeline = Rect::new(0, 30, 100, 4);
-        app.regions.timeline_track = Rect::new(1, 32, 98, 1);
+        let backend = TestBackend::new(120, 35);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| draw(frame, &mut app)).unwrap();
         app.playback = Playback::Playing;
-        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 49, 32));
+        let track = app.regions.timeline_track;
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            track.x + track.width / 2,
+            track.y,
+        ));
         assert!((4..=7).contains(&app.index));
         assert_eq!(app.playback, Playback::Paused);
+    }
+
+    #[test]
+    fn scope_chip_cycles_focus_recent_and_all() {
+        let mut app = sample_app(24);
+        let backend = TestBackend::new(160, 45);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+
+        let scope = app.regions.scope.expect("scope chip should be clickable");
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            scope.x,
+            scope.y,
+        ));
+        assert_eq!(app.scope, ScopeMode::Recent);
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            scope.x,
+            scope.y,
+        ));
+        assert_eq!(app.scope, ScopeMode::All);
     }
 }

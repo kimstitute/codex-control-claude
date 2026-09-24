@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.22.0 — 2026-09-24
+
+- Replace the hand-written graph rasterizer with the public `rataflow` 0.1.0
+  engine for clipped node buffers, step-routed edges, unified viewport input,
+  semantic zoom and a consistent minimap. No Zoetrope source or assets are
+  vendored; the Rataflow MIT notice is included in `THIRD_PARTY_NOTICES.md`.
+- Add `focus`, `recent` and `all` graph scopes. The viewer opens on the latest
+  connected work instead of presenting every historical session as one current
+  team; press `a` to rotate scopes while replay remains cursor-complete.
+- Redesign the canvas around restrained dark surfaces, zoom-independent sparse
+  dots, compact content-first cards, a 30/70 detail split and a six-row replay
+  panel with a marker strip, weighted two-row activity bars and playhead.
+- Keep direct mouse node selection, node/canvas dragging, wheel zoom, timeline
+  scrubbing and clickable PLAY/LIVE controls on the same graph coordinate
+  system. The viewer remains read-only and excludes prompts, reasoning and tool
+  bodies.
+
 ## 0.21.0 — 2026-09-24
 
 - Rebuild the Rust graph viewer around a stable world-space layout, semantic
