@@ -859,6 +859,11 @@ fn upsert_node(state: &mut GraphState, kind: &str, entity_id: &str, payload: &Va
         .get(&key)
         .map(|node| node.output_tokens)
         .unwrap_or(0);
+    let output_tokens = if payload.get("telemetry").is_some() {
+        token_count(payload.get("telemetry").unwrap_or(&Value::Null))
+    } else {
+        existing_tokens
+    };
     state.nodes.insert(
         key,
         Node {
@@ -870,7 +875,7 @@ fn upsert_node(state: &mut GraphState, kind: &str, entity_id: &str, payload: &Va
             model,
             session_id: string(payload, &["session_id"]),
             active_run_id: string(payload, &["active_run_id"]),
-            output_tokens: existing_tokens,
+            output_tokens,
             raw: payload.clone(),
         },
     );
@@ -1229,6 +1234,35 @@ mod tests {
         assert_eq!(timeline.previous_prompt(3), 1);
         assert_eq!(timeline.find("read", 0, true), Some(2));
         assert_eq!(timeline.state_at(3).unwrap().skipped, 0);
+    }
+
+    #[test]
+    fn local_session_node_uses_exact_transcript_telemetry() {
+        let mut timeline = Timeline::default();
+        timeline
+            .push(custom(
+                1,
+                "node_created",
+                "session",
+                "s1",
+                serde_json::json!({
+                    "id":"s1","state":"idle","model":"claude-opus-5",
+                    "telemetry":{
+                        "usage":{"input_tokens":2,"cache_creation_input_tokens":11,
+                            "cache_read_input_tokens":13,"output_tokens":17,
+                            "output_tokens_details":{"thinking_tokens":5}},
+                        "provider_cost_usd":null,"cost_status":"unavailable"
+                    }
+                }),
+            ))
+            .unwrap();
+
+        let node = timeline.state_at(0).unwrap().nodes["session:s1"].clone();
+        assert_eq!(node.output_tokens, 17);
+        assert_eq!(
+            node.raw.pointer("/telemetry/cost_status").and_then(Value::as_str),
+            Some("unavailable")
+        );
     }
 
     #[test]

@@ -31,6 +31,11 @@ claude_control doctor --auth
 ```
 
 The executable and project paths are explicit. The store belongs to its originating host and user. Initialization does not grant filesystem isolation or change Claude authentication.
+Prefer a stable symlink for `--claude-bin`. The controller pins its resolved
+binary, and only when that target disappears will it validate launcher kind,
+ownership, version directory, executability and a version probe before an atomic
+repair for new work. Recovery waits for active controller work to finish, and an
+existing conversation rejects a changed recorded binary identity.
 
 ## Live monitor and usage history
 
@@ -102,6 +107,9 @@ and the approval ledger.
 `terminal start` enables Claude Code safe mode, empty setting sources, empty MCP,
 and disables slash commands and native tools. Typing after attach can trigger a
 model request and is therefore an explicit operator action.
+Local Detail automatically connects the terminal to its transcript once that
+file appears. It deduplicates response-level input/cache/output/thinking usage;
+provider cost remains unavailable when the transcript does not report it.
 
 ## Tasks with revisions and approval
 

@@ -115,6 +115,13 @@ session created with `terminal start`. `partial / bounded` means malformed rows 
 skipped or byte/record bounds omitted older input. The content is composed in
 memory and never written to the SQLite observation ledger, AG-UI, OTLP,
 `--inspect` or `--tree`.
+Streaming assistant rows with the same `(requestId, message.id)` are one response.
+Local Detail aggregates exact input, cache-creation, cache-read, output and thinking
+tokens from the latest consistent row, and marks missing, conflicting or bounded
+coverage as `incomplete`. Cost stays `unavailable` when the transcript does not
+report it; no price table is used. A selected `terminal:` source with no transcript
+promotes to the unique matching `claude:` source when the file appears, without a
+viewer restart or a new session-card identity.
 Parent/child agents, prompts, responses and tool states replay at their recorded
 times. A tool that finishes after the selected cursor remains `pending`, and
 transcript silence alone is never treated as agent completion.

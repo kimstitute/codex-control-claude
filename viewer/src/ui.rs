@@ -1257,6 +1257,18 @@ fn draw_inspector(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) {
                 Line::from(Span::styled("identity", key)),
                 Line::from(Span::styled(card.key.clone(), dim)),
             ]);
+            if let Some(raw) = app
+                .state
+                .nodes
+                .get(&card.key)
+                .map(|node| &node.raw)
+                .filter(|raw| raw.get("telemetry").is_some())
+            {
+                lines.extend([
+                    detail_line("usage", &usage_line(raw), key, value),
+                    detail_line("cost", &cost_line(raw), key, value),
+                ]);
+            }
             append_runs(&mut lines, app, &card, heading, key, value);
             append_operations(&mut lines, app, &card, key, value, dim);
             if !app.detail.source.provider.is_empty() {
@@ -1824,12 +1836,16 @@ fn usage_line(value: &serde_json::Value) -> String {
                     .and_then(serde_json::Value::as_u64)
             })
             .sum();
-        return format!(
+        let mut line = format!(
             "in {} · out {} · think {}",
             compact_number(input),
             compact_number(output),
             compact_number(thinking)
         );
+        if telemetry.get("complete").and_then(serde_json::Value::as_bool) == Some(false) {
+            line.push_str(" · incomplete");
+        }
+        return line;
     }
     let input = usage
         .get("input_tokens")
@@ -1837,6 +1853,10 @@ fn usage_line(value: &serde_json::Value) -> String {
         .unwrap_or(0);
     let output = usage
         .get("output_tokens")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let cache_creation = usage
+        .get("cache_creation_input_tokens")
         .and_then(serde_json::Value::as_u64)
         .unwrap_or(0);
     let cache = usage
@@ -1847,20 +1867,30 @@ fn usage_line(value: &serde_json::Value) -> String {
         .pointer("/output_tokens_details/thinking_tokens")
         .and_then(serde_json::Value::as_u64)
         .unwrap_or(0);
-    if input + output + cache + thinking == 0 {
+    if input + output + cache_creation + cache + thinking == 0 {
         "—".to_owned()
     } else {
-        format!(
-            "in {} · out {} · cache {} · think {}",
+        let mut line = format!(
+            "in {} · cache+ {} · cache {} · out {} · think {}",
             compact_number(input),
-            compact_number(output),
+            compact_number(cache_creation),
             compact_number(cache),
+            compact_number(output),
             compact_number(thinking)
-        )
+        );
+        if telemetry.get("complete").and_then(serde_json::Value::as_bool) == Some(false) {
+            line.push_str(" · incomplete");
+        }
+        line
     }
 }
 
 fn cost_line(value: &serde_json::Value) -> String {
+    if value.pointer("/telemetry/cost_status").and_then(serde_json::Value::as_str)
+        == Some("unavailable")
+    {
+        return "unavailable".to_owned();
+    }
     value
         .pointer("/telemetry/provider_cost_usd")
         .and_then(serde_json::Value::as_f64)

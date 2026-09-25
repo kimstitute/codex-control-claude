@@ -17,6 +17,127 @@ def write_jsonl(path, values):
 
 
 class LocalDetailTests(unittest.TestCase):
+    def test_claude_usage_is_exactly_aggregated_and_duplicate_messages_are_ignored(self):
+        rows = [
+            {
+                "type": "assistant",
+                "sessionId": "usage-session",
+                "uuid": "row-a",
+                "requestId": "request-a",
+                "timestamp": "2026-01-01T00:00:00Z",
+                "message": {
+                    "id": "message-a",
+                    "model": "claude-opus-5",
+                    "content": "first",
+                    "usage": {
+                        "input_tokens": 2,
+                        "cache_creation_input_tokens": 11,
+                        "cache_read_input_tokens": 13,
+                        "output_tokens": 17,
+                        "output_tokens_details": {"thinking_tokens": 5},
+                    },
+                },
+            },
+            {
+                "type": "assistant",
+                "sessionId": "usage-session",
+                "uuid": "row-a-copy",
+                "requestId": "request-a",
+                "timestamp": "2026-01-01T00:00:00Z",
+                "message": {
+                    "id": "message-a",
+                    "model": "claude-opus-5",
+                    "content": "duplicate",
+                    "usage": {
+                        "input_tokens": 2,
+                        "cache_creation_input_tokens": 11,
+                        "cache_read_input_tokens": 13,
+                        "output_tokens": 17,
+                        "output_tokens_details": {"thinking_tokens": 5},
+                    },
+                },
+            },
+            {
+                "type": "assistant",
+                "sessionId": "usage-session",
+                "uuid": "row-b",
+                "requestId": "request-b",
+                "timestamp": "2026-01-01T00:00:01Z",
+                "message": {
+                    "id": "message-b",
+                    "model": "claude-opus-5",
+                    "content": "second",
+                    "usage": {
+                        "input_tokens": 3,
+                        "cache_creation_input_tokens": 19,
+                        "cache_read_input_tokens": 23,
+                        "output_tokens": 29,
+                        "output_tokens_details": {"thinking_tokens": 7},
+                    },
+                },
+            },
+        ]
+
+        parsed = local_detail._parse_claude(
+            Path("usage-session.jsonl"),
+            rows,
+            {"malformed": 0, "truncated": False, "read_error": None},
+        )
+
+        local_usage = parsed["agents"][0]["local_usage"]
+        self.assertEqual(
+            local_usage["totals"],
+            {
+                "input_tokens": 5,
+                "cache_creation_input_tokens": 30,
+                "cache_read_input_tokens": 36,
+                "output_tokens": 46,
+                "thinking_tokens": 12,
+            },
+        )
+        self.assertTrue(local_usage["complete"])
+        self.assertEqual(local_usage["responses"], 2)
+        self.assertEqual(local_usage["cost"], {"status": "unavailable", "usd": None})
+        graph = local_detail._local_events(parsed)
+        created = next(
+            event for event in graph if event.get("value", {}).get("kind") == "node_created"
+        )
+        self.assertEqual(
+            created["value"]["payload"]["telemetry"],
+            local_detail._usage_telemetry(local_usage),
+        )
+
+    def test_claude_usage_tracks_streaming_growth_and_marks_unkeyed_rows_incomplete(self):
+        def row(output, thinking, *, request="request", message="message"):
+            return {
+                "type": "assistant",
+                "sessionId": "usage-session",
+                "requestId": request,
+                "message": {
+                    "id": message,
+                    "model": "claude-opus-5",
+                    "content": "chunk",
+                    "usage": {
+                        "input_tokens": 1,
+                        "cache_creation_input_tokens": 2,
+                        "cache_read_input_tokens": 3,
+                        "output_tokens": output,
+                        "output_tokens_details": {"thinking_tokens": thinking},
+                    },
+                },
+            }
+
+        rows = [row(4, 1), row(9, 5), row(100, 50, request="")]
+        usage = local_detail._claude_usage(
+            rows, {"malformed": 0, "truncated": False, "read_error": None}
+        )
+
+        self.assertEqual(usage["responses"], 1)
+        self.assertEqual(usage["totals"]["output_tokens"], 9)
+        self.assertEqual(usage["totals"]["thinking_tokens"], 5)
+        self.assertEqual(usage["skipped"]["unkeyed"], 1)
+        self.assertFalse(usage["complete"])
+
     def test_claude_terminal_metadata_is_catalog_safe_and_detail_local_only(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -109,11 +230,84 @@ class LocalDetailTests(unittest.TestCase):
             self.assertEqual(detail["agents"][0]["role"], "executor")
             self.assertEqual(detail["source"]["terminal"]["recent_output"], "waiting for input")
             created = next(
-                event
-                for event in events
-                if event.get("value", {}).get("kind") == "node_created"
+                event for event in events if event.get("value", {}).get("kind") == "node_created"
             )
             self.assertEqual(created["value"]["payload"]["state"], "idle")
+
+    def test_following_terminal_promotes_to_transcript_without_restarting(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            session_id = "2a2a2a2a-2222-4222-8222-222222222222"
+            terminal = {
+                "id": "2a2a2a2a",
+                "session_id": session_id,
+                "name": "promoted terminal",
+                "cwd": "/work/project",
+                "kind": "background",
+                "status": "idle",
+                "attachable": True,
+                "role": "executor",
+                "requested_model": "opus",
+                "safe_profile": True,
+                "started_at": 1.0,
+            }
+            with mock.patch.object(
+                local_detail.terminal_cli,
+                "snapshot",
+                return_value={**terminal, "recent_output": "ready"},
+            ):
+                events = local_detail.stream(
+                    object(),
+                    source=f"terminal:{session_id}",
+                    claude_root=root,
+                    follow=True,
+                    poll_seconds=0.05,
+                )
+                initial = []
+                while not initial or initial[-1].get("type") != local_detail.DETAIL_TYPE:
+                    initial.append(next(events))
+                self.assertEqual(initial[-1]["source"]["selector"], f"terminal:{session_id}")
+
+                write_jsonl(
+                    root / "project" / f"{session_id}.jsonl",
+                    [
+                        {
+                            "type": "user",
+                            "sessionId": session_id,
+                            "timestamp": "2026-01-01T00:00:00Z",
+                            "message": {"content": "new prompt"},
+                        },
+                        {
+                            "type": "assistant",
+                            "sessionId": session_id,
+                            "timestamp": "2026-01-01T00:00:01Z",
+                            "message": {
+                                "id": "promoted-message",
+                                "model": "claude-opus-5",
+                                "content": "new response",
+                                "usage": {"input_tokens": 2, "output_tokens": 3},
+                            },
+                        },
+                    ],
+                )
+                promoted = []
+                for _ in range(12):
+                    value = next(events)
+                    promoted.append(value)
+                    if value.get("type") == local_detail.DETAIL_TYPE:
+                        break
+                events.close()
+
+            reset = next(
+                value for value in promoted if value.get("type") == "CLAUDE_CONTROL_DETAIL_RESET"
+            )
+            detail = next(
+                value for value in promoted if value.get("type") == local_detail.DETAIL_TYPE
+            )
+            self.assertEqual(reset["reason"], "source_promoted")
+            self.assertTrue(detail["source"]["selector"].startswith(f"claude:{session_id}@"))
+            self.assertEqual(detail["agents"][0]["agent_id"], session_id)
+            self.assertEqual([event["kind"] for event in detail["events"]], ["prompt", "response"])
 
     def test_stopped_terminal_with_recent_transcript_is_not_live(self):
         with tempfile.TemporaryDirectory() as directory:

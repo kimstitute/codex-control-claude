@@ -112,6 +112,12 @@ native background session의 bounded 최근 화면, 상태와 attach 가능 여�
 `partial / bounded`는 malformed row 또는 byte/record 한도로 과거 일부가
 생략됐다는 뜻입니다. 이 내용은 메모리에서만 합성하며 SQLite observation 원장,
 AG-UI, OTLP, `--inspect`, `--tree`에 기록하지 않습니다.
+Claude assistant row의 `(requestId, message.id)`가 같은 streaming block은 하나의
+응답으로 취급합니다. input, cache creation/read, output, thinking token은 응답의 최신
+확정값으로 집계하며 누락·충돌·bounded truncation이 있으면 `incomplete`를 표시합니다.
+transcript가 비용을 직접 제공하지 않으면 `unavailable`로 남기고 단가표로 추정하지 않습니다.
+처음 선택할 때 transcript가 없던 `terminal:` source는 같은 UUID의 유일한 transcript가
+생기면 viewer 재시작 없이 `claude:` source로 승격됩니다. session 카드 identity는 유지됩니다.
 부모·자식 agent, prompt/응답, tool 상태는 기록 시각에 맞춰 재생됩니다. 선택한
 cursor 뒤에 끝난 tool은 `pending`으로 보이며, transcript 침묵만으로 agent 완료를
 추정하지 않습니다.

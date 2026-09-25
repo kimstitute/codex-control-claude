@@ -31,6 +31,10 @@ claude_control doctor --auth
 ```
 
 실행 파일과 프로젝트 경로는 명시적입니다. 저장소는 이를 만든 호스트와 사용자에게 귀속됩니다. 초기화는 파일 시스템 격리를 부여하거나 Claude 인증을 변경하지 않습니다.
+`--claude-bin`에는 stable symlink를 권장합니다. 컨트롤러는 해석된 실제 binary를 고정하고,
+self-update로 그 파일이 사라졌을 때만 launcher의 종류·소유권·version directory·실행 가능성·
+version probe를 확인해 새 작업의 경로를 원자적으로 복구합니다. 진행 중인 작업이 있으면
+복구하지 않으며, 기존 대화 재개는 기록된 binary identity가 달라지면 거부됩니다.
 
 ## 실시간 모니터와 사용 기록
 
@@ -97,6 +101,9 @@ claude_control terminal shell --project /absolute/path/to/project
 `terminal start`는 Claude Code safe mode, 빈 setting source, 빈 MCP, slash command와
 native tool 비활성화 설정으로 시작합니다. attach 중 입력은 모델 요청을 발생시킬 수
 있으므로 사용자가 직접 조작하는 단계입니다.
+Local Detail은 transcript가 만들어지면 같은 terminal session을 자동으로 상세 source에
+연결합니다. 응답별 input/cache/output/thinking token은 중복 없이 합산하며 provider가
+비용을 기록하지 않은 경우 비용을 계산하지 않습니다.
 
 ## 개정과 승인이 있는 Task
 

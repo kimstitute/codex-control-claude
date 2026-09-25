@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.26.0 — 2026-09-25
+
+- Aggregate exact input, cache creation, cache read, output and thinking tokens
+  from interactive Claude transcripts by `(requestId, message.id)`. Repeated
+  streaming rows are replaced rather than double-counted; incomplete or
+  conflicting coverage is visible and cost remains unavailable unless Claude
+  reports it directly.
+- Promote a followed `terminal:<session>` source to its unique transcript-aware
+  `claude:<session>@<path-token>` source as soon as the transcript appears. The
+  viewer keeps the same session identity, emits one reset and continues without
+  a manual restart.
+- Preserve a stable Claude launcher hint and recover a missing versioned binary
+  through that validated launcher. Recovery is atomic, refuses ambiguous or
+  untrusted targets and active controller work, and never changes the binary
+  identity recorded by an existing headless conversation.
+- Keep interactive usage and terminal/transcript content confined to Local
+  Detail. The observation ledger, AG-UI, OTLP and headless exports retain their
+  content-free contracts. Store schema remains 15.
+
 ## 0.25.0 — 2026-09-25
 
 - Add an explicit `terminal` command group backed by Claude Code's native

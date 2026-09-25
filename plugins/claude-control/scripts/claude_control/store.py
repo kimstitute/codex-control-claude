@@ -4,8 +4,10 @@ import hashlib
 import json
 import math
 import os
+import re
 import socket
 import sqlite3
+import stat
 import subprocess
 import time
 import uuid
@@ -42,6 +44,124 @@ class ControlError(Exception):
     def __init__(self, code, message):
         super().__init__(message)
         self.code = code
+
+
+def _launcher_path(value):
+    return Path(value).expanduser().absolute()
+
+
+def _canonical_claude_launcher(binary):
+    """Recognize only Claude's standard per-user version directory layout."""
+    binary = Path(binary)
+    if binary.parent.name != "versions" or binary.parent.parent.name != "claude":
+        return None
+    try:
+        local = binary.parents[3]
+    except IndexError:
+        return None
+    if local.name != ".local" or binary.parent.parent.parent.name != "share":
+        return None
+    return local / "bin" / ("claude.exe" if os.name == "nt" else "claude")
+
+
+def _private_group(gid):
+    if os.name != "posix":
+        return False
+    import grp
+    import pwd
+
+    current = pwd.getpwuid(os.getuid()).pw_name
+    group = grp.getgrgid(gid)
+    members = set(group.gr_mem)
+    members.update(entry.pw_name for entry in pwd.getpwall() if entry.pw_gid == gid)
+    return members <= {current}
+
+
+def _same_path(left, right):
+    return os.path.normcase(os.path.abspath(str(left))) == os.path.normcase(
+        os.path.abspath(str(right))
+    )
+
+
+def _trusted_recovery_candidate(config):
+    stale = Path(config["claude_bin"])
+    launcher_value = config.get("claude_launcher")
+    launcher = _launcher_path(launcher_value) if launcher_value else None
+    if launcher is None or not launcher.exists():
+        raise ControlError(
+            "binary_recovery_failed",
+            "Configured Claude binary is missing and no trusted stable launcher is available.",
+        )
+    try:
+        candidate = launcher.resolve(strict=True)
+        candidate_stat = candidate.stat()
+        launcher_stat = launcher.lstat()
+    except OSError as exc:
+        raise ControlError("binary_recovery_failed", str(exc)) from None
+    expected_directory = Path(config.get("claude_binary_dir") or stale.parent).resolve(strict=False)
+    if not _same_path(candidate.parent, expected_directory):
+        raise ControlError(
+            "binary_recovery_failed",
+            "Stable launcher resolved outside the pinned Claude version directory.",
+        )
+    expected_kind = config.get("claude_launcher_kind")
+    actual_kind = "symlink" if launcher.is_symlink() else "file"
+    if expected_kind not in (None, actual_kind):
+        raise ControlError("binary_recovery_failed", "Stable Claude launcher kind changed.")
+    version_name = re.compile(r"^\d+\.\d+\.\d+(?:\.exe)?$")
+    if version_name.fullmatch(stale.name) and not version_name.fullmatch(candidate.name):
+        raise ControlError("binary_recovery_failed", "Recovered Claude binary is not versioned.")
+    if not stat.S_ISREG(candidate_stat.st_mode) or not os.access(candidate, os.X_OK):
+        raise ControlError("binary_recovery_failed", "Recovered Claude binary is not executable.")
+    if os.name == "nt" and candidate.suffix.casefold() != ".exe":
+        raise ControlError(
+            "binary_recovery_failed", "Recovered Claude binary must be an .exe file."
+        )
+    if os.name == "posix" and (
+        candidate_stat.st_uid != os.getuid()
+        or launcher_stat.st_uid != os.getuid()
+        or candidate_stat.st_mode & 0o022
+    ):
+        raise ControlError(
+            "binary_recovery_failed",
+            "Recovered Claude launcher and binary must be owned by this user and not writable by others.",
+        )
+    if os.name == "posix":
+        for start in (launcher.parent, candidate.parent):
+            for directory in (start, *start.parents):
+                info = directory.stat()
+                group_writable = bool(info.st_mode & 0o020)
+                if (
+                    info.st_uid not in (0, os.getuid())
+                    or info.st_mode & 0o002
+                    or (group_writable and not _private_group(info.st_gid))
+                ):
+                    raise ControlError(
+                        "binary_recovery_failed",
+                        "Claude launcher directories must not be writable by other users.",
+                    )
+                if info.st_uid == os.getuid() and not info.st_mode & 0o077:
+                    break
+    try:
+        from .runner import child_environment
+
+        before = binary_identity(candidate)
+        version = subprocess.run(
+            [str(candidate), "--version"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            cwd=candidate.parent,
+            env=child_environment(),
+        )
+        after = binary_identity(candidate)
+    except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
+        raise ControlError("binary_recovery_failed", str(exc)) from None
+    if version.returncode != 0 or not version.stdout.strip() or before != after:
+        raise ControlError(
+            "binary_recovery_failed", "Recovered Claude binary failed its stable version probe."
+        )
+    return launcher, candidate, version.stdout.strip()
 
 
 def _translate(function):
@@ -131,7 +251,9 @@ class Store:
         identity = host_identity()
         principal = principal_identity()
         directory = private_dir(path)
-        binary = Path(claude_bin).expanduser().resolve(strict=True)
+        launcher_path = _launcher_path(claude_bin)
+        binary = launcher_path.resolve(strict=True)
+        launcher = str(launcher_path) if launcher_path.is_symlink() else None
         if not binary.is_file() or not os.access(binary, os.X_OK):
             raise ControlError("invalid_binary", "Claude executable must be an executable file.")
         allowed = sorted({str(Path(p).expanduser().resolve(strict=True)) for p in roots})
@@ -156,6 +278,9 @@ class Store:
                 platform=_host.HOST.name,
                 principal_id=principal,
                 claude_bin=str(binary),
+                claude_launcher=launcher,
+                claude_launcher_kind="symlink" if launcher else None,
+                claude_binary_dir=str(binary.parent),
                 allowed_roots=allowed,
                 max_parallel=max_parallel,
                 max_queued=max_queued,
@@ -196,8 +321,90 @@ class Store:
         check_host_and_principal(self.config)
         for name in ("config.json", "state.sqlite3", "runs"):
             verify_private_entry(self.path / name)
+        self._seed_legacy_launcher()
+        self._recover_missing_binary()
         with self.db():
             pass
+
+    def _unfinished_controller_work(self, db):
+        active = db.execute(
+            f"SELECT count(*) FROM runs WHERE status IN ({','.join('?' for _ in ACTIVE)})",
+            ACTIVE,
+        ).fetchone()[0]
+        commands = 0
+        if db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='workspace_commands'"
+        ).fetchone():
+            commands = db.execute(
+                "SELECT count(*) FROM workspace_commands c "
+                "LEFT JOIN workspace_receipts r USING(run_id,seq) WHERE r.run_id IS NULL"
+            ).fetchone()[0]
+        return active + commands
+
+    def _seed_legacy_launcher(self):
+        if "claude_launcher" in self.config or not Path(self.config["claude_bin"]).is_file():
+            return
+        launcher = _canonical_claude_launcher(self.config["claude_bin"])
+        if launcher is None or not launcher.is_symlink():
+            return
+        try:
+            if launcher.resolve(strict=True) != Path(self.config["claude_bin"]).resolve(
+                strict=True
+            ):
+                return
+        except OSError:
+            return
+        with file_lock(self.path / "lifecycle.lock", exclusive=True):
+            current = json.loads((self.path / "config.json").read_text(encoding="utf-8"))
+            if "claude_launcher" in current or current["claude_bin"] != self.config["claude_bin"]:
+                self.config = current
+                return
+            with closing(sqlite3.connect(self.path / "state.sqlite3")) as db:
+                if self._unfinished_controller_work(db):
+                    return
+            current.update(
+                claude_launcher=str(launcher.absolute()),
+                claude_launcher_kind="symlink",
+                claude_binary_dir=str(Path(current["claude_bin"]).parent),
+            )
+            write_json(self.path / "config.json", current)
+            self.config = current
+
+    def _recover_missing_binary(self):
+        binary = Path(self.config["claude_bin"])
+        if binary.is_file() and os.access(binary, os.X_OK):
+            return
+        with file_lock(self.path / "lifecycle.lock", exclusive=True):
+            config_path = self.path / "config.json"
+            current = json.loads(config_path.read_text(encoding="utf-8"))
+            check_host_and_principal(current)
+            configured = Path(current["claude_bin"])
+            if configured.is_file() and os.access(configured, os.X_OK):
+                self.config = current
+                return
+            launcher, candidate, version = _trusted_recovery_candidate(current)
+            with closing(sqlite3.connect(self.path / "state.sqlite3")) as db:
+                unfinished = self._unfinished_controller_work(db)
+            if unfinished:
+                raise ControlError(
+                    "binary_recovery_busy",
+                    "Claude binary changed while controller work is active; finish or reconcile it first.",
+                )
+            previous = str(configured)
+            current.update(
+                claude_bin=str(candidate),
+                claude_launcher=str(launcher),
+                claude_binary_dir=str(candidate.parent),
+                claude_binary_recovery={
+                    "previous": previous,
+                    "current": str(candidate),
+                    "launcher": str(launcher),
+                    "version": version,
+                    "recovered_at": time.time(),
+                },
+            )
+            write_json(config_path, current)
+            self.config = current
 
     def _read_role_defaults(self):
         settings = self.path / "role-models.json"
@@ -454,6 +661,32 @@ class Store:
         with self.db(write=True) as db:
             return self.reserve_in(db, **options)
 
+    def _assert_resume_binary(self, run):
+        invocation_path = self.run_dir(run["id"]) / "invocation.json"
+        try:
+            invocation = json.loads(invocation_path.read_text(encoding="utf-8"))
+            argv = invocation.get("argv")
+            expected = invocation.get("binary_identity")
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ControlError(
+                "session_binary_unknown",
+                f"Cannot verify the Claude binary used by the previous turn: {exc}",
+            ) from None
+        try:
+            current = list(binary_identity(self.config["claude_bin"]))
+        except OSError as exc:
+            raise ControlError("session_binary_unknown", str(exc)) from None
+        compatible = (
+            expected == current
+            if isinstance(expected, list)
+            else (isinstance(argv, list) and bool(argv) and argv[0] == self.config["claude_bin"])
+        )
+        if not compatible:
+            raise ControlError(
+                "session_binary_changed",
+                "Claude binary changed since the previous turn; use an explicit session restart.",
+            )
+
     def reserve_in(
         self,
         db,
@@ -566,6 +799,8 @@ class Store:
                     (session["id"],),
                 ).fetchone()
             )
+            if not restart and not resume_unstarted:
+                self._assert_resume_binary(latest)
             if latest["status"] == "completed" and not self.result_valid(latest):
                 db.execute(
                     "UPDATE runs SET status='failed',reason='result_integrity' WHERE id=?",

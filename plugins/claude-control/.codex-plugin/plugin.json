@@ -1,6 +1,6 @@
 {
   "name": "claude-control",
-  "version": "0.25.0",
+  "version": "0.26.0",
   "description": "Manage persistent local Claude sessions from Codex with explicit models and verified results.",
   "author": {
     "name": "kimstitute",
@@ -10,7 +10,7 @@
   "interface": {
     "displayName": "Codex Control Claude",
     "shortDescription": "Manage versioned local Claude sessions by role.",
-    "longDescription": "Manage and monitor local Claude sessions, task revisions, queues, bounded review workflows and explicit plan-edit-review compositions. Configure versioned models per role and inspect the signed-in Claude account's model catalog without exposing account identity. The Rust viewer provides a Rataflow-backed live multi-agent graph, mouse session picker, focus/recent/all scopes, semantic zoom, minimap, replay controls, Safe and opt-in Local Detail inspector tabs, controller-operation and tool history, prompt navigation, search, filters and headless full-tree output. Opt-in native Claude background terminals add bounded live output, single-operator attach and a separate user-operated project shell while default observation exports remain content-free. The portable Python TUI remains available for account limits and fallback use. Workspace policies add controller-mediated edits, isolated named checks and frozen results for Codex approval. Linux and Windows are supported; Windows session control uses a pinned native helper and Windows workspaces use WSL2 with Bubblewrap. Native Claude tools and cross-host dispatch remain disabled.",
+    "longDescription": "Manage and monitor local Claude sessions, task revisions, queues, bounded review workflows and explicit plan-edit-review compositions. Configure versioned models per role and inspect the signed-in Claude account's model catalog without exposing account identity. The Rust viewer provides a Rataflow-backed live multi-agent graph, mouse session picker, focus/recent/all scopes, semantic zoom, minimap, replay controls, Safe and opt-in Local Detail inspector tabs, controller-operation and tool history, prompt navigation, search, filters and headless full-tree output. Opt-in native Claude background terminals add bounded live output, exact transcript token accounting, automatic transcript promotion, single-operator attach and a separate user-operated project shell while default observation exports remain content-free. A pinned stable launcher recovers new work after Claude self-updates without weakening exact-binary checks for existing sessions. The portable Python TUI remains available for account limits and fallback use. Workspace policies add controller-mediated edits, isolated named checks and frozen results for Codex approval. Linux and Windows are supported; Windows session control uses a pinned native helper and Windows workspaces use WSL2 with Bubblewrap. Native Claude tools and cross-host dispatch remain disabled.",
     "developerName": "kimstitute",
     "category": "Productivity",
     "capabilities": [

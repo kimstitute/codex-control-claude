@@ -10,6 +10,7 @@ import hashlib
 import heapq
 import json
 import math
+import os
 import time
 from collections import deque
 from datetime import datetime
@@ -88,13 +89,19 @@ def _files(root):
     try:
         if not root.is_dir():
             return [], {"truncated": False, "read_errors": 0}
+        resolved_root = root.resolve(strict=True)
     except OSError:
         return [], {"truncated": False, "read_errors": 1}
     files, read_errors, discovered = [], 0, 0
     try:
         for path in root.rglob("*.jsonl"):
             try:
-                if not path.is_file():
+                resolved = path.resolve(strict=True)
+                if (
+                    path.is_symlink()
+                    or not resolved.is_relative_to(resolved_root)
+                    or not path.is_file()
+                ):
                     continue
                 modified = path.stat().st_mtime
             except OSError:
@@ -229,6 +236,145 @@ def _agent(owner, session_id):
     }
 
 
+def _usage_count(value):
+    return (
+        value
+        if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 2**53
+        else None
+    )
+
+
+def _claude_usage(rows, coverage):
+    fields = (
+        "input_tokens",
+        "cache_creation_input_tokens",
+        "cache_read_input_tokens",
+        "output_tokens",
+        "thinking_tokens",
+    )
+    responses = {}
+    skipped = {"unkeyed": 0, "invalid": 0, "conflicting": 0, "synthetic": 0}
+    missing = {name: 0 for name in fields}
+    for row in rows:
+        if row.get("type") != "assistant":
+            continue
+        message = row.get("message") if isinstance(row.get("message"), dict) else {}
+        usage = message.get("usage")
+        if not isinstance(usage, dict):
+            continue
+        request_id, message_id = row.get("requestId"), message.get("id")
+        if not all(isinstance(value, str) and value for value in (request_id, message_id)):
+            skipped["unkeyed"] += 1
+            continue
+        model = message.get("model")
+        if model == "<synthetic>":
+            skipped["synthetic"] += 1
+            continue
+        if not isinstance(model, str) or not model:
+            model = "unknown"
+        values = {}
+        invalid = False
+        for name in (
+            "input_tokens",
+            "cache_creation_input_tokens",
+            "cache_read_input_tokens",
+            "output_tokens",
+        ):
+            if name not in usage:
+                missing[name] += 1
+                values[name] = 0
+                continue
+            values[name] = _usage_count(usage.get(name))
+            invalid = invalid or values[name] is None
+        details = (
+            usage.get("output_tokens_details")
+            if isinstance(usage.get("output_tokens_details"), dict)
+            else {}
+        )
+        if "thinking_tokens" not in details:
+            missing["thinking_tokens"] += 1
+            values["thinking_tokens"] = 0
+        else:
+            values["thinking_tokens"] = _usage_count(details.get("thinking_tokens"))
+            invalid = invalid or values["thinking_tokens"] is None
+        if invalid:
+            skipped["invalid"] += 1
+            continue
+        cost = row.get("costUSD")
+        cost = (
+            float(cost)
+            if isinstance(cost, (int, float))
+            and not isinstance(cost, bool)
+            and math.isfinite(cost)
+            and cost >= 0
+            else None
+        )
+        key = (request_id, message_id)
+        current = responses.get(key)
+        candidate = {"model": model, "values": values, "cost": cost}
+        if current is None:
+            responses[key] = candidate
+            continue
+        stable = ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
+        if current["model"] != model or any(
+            current["values"][name] != values[name] for name in stable
+        ):
+            skipped["conflicting"] += 1
+            continue
+        for name in ("output_tokens", "thinking_tokens"):
+            if values[name] < current["values"][name]:
+                skipped["conflicting"] += 1
+            else:
+                current["values"][name] = values[name]
+        if cost is not None:
+            current["cost"] = cost
+    if not responses:
+        return None
+    totals = {name: 0 for name in fields}
+    by_model = {}
+    for item in responses.values():
+        model_totals = by_model.setdefault(item["model"], {name: 0 for name in fields})
+        for name in fields:
+            totals[name] += item["values"][name]
+            model_totals[name] += item["values"][name]
+    costs = [item["cost"] for item in responses.values()]
+    reported_cost = all(cost is not None for cost in costs)
+    complete = (
+        not any(skipped.values())
+        and not any(missing.values())
+        and not any(coverage.get(name) for name in ("malformed", "truncated", "read_error"))
+    )
+    return {
+        "source": "claude_transcript",
+        "complete": complete,
+        "responses": len(responses),
+        "totals": totals,
+        "by_model": by_model,
+        "fields_missing": {name: count for name, count in missing.items() if count},
+        "skipped": skipped,
+        "cost": {
+            "status": "reported" if reported_cost else "unavailable",
+            "usd": sum(costs) if reported_cost else None,
+        },
+    }
+
+
+def _usage_telemetry(local_usage):
+    totals = local_usage["totals"]
+    return {
+        "usage": {
+            "input_tokens": totals["input_tokens"],
+            "cache_creation_input_tokens": totals["cache_creation_input_tokens"],
+            "cache_read_input_tokens": totals["cache_read_input_tokens"],
+            "output_tokens": totals["output_tokens"],
+            "output_tokens_details": {"thinking_tokens": totals["thinking_tokens"]},
+        },
+        "provider_cost_usd": local_usage["cost"]["usd"],
+        "cost_status": local_usage["cost"]["status"],
+        "complete": local_usage["complete"],
+    }
+
+
 def _touch(agent, timestamp):
     agent["started"] = timestamp if agent["started"] is None else min(agent["started"], timestamp)
     agent["finished"] = max(agent["finished"] or timestamp, timestamp)
@@ -295,6 +441,9 @@ def _parse_claude(path, rows, detail):
         agent["parent_key"] = f"session:{root_session_id}"
         agent["role"] = "subagent"
     tools, events = [], []
+    local_usage = _claude_usage(rows, detail)
+    if local_usage is not None:
+        agent["local_usage"] = local_usage
     for index, row in enumerate(rows):
         kind = _text(row.get("type"), 128)
         timestamp = _stamp(row.get("timestamp"), float(index))
@@ -617,9 +766,7 @@ def catalog(*, claude_root=None, codex_root=None, store=None, source="all"):
         stats["malformed"] += detail["malformed"]
         stats["read_errors"] += detail["read_errors"]
         stats["truncated"] = stats["truncated"] or detail["truncated"]
-    known_claude = {
-        item.get("session_id") for item in sessions if item.get("provider") == "claude"
-    }
+    known_claude = {item.get("session_id") for item in sessions if item.get("provider") == "claude"}
     for terminal in terminal_by_session.values():
         if terminal["session_id"] in known_claude:
             continue
@@ -886,9 +1033,7 @@ def _terminal_detail(store, selector):
         "title": terminal.get("name") or "Claude terminal",
         "project": terminal.get("cwd"),
         "mode": "background terminal",
-        "permission_mode": "dontAsk / tools disabled"
-        if terminal.get("safe_profile")
-        else None,
+        "permission_mode": "dontAsk / tools disabled" if terminal.get("safe_profile") else None,
         "last_prompt": None,
         "queued_ops": 0,
         "file_edits": 0,
@@ -915,9 +1060,7 @@ def _with_terminal(store, detail):
     if not session_id:
         return detail
     try:
-        detail["source"]["terminal"] = terminal_cli.snapshot(
-            store, session_id, include_output=True
-        )
+        detail["source"]["terminal"] = terminal_cli.snapshot(store, session_id, include_output=True)
     except ControlError as error:
         detail["source"]["terminal"] = {
             "session_id": session_id,
@@ -939,6 +1082,28 @@ def _detail(store, selector, claude_root, codex_root):
         root = codex_root or Path.home() / ".codex" / "sessions"
         return _find_native(selector, "codex", root)
     return None
+
+
+def _promote_terminal_selector(selector, claude_root, terminal=None):
+    if not selector.startswith("terminal:"):
+        return selector
+    session_id = selector.split(":", 1)[1]
+    root = claude_root or Path.home() / ".claude" / "projects"
+    sessions, _ = _native_catalog("claude", root)
+    matches = [item["selector"] for item in sessions if item["session_id"] == session_id]
+    cwd = terminal.get("cwd") if isinstance(terminal, dict) else None
+    if cwd:
+        normalized = os.path.normcase(str(Path(cwd).resolve(strict=False)))
+        matches = [
+            item["selector"]
+            for item in sessions
+            if item["session_id"] == session_id
+            and (
+                not item.get("project")
+                or os.path.normcase(str(Path(item["project"]).resolve(strict=False))) == normalized
+            )
+        ]
+    return matches[0] if len(matches) == 1 else selector
 
 
 def _local_events(detail):
@@ -993,6 +1158,8 @@ def _local_events(detail):
             "model": agent.get("model"),
             "session_id": agent.get("session_id"),
         }
+        if isinstance(agent.get("local_usage"), dict):
+            payload["telemetry"] = _usage_telemetry(agent["local_usage"])
         entries.append((started, 0, "node_created", "session", agent["agent_id"], payload))
         if agent.get("parent_key"):
             parent_id = agent["parent_key"].split(":", 1)[-1]
@@ -1113,8 +1280,21 @@ def stream(
             )
         selector = listed[0]["selector"]
     previous_graph = []
-    previous_detail = None
+    previous_detail_signature = None
+    previous_detail_snapshot = None
     while True:
+        terminal = (
+            previous_detail_snapshot["source"].get("terminal")
+            if isinstance(previous_detail_snapshot, dict)
+            else None
+        )
+        promoted_selector = (
+            _promote_terminal_selector(selector, claude_root, terminal)
+            if previous_detail_snapshot is not None
+            else selector
+        )
+        promoted = promoted_selector != selector
+        selector = promoted_selector
         detail = _detail(store, selector, claude_root, codex_root)
         if detail is None:
             raise ControlError("session_not_found", "The selected local session is unavailable.")
@@ -1125,15 +1305,20 @@ def stream(
         prefix = (
             len(graph) >= len(previous_graph) and graph[: len(previous_graph)] == previous_graph
         )
-        if previous_graph and not prefix:
-            yield {"type": "CLAUDE_CONTROL_DETAIL_RESET", "version": 1, "reason": "source_replaced"}
+        if previous_graph and (promoted or not prefix):
+            yield {
+                "type": "CLAUDE_CONTROL_DETAIL_RESET",
+                "version": 1,
+                "reason": "source_promoted" if promoted else "source_replaced",
+            }
             yield from graph
         elif len(graph) > len(previous_graph):
             yield from graph[len(previous_graph) :]
-        if detail_signature != previous_detail:
+        if detail_signature != previous_detail_signature:
             yield {"type": DETAIL_TYPE, "version": 1, **detail}
         previous_graph = graph
-        previous_detail = detail_signature
+        previous_detail_signature = detail_signature
+        previous_detail_snapshot = detail
         if not follow:
             return
         time.sleep(max(0.05, min(10.0, poll_seconds)))

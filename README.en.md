@@ -99,6 +99,15 @@ or click **SHELL** for a separate user-operated shell in the authorized project.
 Existing headless `-p` runs cannot be attached retroactively, and terminal text
 never enters default observation exports.
 
+Version 0.26 deduplicates exact interactive transcript input, cache-write,
+cache-read, output and thinking tokens by response identity. Cost remains
+`unavailable` unless Claude reports it directly. A viewer that started from a
+transcript-less `terminal:` source automatically promotes to the unique
+transcript-aware `claude:` source without changing session identity. If a Claude
+self-update removes the pinned version path, a validated stable launcher repairs
+the path for new work while existing headless conversations retain and enforce
+their original binary identity.
+
 ## Choose the right workflow
 
 | Goal | Use | What it adds |
@@ -284,6 +293,11 @@ python3 "$HOME/plugins/claude-control/scripts/claude_control_cli.py" init \
 
 Repeat `--allow-root` to authorize several roots at initialization. Paths passed
 later as assignment projects must be inside one of these roots.
+Prefer a stable installer-managed path such as `~/.local/bin/claude` for
+`--claude-bin`. The controller still pins the resolved version binary for each
+launch. Only when that file disappears does it validate the same launcher and a
+sibling version target before atomically repairing the path for new work.
+Existing conversations are never silently resumed with the recovered binary.
 
 Verify the controller and login:
 

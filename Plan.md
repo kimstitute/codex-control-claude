@@ -1,6 +1,6 @@
 # OMX 기능 도입 계획
 
-작성: 2026-09-20 · 갱신: 2026-09-25 · 기준: v0.25.0 · 상태: P1–P5, model catalog, Local Detail 및 대화형 terminal 구현
+작성: 2026-09-20 · 갱신: 2026-09-25 · 기준: v0.26.0 · 상태: P1–P5, model catalog, Local Detail, 대화형 terminal 및 self-update 복구 구현
 
 이 문서는 도입 당시의 설계와 단계별 통과 조건을 보존한다. 단계별 구현 상태는 문서 끝의 진행 기록을 따른다. P5는 기존 Claude 도구 비활성화를 유지하는 컨트롤러 작업 요청 방식으로 구체화했다.
 
@@ -880,3 +880,21 @@ manifest JSON과 `git diff --check`가 통과했다. 실제 계정 상태 이관
   한도를 넘으면 ownership metadata를 잘라내지 않고 명시적으로 실패한다.
 - `terminal stop`은 명시적 호출만 허용한다. 종료, attach와 shell은 자동 재시도하지 않으며
   기존 interactive session 중 native background ID가 없는 항목은 관측만 하고 attach하지 않는다.
+
+## 35. 대화형 사용량·source 승격·Claude self-update 복구 — v0.26.0
+
+- Claude transcript의 assistant usage는 `(requestId, message.id)`를 응답 identity로 사용한다.
+  같은 응답의 streaming row는 input/cache 값이 일치해야 하고 output/thinking은 증가하는
+  최신 값만 채택한다. 누락, 잘못된 값, 충돌, synthetic row와 bounded coverage를 구분해
+  `complete` 여부를 계산한다. 비용은 transcript의 `costUSD`가 모든 응답에 있을 때만 합산한다.
+- Local Detail의 terminal-only stream은 같은 UUID와 선택 project에 대응하는 transcript가
+  정확히 하나 생겼을 때만 한 방향으로 승격한다. graph reset 뒤 같은 session ID로 전체
+  transcript graph를 다시 투영하므로 viewer를 재시작하거나 agent card를 복제하지 않는다.
+- 초기화는 stable launcher와 실제 version binary directory를 함께 기록한다. 고정 binary가
+  사라졌을 때 launcher kind, 동일 version directory, 파일/디렉터리 소유권, 실행 권한과
+  `--version`을 검증하고 active/unknown run과 미완료 workspace command가 없을 때만 config를
+  원자 교체한다. 기존 store는 canonical launcher가 현재 binary를 정확히 가리킬 때만 hint를
+  보강한다.
+- 모든 headless invocation은 binary identity를 저장한다. 복구 뒤 새 세션은 새 binary를 쓰지만
+  기존 대화 재개는 identity가 달라지면 `session_binary_changed`로 거부하며 explicit restart만
+  허용한다. schema 15와 content-free observation/AG-UI/OTLP/headless 계약은 유지한다.

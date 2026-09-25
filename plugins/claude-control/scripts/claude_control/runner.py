@@ -354,6 +354,7 @@ def run_worker(state_dir, run_id):
                     cwd=project,
                     requested_model=session["model"],
                     backend_session_id=row["backend_id"],
+                    binary_identity=list(binary_identity(store.config["claude_bin"])),
                     **({"requested_effort": effort} if effort is not None else {}),
                 ),
             )
@@ -466,8 +467,10 @@ def run_worker(state_dir, run_id):
             write_json(directory / "result.json", parsed)
             result_sha256 = hashlib.sha256((directory / "result.json").read_bytes()).hexdigest()
             (directory / "response.txt").write_text(parsed["response"])
-            status = "unknown" if uncertain else (
-                "cancelled" if reason == "cancel_requested" else "failed"
+            status = (
+                "unknown"
+                if uncertain
+                else ("cancelled" if reason == "cancel_requested" else "failed")
             )
             if parsed["validated_success"] and not uncertain:
                 status = "completed"

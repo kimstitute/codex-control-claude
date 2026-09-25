@@ -97,6 +97,13 @@ marker filter도 지원합니다. AG-UI, OTLP, `--inspect`, `--tree`에는 이 �
 있습니다. `s` 또는 **SHELL**은 허용된 project에 별도 사용자 shell을 엽니다. 기존
 비대화형 `-p` 실행은 소급 attach하지 않으며 terminal 본문은 기본 관측 export에 포함하지 않습니다.
 
+0.26 버전은 대화형 Claude transcript의 input·cache write/read·output·thinking token을
+응답 ID별로 중복 없이 집계하고, provider 비용이 없으면 추정하지 않고 `unavailable`로
+표시합니다. 처음에는 transcript가 없던 `terminal:` 관측도 파일이 생기면 같은 session
+identity를 유지한 채 `claude:` 상세 관측으로 자동 승격합니다. Claude self-update로 고정된
+버전 경로가 사라지면 검증된 stable launcher로 새 작업 경로를 복구하되, 기존 headless
+대화의 binary identity는 바꾸지 않아 재개 시 명시적으로 거부합니다.
+
 ## 어떤 명령을 선택해야 하나요?
 
 | 원하는 일 | 사용할 기능 | 추가되는 보장 |
@@ -282,6 +289,10 @@ python3 "$HOME/plugins/claude-control/scripts/claude_control_cli.py" init \
 
 여러 프로젝트 루트를 허용하려면 초기화할 때 `--allow-root`를 반복합니다.
 이후 assignment의 `project`는 허용된 루트 안에 있어야 합니다.
+`--claude-bin`에는 가능하면 `~/.local/bin/claude`처럼 설치기가 갱신하는 stable symlink를
+지정하세요. 컨트롤러는 실제 version binary를 고정해 실행하고, 그 파일이 사라진 경우에만
+동일한 versions directory를 가리키는 launcher를 검증해 새 작업용 경로를 원자적으로 복구합니다.
+기존 대화는 자동으로 새 binary에 재개되지 않습니다.
 
 설치, 로그인과 격리 환경을 확인합니다.
 
