@@ -1,8 +1,9 @@
 # 실시간 에이전트 모니터
 
-`monitor`는 현재 호스트의 claude-control 상태를 읽기 전용으로 보여줍니다.
-작업을 시작하거나 다음 단계로 진행시키지 않으며, 재시도·중단·승인·apply도
-수행하지 않습니다. 두 화면을 제공합니다.
+`monitor`의 관측·재생 경로는 현재 호스트의 claude-control 상태를 읽기 전용으로
+보여주며 작업 시작, 재시도·중단·승인·apply를 수행하지 않습니다. Local Detail에서
+명시적으로 ATTACH나 SHELL을 선택하면 viewer를 잠시 벗어나 사용자가 직접 운영하는
+별도 terminal로 전환됩니다. 두 화면을 제공합니다.
 
 - `monitor viewer`: Rust/Ratatui 기반 spatial graph와 과거 재생 화면
 - `monitor tui`: Python 표준 라이브러리 기반 fallback과 provider quota 화면
@@ -62,7 +63,9 @@ Codex/Claude 프로세스가 기계 출력용 `NO_COLOR=1`을 설정해도 대�
 | 속도 chip 클릭 | 0.25× → 0.5× → 1× → 2× → 4× → 8× 순환 |
 | `GAP` chip 클릭 | 고정 간격과 기록 시각 기반 압축 재생 전환 |
 | `M:*` chip 클릭 | all, prompt, tool, failure, agent marker filter 순환 |
-| Inspector tab 클릭 | Overview, Provenance, Tools, Activity 전환 |
+| Inspector tab 클릭 | Overview, Provenance, Tools, Activity, Terminal 전환 |
+| `ATTACH` 클릭 | 선택한 native background agent terminal에 단독 조작자로 연결 |
+| `SHELL` 클릭 | 선택 소스의 허용된 project에 별도 사용자 shell 열기 |
 | 우클릭 | inspector 닫기 |
 
 | 키 | 동작 |
@@ -82,6 +85,7 @@ Codex/Claude 프로세스가 기계 출력용 `NO_COLOR=1`을 설정해도 대�
 | `o`, `f`, `r`, `c` | overview, 최신 작업 follow, 재배치, 선택 카드 중앙 정렬 |
 | `a` | `focus` → `recent` → `all` graph scope 순환 |
 | `HJKL`, `+`, `-`, `0` | manual pan, zoom, zoom 초기화 |
+| `t`, `s` | 선택한 background agent에 attach / 별도 project shell 열기 |
 | `x`, `i`, `?`, `q` | mouse capture 전환, session 정보, 도움말, 종료 |
 
 viewer는 `focus` scope의 fitted overview로 시작합니다. Rataflow가 node scratch-buffer
@@ -101,14 +105,23 @@ prompt, reasoning, request/response body, 결과, hash와 error text를 표시�
 `named_check`, `unknown`의 닫힌 집합으로 정규화합니다.
 
 Local Detail을 켠 경우 Inspector는 **Overview**, **Provenance**, **Tools**,
-**Activity** 탭으로 나뉩니다. 각각 safe run/operation 정보, bounded prompt와
-response/reasoning, tool 상태·duration·요약, prompt/tool/spawn/failure 시각 이력을
-보여줍니다. `partial / bounded`는 malformed row 또는 byte/record 한도로 과거 일부가
+**Activity**, **Terminal** 탭으로 나뉩니다. 앞의 네 탭은 safe run/operation 정보,
+bounded prompt와 response/reasoning, tool 상태·duration·요약,
+prompt/tool/spawn/failure 시각 이력을 보여줍니다. Terminal 탭은 `terminal start`로 만든
+native background session의 bounded 최근 화면, 상태와 attach 가능 여부를 표시합니다.
+`partial / bounded`는 malformed row 또는 byte/record 한도로 과거 일부가
 생략됐다는 뜻입니다. 이 내용은 메모리에서만 합성하며 SQLite observation 원장,
 AG-UI, OTLP, `--inspect`, `--tree`에 기록하지 않습니다.
 부모·자식 agent, prompt/응답, tool 상태는 기록 시각에 맞춰 재생됩니다. 선택한
 cursor 뒤에 끝난 tool은 `pending`으로 보이며, transcript 침묵만으로 agent 완료를
 추정하지 않습니다.
+
+ATTACH는 viewer alternate screen을 잠시 닫고 Claude Code의 네이티브 화면을 그대로
+연결합니다. 한 session에는 한 명의 로컬 조작자만 붙을 수 있으며 `Ctrl+Z`로 돌아오면
+viewer가 복구됩니다. SHELL은 agent의 tool 권한을 늘리거나 명령을 주입하지 않고
+허용된 project에서 별도 사용자 shell을 엽니다. 이 shell의 명령은 사용자의 직접 동작이며
+controller workspace 격리와 승인 원장을 거치지 않습니다. 기존 headless `-p` run과
+native background ID가 없는 interactive session은 관측할 수 있어도 attach할 수 없습니다.
 
 headless `--inspect`는 기존 v1 contract를 유지하며 fidelity, cursor,
 node/edge/agent 수와 확정 output token 합계를 JSON으로 출력합니다. schema 15에서

@@ -8,6 +8,7 @@ use claude_control_viewer::graph::project;
 use claude_control_viewer::headless::{inspect_v1, render_tree};
 use claude_control_viewer::model::{DetailStore, Timeline};
 use claude_control_viewer::picker::{SessionChoice, choose};
+use claude_control_viewer::ui::TerminalLauncher;
 use crossterm::style::force_color_output;
 #[derive(Debug)]
 struct Args {
@@ -84,12 +85,21 @@ fn run() -> Result<()> {
         return Ok(());
     }
 
+    let launcher = if args.stream_file.is_some() {
+        None
+    } else {
+        Some(TerminalLauncher {
+            python: args.python.clone().context("--python is required")?,
+            cli: args.cli.clone().context("--cli is required")?,
+            state_dir: args.state_dir.clone(),
+        })
+    };
     let feed = if args.stream_file.is_some() {
         None
     } else {
         Some(Feed::spawn(&feed_config(&args)?)?)
     };
-    claude_control_viewer::ui::run(timeline, feed, detail)
+    claude_control_viewer::ui::run(timeline, feed, detail, launcher)
 }
 
 fn parse_args() -> Result<Args> {
@@ -344,6 +354,14 @@ fn catalog_sessions(args: &Args) -> Result<Vec<SessionChoice>> {
                     .and_then(serde_json::Value::as_u64)
                     .unwrap_or(0),
                 events: item.get("events").and_then(serde_json::Value::as_u64),
+                terminal_attachable: item
+                    .get("terminal_attachable")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false),
+                terminal_status: item
+                    .get("terminal_status")
+                    .and_then(serde_json::Value::as_str)
+                    .map(ToOwned::to_owned),
             })
         })
         .collect())

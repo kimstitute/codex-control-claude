@@ -19,6 +19,7 @@ from . import workspace_files as files
 from . import workspace_sandbox as sandbox
 from .assignments import MAX_BYTES
 from .model_settings import model_matches
+from .platform import project_operator_lease
 from .platform.locks import file_lock
 from .runner import launch_worker
 from .store import ACTIVE, ControlError, alive, boot_id, pid_namespace, private_dir, proc_identity
@@ -962,40 +963,7 @@ def _verify_applied_source(repo, base_commit, manifest, frozen_tree):
                 )
 
 
-def apply(store, workspace_id, operation_id):
-    """Apply one intact frozen patch to its clean source at the pinned base commit."""
-    if store.config["schema"] < 12:
-        raise ControlError("migration_required", "Workspace apply requires schema 12.")
-    frozen = export(store, workspace_id)
-    manifest = frozen["manifest"]
-    if not manifest["changes"]:
-        raise ControlError("workspace_no_changes", "Frozen workspace has no changes to apply.")
-    with store.db() as db:
-        row = _get(db, workspace_id)
-        intent = {
-            "kind": "workspace_apply",
-            "workspace": workspace_id,
-            "source_repo": row["source_repo"],
-            "base_commit": row["base_commit"],
-            "patch_sha256": manifest["patch_sha256"],
-            "manifest_sha256": frozen["manifest_sha256"],
-        }
-        fingerprint, prior = tasks._operation(db, operation_id, intent)
-        if prior:
-            saved = db.execute(
-                "SELECT * FROM workspace_applications WHERE operation_id=?", (operation_id,)
-            ).fetchone()
-            if not saved:
-                raise ControlError("workspace_apply_unknown", "Apply reservation is incomplete.")
-            return {**dict(saved), "deduplicated": True}
-        existing = db.execute(
-            "SELECT * FROM workspace_applications WHERE workspace_id=?", (workspace_id,)
-        ).fetchone()
-        if existing:
-            raise ControlError(
-                "workspace_already_applied", "Frozen workspace already has an apply attempt."
-            )
-        repo, base_commit = row["source_repo"], row["base_commit"]
+def _apply_locked(store, workspace_id, operation_id, frozen, manifest, intent, repo, base_commit):
     _preflight_apply(repo, base_commit, manifest)
     if _source_head(repo) != base_commit:
         raise ControlError(
@@ -1056,6 +1024,59 @@ def apply(store, workspace_id, operation_id):
             "SELECT * FROM workspace_applications WHERE workspace_id=?", (workspace_id,)
         ).fetchone()
     return {**dict(saved), "deduplicated": False}
+
+
+def apply(store, workspace_id, operation_id):
+    """Apply one intact frozen patch to its clean source at the pinned base commit."""
+    if store.config["schema"] < 12:
+        raise ControlError("migration_required", "Workspace apply requires schema 12.")
+    frozen = export(store, workspace_id)
+    manifest = frozen["manifest"]
+    if not manifest["changes"]:
+        raise ControlError("workspace_no_changes", "Frozen workspace has no changes to apply.")
+    with store.db() as db:
+        row = _get(db, workspace_id)
+        intent = {
+            "kind": "workspace_apply",
+            "workspace": workspace_id,
+            "source_repo": row["source_repo"],
+            "base_commit": row["base_commit"],
+            "patch_sha256": manifest["patch_sha256"],
+            "manifest_sha256": frozen["manifest_sha256"],
+        }
+        _, prior = tasks._operation(db, operation_id, intent)
+        if prior:
+            saved = db.execute(
+                "SELECT * FROM workspace_applications WHERE operation_id=?", (operation_id,)
+            ).fetchone()
+            if not saved:
+                raise ControlError("workspace_apply_unknown", "Apply reservation is incomplete.")
+            return {**dict(saved), "deduplicated": True}
+        existing = db.execute(
+            "SELECT * FROM workspace_applications WHERE workspace_id=?", (workspace_id,)
+        ).fetchone()
+        if existing:
+            raise ControlError(
+                "workspace_already_applied", "Frozen workspace already has an apply attempt."
+            )
+        repo, base_commit = row["source_repo"], row["base_commit"]
+    try:
+        with file_lock(project_operator_lease(repo), exclusive=True, blocking=False):
+            return _apply_locked(
+                store,
+                workspace_id,
+                operation_id,
+                frozen,
+                manifest,
+                intent,
+                repo,
+                base_commit,
+            )
+    except BlockingIOError:
+        raise ControlError(
+            "workspace_busy",
+            "The source project is open in an operator shell or another apply is active.",
+        ) from None
 
 
 def stop(store, workspace_id, operation_id):

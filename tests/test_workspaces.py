@@ -16,6 +16,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "plugins/claude-control/scripts"))
 
 from claude_control import messages, scheduler, task_contracts, tasks, workspace  # noqa: E402
+from claude_control.platform import project_operator_lease  # noqa: E402
+from claude_control.platform.locks import file_lock  # noqa: E402
 from claude_control.store import ControlError, Store  # noqa: E402
 from test_controller import ControllerTestCase  # noqa: E402
 
@@ -358,6 +360,26 @@ class WorkspaceTests(ControllerTestCase):
             workspace.status(Store(self.state), created["id"])["application"]["state"],
             "applied",
         )
+
+    def test_apply_refuses_to_race_an_operator_shell(self) -> None:
+        fixture = {
+            "workspace_operations": [
+                [{"op": "write", "path": "README.md", "content": "candidate\n"}],
+                [],
+            ]
+        }
+        created = self.create(policy=self.policy(write=["README.md"]))
+        self.bind(created, self.assignment("apply-shell-race", fixture=fixture))
+        self.assertEqual(self.run_workspace(created["id"])["state"], "finished")
+
+        with file_lock(project_operator_lease(str(self.repo)), exclusive=True, blocking=False):
+            self.assert_error(
+                "workspace_busy",
+                workspace.apply,
+                Store(self.state),
+                created["id"],
+                "apply-shell-race",
+            )
 
     def test_applied_source_uses_git_line_ending_normalization(self) -> None:
         base_commit = self.git("rev-parse", "HEAD")

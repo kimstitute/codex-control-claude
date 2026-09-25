@@ -1,11 +1,11 @@
 ---
 name: claude-control
-description: Manage multiple persistent Claude Code sessions on the current Linux or Windows host from Codex. Use for delegating supplied-text implementation, research planning, verification or critique to role-configured Claude models, performing bounded edits and checks in explicit private workspaces, inspecting managed work, and stopping or resuming an identified session.
+description: Manage multiple persistent Claude Code sessions on the current Linux or Windows host from Codex. Use for delegating supplied-text implementation, research planning, verification or critique to role-configured Claude models, performing bounded edits and checks in explicit private workspaces, inspecting managed work, stopping or resuming an identified session, and explicitly starting or attaching to a safe-profile interactive background terminal.
 ---
 
 # Claude Control
 
-Use the bundled `../../scripts/claude_control_cli.py`, resolving that path from this skill's directory. Public commands return JSON except the interactive monitors. Python 3.10+ and locally authenticated Claude Code are prerequisites; run `--help` for flags. Version 0.24 supports Linux and Windows supplied-text delegation, per-role versioned model and effort settings, a prompt-free signed-in account model catalog, JSON-schema task reports, base-hashed patch operations, one bounded format repair, reviewer vetoes, typed acceptance evidence, finite plan/edit/review compositions, routing provenance, fair multi-composition dispatch, verified scout reuse, guarded apply, telemetry, durable observation history, cursor replay, OTLP export, streaming AG-UI events and an optional mouse-driven Rataflow graph/replay viewer with focus/recent/all scopes, scrollable Safe Inspector, controller-operation history, headless full-tree output, speed control, gap compression and run-era seeking. An explicit local-only mode adds a keyboard/mouse session picker, bounded Claude/Codex transcript adapters, Provenance/Tools/Activity tabs, semantic filters, search and prompt seeking without adding transcript content to AG-UI, OTLP or headless outputs. Claude native tools and MCP are disabled, with CLI safe mode and empty setting sources. The project-hook nonexecution test passed; administrator-managed policy still applies. For proposals, supply source text and inspect returned edits. For authorized file work, read [the workspace reference](references/workspaces.md) before creating a policy. The controller executes structured read/write/patch/named-check requests on private copies; source integration remains a Codex action.
+Use the bundled `../../scripts/claude_control_cli.py`, resolving that path from this skill's directory. Public commands return JSON except the interactive monitors, terminal attach and operator shell. Python 3.10+ and locally authenticated Claude Code are prerequisites; run `--help` for flags. Version 0.25 supports Linux and Windows supplied-text delegation, per-role versioned model and effort settings, a prompt-free signed-in account model catalog, JSON-schema task reports, base-hashed patch operations, one bounded format repair, reviewer vetoes, typed acceptance evidence, finite plan/edit/review compositions, routing provenance, fair multi-composition dispatch, verified scout reuse, guarded apply, telemetry, durable observation history, cursor replay, OTLP export, streaming AG-UI events and an optional mouse-driven Rataflow graph/replay viewer with focus/recent/all scopes, scrollable Safe Inspector, controller-operation history, headless full-tree output, speed control, gap compression and run-era seeking. An explicit local-only mode adds a keyboard/mouse session picker, bounded Claude/Codex transcript adapters, Provenance/Tools/Activity/Terminal tabs, semantic filters, search, prompt seeking, bounded terminal output, single-operator attach and a separate user-operated project shell without adding transcript or terminal content to AG-UI, OTLP or headless outputs. Claude native tools and MCP are disabled, with CLI safe mode and empty setting sources. The project-hook nonexecution test passed; administrator-managed policy still applies. For proposals, supply source text and inspect returned edits. For authorized file work, read [the workspace reference](references/workspaces.md) before creating a policy. The controller executes structured read/write/patch/named-check requests on private copies; source integration remains a Codex action.
 
 ## Execution settings
 
@@ -271,6 +271,33 @@ from the append-only telemetry ledger. Use `monitor limits` for provider JSON an
 `monitor snapshot --history <1..1000> --limits` for combined bounded JSON.
 Monitoring does not refresh execution state, admit work, retry, stop, accept or
 apply anything.
+
+## Operate an explicit interactive terminal
+
+Ordinary `start`, `delegate`, `task`, `workflow`, `workspace` and `composition`
+runs remain headless and cannot be attached retroactively. Use `terminal start
+--name <label> --role <role> --project <allowed-project> --request-id <stable-id>`
+only when the user wants a directly operated agent terminal. Optional `--model`
+and `--effort` override role defaults. The terminal starts idle and the attached
+operator enters the first instruction directly, keeping prompt content out of
+process argv. The command uses Claude Code's native background PTY/ConPTY with safe mode, empty
+setting sources, empty MCP, disabled slash commands and disabled native tools.
+
+Use `terminal list/status` for content-free identity and state, `terminal logs`
+for an explicitly requested bounded sanitized screen tail, `terminal attach` for
+direct operator input, and `terminal stop` only when termination was requested.
+Attach requires a TTY and holds one nonblocking local operator lease for that exact
+session. Only safe-profile terminals created by this controller expose logs,
+attach or stop; unmanaged Claude sessions are catalog-only. Never start a
+replacement terminal to bypass a busy or unknown session.
+
+`terminal shell --project <allowed-project>` is a separate user-operated shell,
+not an agent tool or controller workspace operation. Commands entered there bypass
+workspace isolation, named checks and acceptance records. Use it only when the user
+explicitly wants direct shell control. Terminal output is sensitive local detail;
+do not copy it into the observation ledger, AG-UI, OTLP, `--inspect`, `--tree`, or
+an external service. The viewer exposes the same actions in the Local Detail
+Terminal tab with `t`/ATTACH and `s`/SHELL.
 
 ## Work in an explicit workspace
 

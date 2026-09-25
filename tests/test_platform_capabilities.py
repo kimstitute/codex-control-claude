@@ -10,7 +10,11 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "plugins/claude-control/scripts"))
 
 from claude_control import cli, monitor  # noqa: E402
-from claude_control.platform import capability_report, default_state_dir  # noqa: E402
+from claude_control.platform import (  # noqa: E402
+    capability_report,
+    default_state_dir,
+    operator_leases,
+)
 from claude_control.store import ControlError  # noqa: E402
 
 
@@ -122,6 +126,16 @@ class DefaultPathTests(unittest.TestCase):
     def test_windows_requires_a_user_local_base(self):
         with self.assertRaises(ValueError):
             default_state_dir({}, os_name="nt")
+
+    def test_operator_lease_roots_are_store_independent_and_user_local(self):
+        with mock.patch.object(operator_leases, "private_dir", side_effect=Path):
+            self.assertEqual(
+                operator_leases.root({"LOCALAPPDATA": "C:/Local"}, "nt"),
+                Path("C:/Local/codex-control-claude/operator-leases"),
+            )
+            posix = operator_leases.root({}, "posix")
+        self.assertEqual(posix.parent, Path("/tmp"))
+        self.assertIn("operator-leases", posix.name)
 
 
 class CliAndMonitorTests(unittest.TestCase):

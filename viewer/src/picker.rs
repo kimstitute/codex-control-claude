@@ -30,6 +30,8 @@ pub struct SessionChoice {
     pub live: bool,
     pub agents: u64,
     pub events: Option<u64>,
+    pub terminal_attachable: bool,
+    pub terminal_status: Option<String>,
 }
 
 pub fn choose(sessions: &[SessionChoice]) -> Result<Option<String>> {
@@ -109,6 +111,14 @@ fn choose_inner(sessions: &[SessionChoice]) -> Result<Option<String>> {
                 .map(|index| {
                     let item = &sessions[*index];
                     let state = if item.live { "● LIVE" } else { "○ saved" };
+                    let terminal = if item.terminal_attachable {
+                        format!(
+                            " · ▣ {}",
+                            item.terminal_status.as_deref().unwrap_or("terminal")
+                        )
+                    } else {
+                        String::new()
+                    };
                     let counts = item
                         .events
                         .map(|events| format!(" · {events} events"))
@@ -127,6 +137,7 @@ fn choose_inner(sessions: &[SessionChoice]) -> Result<Option<String>> {
                                 format!(" · {} agent{counts}", item.agents),
                                 Style::default().fg(SUBTLE),
                             ),
+                            Span::styled(terminal, Style::default().fg(GREEN)),
                         ]),
                         Line::from(vec![
                             Span::styled("   ", Style::default()),

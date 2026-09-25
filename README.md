@@ -91,6 +91,12 @@ Provenance·Tools·Activity 탭으로 prompt, response/reasoning, tool timing과
 event를 로컬에서만 볼 수 있습니다. `/` 검색, `n/N` 결과 이동, `p/P` prompt 이동과
 marker filter도 지원합니다. AG-UI, OTLP, `--inspect`, `--tree`에는 이 내용이 들어가지 않습니다.
 
+0.25 버전은 Claude Code의 네이티브 background PTY/ConPTY로 새 대화형 agent를
+시작하고 관찰하는 `terminal` 기능을 추가합니다. Local Detail의 **TERMINAL** 탭에서
+최근 화면을 보고 `t` 또는 마우스 **ATTACH**로 한 명의 로컬 조작자가 직접 입력할 수
+있습니다. `s` 또는 **SHELL**은 허용된 project에 별도 사용자 shell을 엽니다. 기존
+비대화형 `-p` 실행은 소급 attach하지 않으며 terminal 본문은 기본 관측 export에 포함하지 않습니다.
+
 ## 어떤 명령을 선택해야 하나요?
 
 | 원하는 일 | 사용할 기능 | 추가되는 보장 |
@@ -105,6 +111,8 @@ marker filter도 지원합니다. AG-UI, OTLP, `--inspect`, `--tree`에는 이 �
 | 다음 턴에 전달할 지시를 저장하기 | `message` | 선택된 개정에만 전달되는 지시와 결과 인수인계 |
 | multi-agent graph와 과거 실행 관찰하기 | `monitor viewer` | focus/recent/all graph, minimap, mouse camera, activity replay, agent별 실행 토큰 |
 | 로컬 Claude/Codex 전사까지 상세 관찰하기 | `monitor viewer --local-detail` | mouse session picker, provenance/tool/activity 탭, 검색·prompt 이동; export와 분리 |
+| 화면을 보며 Claude agent에 직접 입력하기 | `terminal start` + `monitor viewer --local-detail` | native PTY/ConPTY, 단일 조작자 lease, TERMINAL 탭과 ATTACH |
+| 같은 project에서 직접 명령 실행하기 | `terminal shell` 또는 viewer의 `s` | agent 입력과 분리된 사용자 운영 shell, 허용 root 확인 |
 | 계정 한도와 portable fallback 보기 | `monitor tui` / `monitor limits` | Codex·Claude·Gemini·Cursor quota와 Python-only 화면 |
 | 계정에서 선택 가능한 모델 확인하기 | `models catalog` | 현재 selector·해석된 모델·지원 effort, 계정 식별자 제거 |
 | 역할별 모델과 effort 바꾸기 | `models show/configure/reset` | 별칭·정확한 버전 ID, 원자적 설정 교체, 기존 작업 동결 |
@@ -122,6 +130,22 @@ claude_control monitor limits
 claude_control monitor agui stream --after 0 --limit 100
 ```
 
+대화형 agent를 새로 만들 때는 고유한 request ID를 사용합니다. terminal은 입력을
+기다리는 빈 화면으로 시작하며, attach한 사용자가 직접 첫 지시를 입력합니다.
+
+```bash
+claude_control terminal start \
+  --name interactive-editor \
+  --role executor \
+  --project /absolute/project \
+  --request-id terminal-editor-001
+claude_control terminal list
+claude_control terminal logs --id <8-character-id> --bytes 8192
+claude_control terminal attach --id <8-character-id>
+claude_control terminal stop --id <8-character-id>
+claude_control terminal shell --project /absolute/project
+```
+
 마우스·키보드 조작과 토큰 수치의 의미는 [실시간 모니터 안내](docs/monitor.ko.md)를
 참고하세요.
 
@@ -134,6 +158,12 @@ claude_control monitor agui stream --after 0 --limit 100
   관리합니다.
 - 컨트롤러가 실행하는 Claude의 기본 도구와 MCP는 비활성화됩니다. 텍스트
   작업에서 경로를 언급해도 Claude가 그 파일을 직접 읽을 수 없습니다.
+- `terminal start`도 safe mode, 빈 setting source, 빈 MCP와 native tool 비활성화
+  정책을 사용합니다. attach는 agent 대화 입력용입니다. `terminal shell`은 사용자가
+  직접 운영하는 별도 shell이므로 그 shell의 명령과 파일 변경은 사용자의 책임이며
+  controller workspace 격리나 승인 경로를 통과하지 않습니다.
+- 다른 도구가 만든 Claude session은 상태 목록에서만 관측합니다. controller가 만든
+  safe-profile terminal만 화면 본문, attach와 stop을 허용합니다.
 - 파일 수정은 커밋된 Git 트리의 비공개 사본에서 이뤄집니다. 원본
   저장소는 자동으로 바뀌지 않습니다.
 - 검사는 정책에 미리 등록한 이름으로만 요청할 수 있습니다. 실제 명령은

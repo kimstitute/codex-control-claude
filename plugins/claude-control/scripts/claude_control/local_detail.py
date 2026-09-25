@@ -15,7 +15,7 @@ from collections import deque
 from datetime import datetime
 from pathlib import Path
 
-from . import observation, observation_agui
+from . import observation, observation_agui, terminal_cli
 from .store import ControlError
 
 PROTOCOL = "claude-control.local-sessions.v1"
@@ -584,6 +584,14 @@ def catalog(*, claude_root=None, codex_root=None, store=None, source="all"):
                     "events": None,
                 }
             )
+    terminal_by_session = {}
+    if store is not None and source in ("all", "claude", "native_claude"):
+        try:
+            terminal_by_session = {
+                item["session_id"]: item for item in terminal_cli.catalog(store)["terminals"]
+            }
+        except ControlError as error:
+            stats["terminal_error"] = _text(str(error), 300)
     roots = (
         ("claude", claude_root or Path.home() / ".claude" / "projects"),
         ("codex", codex_root or Path.home() / ".codex" / "sessions"),
@@ -593,11 +601,46 @@ def catalog(*, claude_root=None, codex_root=None, store=None, source="all"):
         if source != "all" and source not in aliases:
             continue
         found, detail = _native_catalog(provider, root)
+        if provider == "claude":
+            for item in found:
+                terminal = terminal_by_session.get(item.get("session_id"))
+                if terminal:
+                    item.update(
+                        live=terminal.get("status") in {"idle", "running", "active"},
+                        terminal_id=terminal.get("id"),
+                        terminal_status=terminal.get("status"),
+                        terminal_kind=terminal.get("kind"),
+                        terminal_attachable=terminal.get("attachable", False),
+                    )
         sessions.extend(found)
         stats["files"] += detail["files"]
         stats["malformed"] += detail["malformed"]
         stats["read_errors"] += detail["read_errors"]
         stats["truncated"] = stats["truncated"] or detail["truncated"]
+    known_claude = {
+        item.get("session_id") for item in sessions if item.get("provider") == "claude"
+    }
+    for terminal in terminal_by_session.values():
+        if terminal["session_id"] in known_claude:
+            continue
+        sessions.append(
+            {
+                "selector": f"terminal:{terminal['session_id']}",
+                "provider": "claude",
+                "session_id": terminal["session_id"],
+                "title": terminal.get("name") or "Claude terminal",
+                "project": terminal.get("cwd"),
+                "file": None,
+                "modified": terminal.get("started_at") or 0,
+                "live": terminal.get("status") in {"idle", "running", "active"},
+                "agents": 1,
+                "events": 0,
+                "terminal_id": terminal.get("id"),
+                "terminal_status": terminal.get("status"),
+                "terminal_kind": terminal.get("kind"),
+                "terminal_attachable": terminal.get("attachable", False),
+            }
+        )
     sessions.sort(key=lambda item: float(item.get("modified") or 0), reverse=True)
     return {"protocol": PROTOCOL, "version": 1, "sessions": sessions[:MAX_RECORDS], "stats": stats}
 
@@ -831,12 +874,67 @@ def _managed_detail(store, selector):
     return {"source": source, "agents": [agent], "tools": tools, "events": events}
 
 
+def _terminal_detail(store, selector):
+    session_id = selector.split(":", 1)[1]
+    terminal = terminal_cli.snapshot(store, session_id, include_output=True)
+    if terminal is None:
+        return None
+    source = {
+        "selector": selector,
+        "provider": "claude",
+        "session_id": session_id,
+        "title": terminal.get("name") or "Claude terminal",
+        "project": terminal.get("cwd"),
+        "mode": "background terminal",
+        "permission_mode": "dontAsk / tools disabled"
+        if terminal.get("safe_profile")
+        else None,
+        "last_prompt": None,
+        "queued_ops": 0,
+        "file_edits": 0,
+        "partial": False,
+        "truncated": False,
+        "read_error": None,
+        "terminal": terminal,
+    }
+    agent = _agent(f"session:{session_id}", session_id)
+    agent.update(
+        session_id=session_id,
+        role=terminal.get("role") or "interactive",
+        model=terminal.get("requested_model"),
+        description=terminal.get("name") or "Claude terminal",
+        started=terminal.get("started_at"),
+    )
+    return {"source": source, "agents": [agent], "tools": [], "events": []}
+
+
+def _with_terminal(store, detail):
+    if detail is None or detail["source"].get("provider") != "claude":
+        return detail
+    session_id = detail["source"].get("session_id")
+    if not session_id:
+        return detail
+    try:
+        detail["source"]["terminal"] = terminal_cli.snapshot(
+            store, session_id, include_output=True
+        )
+    except ControlError as error:
+        detail["source"]["terminal"] = {
+            "session_id": session_id,
+            "attachable": False,
+            "error": _text(str(error), 300),
+        }
+    return detail
+
+
 def _detail(store, selector, claude_root, codex_root):
     if selector.startswith("managed:"):
         return _managed_detail(store, selector)
     if selector.startswith("claude:"):
         root = claude_root or Path.home() / ".claude" / "projects"
-        return _find_native(selector, "claude", root)
+        return _with_terminal(store, _find_native(selector, "claude", root))
+    if selector.startswith("terminal:"):
+        return _terminal_detail(store, selector)
     if selector.startswith("codex:"):
         root = codex_root or Path.home() / ".codex" / "sessions"
         return _find_native(selector, "codex", root)
@@ -845,6 +943,7 @@ def _detail(store, selector, claude_root, codex_root):
 
 def _local_events(detail):
     source, agents = detail["source"], detail["agents"]
+    terminal = source.get("terminal") if isinstance(source.get("terminal"), dict) else None
     first_stamp = min(
         [item["timestamp"] for item in detail["events"]]
         + [item["started"] for item in agents if item.get("started") is not None]
@@ -875,10 +974,21 @@ def _local_events(detail):
         )
     for agent in agents:
         started = agent.get("started") if agent.get("started") is not None else first_stamp
+        state = "active"
+        if terminal and agent.get("session_id") == terminal.get("session_id"):
+            status = terminal.get("status")
+            if status == "idle":
+                state = "idle"
+            elif status in {"failed", "error"}:
+                state = "failed"
+            elif status in {"stopped", "completed", "finished"}:
+                state = "completed"
+            elif status not in {"running", "active"}:
+                state = "unknown"
         payload = {
             "id": agent["agent_id"],
             "name": agent.get("description") or agent.get("role") or source["provider"],
-            "state": "active",
+            "state": state,
             "role": agent.get("role") or "agent",
             "model": agent.get("model"),
             "session_id": agent.get("session_id"),

@@ -17,6 +17,135 @@ def write_jsonl(path, values):
 
 
 class LocalDetailTests(unittest.TestCase):
+    def test_claude_terminal_metadata_is_catalog_safe_and_detail_local_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            session_id = "11111111-1111-4111-8111-111111111111"
+            transcript = root / "project" / f"{session_id}.jsonl"
+            write_jsonl(
+                transcript,
+                [
+                    {
+                        "type": "assistant",
+                        "sessionId": session_id,
+                        "timestamp": "2026-01-01T00:00:00Z",
+                        "message": {"model": "claude-opus-5", "content": "answer"},
+                    }
+                ],
+            )
+            terminal = {
+                "id": "11111111",
+                "session_id": session_id,
+                "kind": "background",
+                "status": "idle",
+                "attachable": True,
+            }
+            with (
+                mock.patch.object(
+                    local_detail.terminal_cli,
+                    "catalog",
+                    return_value={"terminals": [terminal]},
+                ),
+                mock.patch.object(
+                    local_detail.terminal_cli,
+                    "snapshot",
+                    return_value={**terminal, "recent_output": "local terminal sentinel"},
+                ),
+            ):
+                catalog = local_detail.catalog(store=object(), source="claude", claude_root=root)
+                self.assertTrue(catalog["sessions"][0]["terminal_attachable"])
+                self.assertNotIn("local terminal sentinel", json.dumps(catalog))
+                detail = list(
+                    local_detail.stream(
+                        object(),
+                        source=catalog["sessions"][0]["selector"],
+                        claude_root=root,
+                    )
+                )[-1]
+            self.assertEqual(
+                detail["source"]["terminal"]["recent_output"], "local terminal sentinel"
+            )
+
+    def test_idle_terminal_without_transcript_remains_selectable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            session_id = "22222222-2222-4222-8222-222222222222"
+            terminal = {
+                "id": "22222222",
+                "session_id": session_id,
+                "name": "idle terminal",
+                "cwd": "/work/project",
+                "kind": "background",
+                "status": "idle",
+                "attachable": True,
+                "role": "executor",
+                "requested_model": "opus",
+                "safe_profile": True,
+                "started_at": 1.0,
+            }
+            with (
+                mock.patch.object(
+                    local_detail.terminal_cli,
+                    "catalog",
+                    return_value={"terminals": [terminal]},
+                ),
+                mock.patch.object(
+                    local_detail.terminal_cli,
+                    "snapshot",
+                    return_value={**terminal, "recent_output": "waiting for input"},
+                ),
+            ):
+                catalog = local_detail.catalog(
+                    store=object(), source="claude", claude_root=Path(directory)
+                )
+                self.assertEqual(catalog["sessions"][0]["selector"], f"terminal:{session_id}")
+                events = list(
+                    local_detail.stream(
+                        object(),
+                        source=f"terminal:{session_id}",
+                        claude_root=Path(directory),
+                    )
+                )
+                detail = events[-1]
+            self.assertEqual(detail["agents"][0]["role"], "executor")
+            self.assertEqual(detail["source"]["terminal"]["recent_output"], "waiting for input")
+            created = next(
+                event
+                for event in events
+                if event.get("value", {}).get("kind") == "node_created"
+            )
+            self.assertEqual(created["value"]["payload"]["state"], "idle")
+
+    def test_stopped_terminal_with_recent_transcript_is_not_live(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            session_id = "33333333-3333-4333-8333-333333333333"
+            transcript = root / "project" / f"{session_id}.jsonl"
+            write_jsonl(
+                transcript,
+                [
+                    {
+                        "type": "assistant",
+                        "sessionId": session_id,
+                        "timestamp": "2026-01-01T00:00:00Z",
+                        "message": {"model": "claude-opus-5", "content": "done"},
+                    }
+                ],
+            )
+            terminal = {
+                "id": "33333333",
+                "session_id": session_id,
+                "kind": "background",
+                "status": "stopped",
+                "attachable": False,
+            }
+            with mock.patch.object(
+                local_detail.terminal_cli,
+                "catalog",
+                return_value={"terminals": [terminal]},
+            ):
+                result = local_detail.catalog(store=object(), source="claude", claude_root=root)
+            self.assertFalse(result["sessions"][0]["live"])
+
     def test_claude_catalog_and_stream_preserve_prompt_tool_and_markers_locally(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

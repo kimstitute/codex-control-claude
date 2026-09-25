@@ -61,6 +61,19 @@ pub struct DetailSource {
     pub partial: bool,
     pub truncated: bool,
     pub read_error: Option<String>,
+    pub terminal: Option<TerminalDetail>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TerminalDetail {
+    pub id: Option<String>,
+    pub session_id: Option<String>,
+    pub kind: Option<String>,
+    pub status: Option<String>,
+    pub state: Option<String>,
+    pub attachable: bool,
+    pub recent_output: String,
+    pub error: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -161,6 +174,22 @@ impl DetailStore {
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
             read_error: object_string(source, "read_error"),
+            terminal: source
+                .get("terminal")
+                .and_then(Value::as_object)
+                .map(|terminal| TerminalDetail {
+                    id: object_string(terminal, "id"),
+                    session_id: object_string(terminal, "session_id"),
+                    kind: object_string(terminal, "kind"),
+                    status: object_string(terminal, "status"),
+                    state: object_string(terminal, "state"),
+                    attachable: terminal
+                        .get("attachable")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                    recent_output: object_string(terminal, "recent_output").unwrap_or_default(),
+                    error: object_string(terminal, "error"),
+                }),
         };
         self.agents.clear();
         for item in value

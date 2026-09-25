@@ -233,6 +233,9 @@ class ControllerProcessTests(ControllerTestCase):
         self.assertIs(report["ready"], True)
         self.assertEqual(report["claude_version"], "fake-claude 1.0")
         self.assertEqual(report["missing_options"], [])
+        self.assertEqual(report["missing_terminal_options"], [])
+        self.assertEqual(report["missing_terminal_commands"], [])
+        self.assertIs(report["terminal_supported"], True)
         self.assertEqual(
             report["auth"],
             {
@@ -242,6 +245,31 @@ class ControllerProcessTests(ControllerTestCase):
                 "subscriptionType": "test",
             },
         )
+
+    def test_doctor_keeps_headless_ready_when_terminal_runtime_is_unavailable(self) -> None:
+        legacy = self.root / "legacy-claude"
+        legacy.write_text(
+            "#!/bin/sh\n"
+            'if [ "$1" = "--version" ]; then echo "legacy-claude 1.0"; exit 0; fi\n'
+            'if [ "$1" = "--help" ]; then echo "--safe-mode --setting-sources '
+            '--strict-mcp-config --session-id --resume --tools --output-format '
+            '--disable-slash-commands --mcp-config --permission-mode --verbose"; exit 0; fi\n'
+            "exit 2\n",
+            encoding="utf-8",
+        )
+        legacy.chmod(0o700)
+        config_path = self.state / "config.json"
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        config["claude_bin"] = str(legacy)
+        config_path.write_text(json.dumps(config), encoding="utf-8")
+
+        report = self.cli("doctor")
+
+        self.assertTrue(report["ready"])
+        self.assertFalse(report["terminal_supported"])
+        self.assertEqual(report["missing_options"], [])
+        self.assertEqual(report["missing_terminal_options"], ["--bg"])
+        self.assertEqual(report["missing_terminal_commands"], ["agents", "attach", "logs", "stop"])
 
     def test_model_catalog_uses_sdk_initialize_and_removes_account_identity(self) -> None:
         report = self.cli("models", "catalog")

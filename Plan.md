@@ -1,6 +1,6 @@
 # OMX 기능 도입 계획
 
-작성: 2026-09-20 · 갱신: 2026-09-24 · 기준: v0.24.0 · 상태: P1–P5, model catalog 및 Local Detail Observer 구현
+작성: 2026-09-20 · 갱신: 2026-09-25 · 기준: v0.25.0 · 상태: P1–P5, model catalog, Local Detail 및 대화형 terminal 구현
 
 이 문서는 도입 당시의 설계와 단계별 통과 조건을 보존한다. 단계별 구현 상태는 문서 끝의 진행 기록을 따른다. P5는 기존 Claude 도구 비활성화를 유지하는 컨트롤러 작업 요청 방식으로 구체화했다.
 
@@ -858,3 +858,25 @@ manifest JSON과 `git diff --check`가 통과했다. 실제 계정 상태 이관
   탭과 scroll을 제어한다.
 - timeline은 prompt, tool, spawn, failure marker와 filter, `/` 검색, `n/N` 결과 이동,
   `p/P` prompt 이동을 제공한다. 기존 `{}` run era, 속도 조절과 gap compression은 유지한다.
+
+## 34. 대화형 Claude terminal 관측과 운영 — v0.25.0
+
+- 기존 `-p` 실행은 재현 가능한 비대화형 경로로 유지하고 소급 attach하지 않는다. 새
+  `terminal start`만 Claude Code의 네이티브 `--bg` PTY/ConPTY를 사용한다. safe mode,
+  빈 setting source, 빈 MCP와 native tool 비활성화 정책은 그대로 적용한다.
+- terminal catalog와 기본 관측 형식에는 ID, 상태, 종류, 역할, 모델, effort만 포함한다.
+  실제 화면 출력은 명시적으로 선택한 Local Detail source의 `TERMINAL` 탭에서만 bounded
+  ANSI-sanitized tail로 읽으며 원장, AG-UI, OTLP와 headless 출력에는 넣지 않는다.
+- `t`/ATTACH는 controller가 만든 safe-profile background session에만 연결하고 state
+  directory와 무관한 host/user 공용 nonblocking file lease로
+  동시 조작자를 한 명으로 제한한다. viewer는 attach 동안 alternate screen과 raw mode를
+  해제하고 반환 뒤 그래프 화면을 복구한다.
+- `s`/SHELL은 agent 터미널에 shell 명령을 주입하지 않는다. 허용된 project에서 사용자가
+  직접 운영하는 별도 shell을 열고 project별 lease를 적용한다. shell에서 발생하는 변경은
+  controller workspace 승인이나 격리를 거치지 않는 사용자의 직접 동작이다. 같은 project의
+  `workspace apply`와 shell은 공용 lease를 사용해 clean-tree 검사와 사용자 편집의 경합을 막는다.
+- 새 terminal은 첫 지시 없이 idle로 시작한다. prompt 본문을 process argv로 전달하지 않으며,
+  사용자는 attach 후 직접 입력한다. request와 descriptor registry는 각각 4096개로 제한하고
+  한도를 넘으면 ownership metadata를 잘라내지 않고 명시적으로 실패한다.
+- `terminal stop`은 명시적 호출만 허용한다. 종료, attach와 shell은 자동 재시도하지 않으며
+  기존 interactive session 중 native background ID가 없는 항목은 관측만 하고 attach하지 않는다.

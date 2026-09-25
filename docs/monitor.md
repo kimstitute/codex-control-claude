@@ -1,7 +1,9 @@
 # Live agent monitor
 
-`monitor` observes the current host's claude-control state without advancing,
-retrying, stopping, accepting or applying any work. It provides two interfaces:
+The observation and replay paths in `monitor` show the current host's state
+without advancing, retrying, stopping, accepting or applying work. Explicit
+ATTACH or SHELL actions in Local Detail temporarily leave the viewer and enter a
+separately user-operated terminal. Two interfaces are available:
 
 - `monitor viewer`: a Rust/Ratatui spatial graph and historical replay viewer;
 - `monitor tui`: a Python standard-library fallback and provider quota dashboard.
@@ -63,7 +65,9 @@ when an explicitly monochrome screen is required.
 | Click the speed chip | Cycle 0.25× → 0.5× → 1× → 2× → 4× → 8× |
 | Click the `GAP` chip | Toggle uniform and timestamp-compressed playback |
 | Click the `M:*` chip | Rotate all, prompt, tool, failure and agent marker filters |
-| Click an Inspector tab | Open Overview, Provenance, Tools or Activity |
+| Click an Inspector tab | Open Overview, Provenance, Tools, Activity or Terminal |
+| Click `ATTACH` | Attach as the single operator of the selected native background terminal |
+| Click `SHELL` | Open a separate user shell in the selected source's authorized project |
 | Right-click | Close the inspector |
 
 | Key | Action |
@@ -83,6 +87,7 @@ when an explicitly monochrome screen is required.
 | `o`, `f`, `r`, `c` | Overview, follow latest work, relayout, or center selection |
 | `a` | Rotate graph scope: `focus` → `recent` → `all` |
 | `HJKL`, `+`, `-`, `0` | Pan, zoom, or reset zoom |
+| `t`, `s` | Attach to the selected background agent / open a separate project shell |
 | `x`, `i`, `?`, `q` | Toggle mouse capture, show information/help or quit |
 
 The viewer opens in `focus` scope with a fitted overview. Rataflow provides node
@@ -102,15 +107,25 @@ and error text. Operation kind is normalized to the closed set `read`, `write`,
 `patch`, `named_check` or `unknown`.
 
 When enabled, Local Detail divides the Inspector into **Overview**,
-**Provenance**, **Tools** and **Activity**. These show safe run/operation data,
-bounded prompt and response/reasoning, tool state/duration/summary, and timestamped
-prompt/tool/spawn/failure events. `partial / bounded` means malformed rows were
+**Provenance**, **Tools**, **Activity** and **Terminal**. The first four show safe
+run/operation data, bounded prompt and response/reasoning, tool
+state/duration/summary, and timestamped prompt/tool/spawn/failure events. Terminal
+shows bounded recent screen output, state and attachability for a native background
+session created with `terminal start`. `partial / bounded` means malformed rows were
 skipped or byte/record bounds omitted older input. The content is composed in
 memory and never written to the SQLite observation ledger, AG-UI, OTLP,
 `--inspect` or `--tree`.
 Parent/child agents, prompts, responses and tool states replay at their recorded
 times. A tool that finishes after the selected cursor remains `pending`, and
 transcript silence alone is never treated as agent completion.
+
+ATTACH temporarily leaves the viewer alternate screen and enters Claude Code's
+native terminal. One local operator may control a session at a time; `Ctrl+Z`
+returns and restores the viewer. SHELL does not grant tools to the agent or inject
+a command. It opens a separate user-operated shell in an authorized project, whose
+commands bypass controller workspace isolation and the approval ledger. Existing
+headless `-p` runs and interactive sessions without a native background ID remain
+observable but cannot be attached.
 
 Headless `--inspect` preserves its v1 contract and prints fidelity, cursor, node,
 edge and agent counts plus final output-token total as JSON. Schema-15 operation

@@ -250,7 +250,8 @@ def _run(arguments: list[str]) -> int:
             "fake Claude CLI: --model --effort --safe-mode --setting-sources "
             "--strict-mcp-config --session-id --resume --tools "
             "--output-format --disable-slash-commands "
-            "--mcp-config --permission-mode --json-schema --verbose -p"
+            "--mcp-config --permission-mode --json-schema --verbose --bg -p "
+            "agents attach logs stop"
         )
         return 0
     if arguments[:2] == ["auth", "status"]:

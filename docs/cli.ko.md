@@ -60,6 +60,44 @@ Python TUI는 graph, agents, history, provider limits, cursor replay 화면을 �
 자세한 키 조작과 실시간 추정치·완료 확정값의 차이는
 [실시간 모니터 안내](monitor.ko.md)를 참고하세요.
 
+## 대화형 agent terminal
+
+기존 `start`, `delegate`, `task`, `workspace` 실행은 비대화형 `-p` 세션이며 실행 중
+terminal에 소급 attach할 수 없습니다. 직접 화면을 보고 입력해야 하는 새 agent는
+별도의 `terminal start`로 만듭니다.
+
+```bash
+claude_control terminal start \
+  --name interactive-editor \
+  --role executor \
+  --project /absolute/path/to/project \
+  --model 'opus[1m]' \
+  --effort high \
+  --request-id terminal-editor-001
+
+claude_control terminal list
+claude_control terminal status --id <8-character-id>
+claude_control terminal logs --id <8-character-id> --bytes 16384
+claude_control terminal attach --id <8-character-id>
+claude_control terminal stop --id <8-character-id>
+claude_control terminal shell --project /absolute/path/to/project
+```
+
+`--model`과 `--effort`를 생략하면 역할 기본값을 사용합니다. terminal은 입력 대기
+화면으로 시작하고 사용자가 attach 후 직접 첫 지시를 입력합니다. 같은 request ID와
+같은 설정은 기존 terminal을 반환하며 입력이 다르면 거부합니다. `list`와 `status`는
+본문을 포함하지 않고 `logs`만 bounded ANSI-sanitized tail을 반환합니다.
+
+`attach`는 정확한 background terminal에 연결하며 session별 한 명의 로컬 조작자만
+허용합니다. controller가 safe profile로 만든 terminal만 logs, attach, stop할 수 있고
+다른 Claude session은 목록에서 관측만 합니다. `Ctrl+Z`로 Claude Code attach 화면에서 돌아옵니다. `shell`은 agent에
+명령을 주입하는 기능이 아니라 allow-root 아래 project에서 여는 별도 사용자 shell입니다.
+그 shell의 변경은 controller workspace 격리, named check 또는 승인 원장을 거치지 않습니다.
+
+`terminal start`는 Claude Code safe mode, 빈 setting source, 빈 MCP, slash command와
+native tool 비활성화 설정으로 시작합니다. attach 중 입력은 모델 요청을 발생시킬 수
+있으므로 사용자가 직접 조작하는 단계입니다.
+
 ## 개정과 승인이 있는 Task
 
 `task create/list/show/submit/revise/retry/review/accept`와 `migrate --status/--offline`에 대해서는 [작업 생명주기 레퍼런스](tasks.ko.md)를 참고하세요. 새 task 턴은 구조화된 후속 작업을 포함해 명시적으로 기록된 v2 계약을 사용합니다. 기존 delegate와 비구조화 명령의 의미는 그대로 유지됩니다.

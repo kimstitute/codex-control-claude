@@ -18,6 +18,7 @@ from . import (
     message_cli,
     monitor_cli,
     task_cli,
+    terminal_cli,
     workflow_cli,
     workspace_cli,
 )
@@ -110,6 +111,7 @@ def parser():
     workspace_cli.register(commands)
     composition_cli.register(commands)
     monitor_cli.register(commands)
+    terminal_cli.register(commands)
     command = commands.add_parser("_workspace_exec")
     command.add_argument("--run", required=True)
     command.add_argument("--seq", type=int, required=True)
@@ -153,6 +155,12 @@ def doctor(store, check_auth, check_platform=False):
         "--verbose",
     )
     missing = [flag for flag in required if flag not in help_result.stdout]
+    missing_terminal_options = ["--bg"] if "--bg" not in help_result.stdout else []
+    terminal_commands = ("agents", "attach", "logs", "stop")
+    terminal_probes = {command: call([command, "--help"]) for command in terminal_commands}
+    missing_terminal_commands = [
+        command for command, probe in terminal_probes.items() if probe.returncode != 0
+    ]
     result = dict(
         version=__version__,
         hostname=socket.gethostname(),
@@ -160,8 +168,19 @@ def doctor(store, check_auth, check_platform=False):
         state_dir=str(store.path),
         claude_version=version.stdout.strip(),
         missing_options=missing,
+        missing_terminal_options=missing_terminal_options,
+        missing_terminal_commands=missing_terminal_commands,
+        terminal_supported=(
+            help_result.returncode == 0
+            and not missing_terminal_options
+            and not missing_terminal_commands
+        ),
         effort_supported=help_result.returncode == 0 and "--effort" in help_result.stdout.split(),
-        ready=version.returncode == 0 and help_result.returncode == 0 and not missing,
+        ready=(
+            version.returncode == 0
+            and help_result.returncode == 0
+            and not missing
+        ),
         max_parallel=store.config["max_parallel"],
         max_queued=store.config.get("max_queued"),
         profile="text-only",
@@ -190,6 +209,8 @@ def doctor(store, check_auth, check_platform=False):
 
 
 def execute(args):
+    if args.command == "terminal":
+        return terminal_cli.execute(args)
     if args.command == "monitor":
         return monitor_cli.execute(args)
     if args.command == "workspace":

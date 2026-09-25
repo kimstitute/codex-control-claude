@@ -1,5 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
+use std::path::PathBuf;
+use std::process::Command;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
@@ -22,6 +24,7 @@ use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph, Wrap};
+use unicode_width::UnicodeWidthStr;
 
 use crate::feed::{Feed, FeedEvent};
 use crate::flow_view::{ObserverFlow, compact_number, new_flow, relayout, sync as sync_flow};
@@ -100,14 +103,16 @@ enum InspectorTab {
     Provenance,
     Tools,
     Activity,
+    Terminal,
 }
 
 impl InspectorTab {
-    const ALL: [Self; 4] = [
+    const ALL: [Self; 5] = [
         Self::Overview,
         Self::Provenance,
         Self::Tools,
         Self::Activity,
+        Self::Terminal,
     ];
 
     fn label(self) -> &'static str {
@@ -116,6 +121,7 @@ impl InspectorTab {
             Self::Provenance => "PROVENANCE",
             Self::Tools => "TOOLS",
             Self::Activity => "ACTIVITY",
+            Self::Terminal => "TERMINAL",
         }
     }
 
@@ -209,6 +215,21 @@ struct UiRegions {
     next_era: Option<Rect>,
     marker_filter: Option<Rect>,
     inspector_tabs: Vec<(Rect, InspectorTab)>,
+    terminal_attach: Option<Rect>,
+    operator_shell: Option<Rect>,
+}
+
+#[derive(Clone, Debug)]
+pub struct TerminalLauncher {
+    pub python: PathBuf,
+    pub cli: PathBuf,
+    pub state_dir: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ExternalAction {
+    Attach { session_id: String },
+    Shell { project: String },
 }
 
 pub struct App {
@@ -245,6 +266,8 @@ pub struct App {
     marker_filter: MarkerFilter,
     search_query: String,
     search_editing: bool,
+    launcher: Option<TerminalLauncher>,
+    pending_action: Option<ExternalAction>,
 }
 
 impl App {
@@ -296,7 +319,57 @@ impl App {
             marker_filter: MarkerFilter::All,
             search_query: String::new(),
             search_editing: false,
+            launcher: None,
+            pending_action: None,
         })
+    }
+
+    fn set_launcher(&mut self, launcher: Option<TerminalLauncher>) {
+        self.launcher = launcher;
+    }
+
+    fn request_terminal(&mut self) {
+        if self.launcher.is_none() {
+            self.error = Some("terminal attach is unavailable for saved streams".to_owned());
+            return;
+        }
+        let Some(terminal) = self
+            .detail
+            .source
+            .terminal
+            .as_ref()
+            .filter(|terminal| terminal.attachable)
+        else {
+            self.error = Some("selected source has no attachable terminal".to_owned());
+            return;
+        };
+        let Some(session_id) = terminal.session_id.clone() else {
+            self.error = Some("selected terminal has no session identity".to_owned());
+            return;
+        };
+        self.pending_action = Some(ExternalAction::Attach { session_id });
+    }
+
+    fn request_shell(&mut self) {
+        if self.launcher.is_none() {
+            self.error = Some("operator shell is unavailable for saved streams".to_owned());
+            return;
+        }
+        if !self
+            .detail
+            .source
+            .terminal
+            .as_ref()
+            .is_some_and(|terminal| terminal.attachable)
+        {
+            self.error = Some("selected source has no controller-managed terminal".to_owned());
+            return;
+        }
+        let Some(project) = self.detail.source.project.clone() else {
+            self.error = Some("selected source has no authorized project directory".to_owned());
+            return;
+        };
+        self.pending_action = Some(ExternalAction::Shell { project });
     }
 
     fn selected_id(&self) -> Option<String> {
@@ -578,9 +651,9 @@ impl App {
                 searchable.extend([agent.prompt.as_deref(), agent.reasoning.as_deref()]);
             }
             if searchable
-            .into_iter()
-            .flatten()
-            .any(|value| value.to_lowercase().contains(&query))
+                .into_iter()
+                .flatten()
+                .any(|value| value.to_lowercase().contains(&query))
             {
                 stamps.push(agent.finished.or(agent.started).unwrap_or(0.0));
             }
@@ -712,6 +785,8 @@ impl App {
             KeyCode::Char('m') | KeyCode::Char('M') => {
                 self.marker_filter = self.marker_filter.next();
             }
+            KeyCode::Char('t') | KeyCode::Char('T') => self.request_terminal(),
+            KeyCode::Char('s') | KeyCode::Char('S') => self.request_shell(),
             KeyCode::Char('v') | KeyCode::Char('V') => {
                 self.inspector_tab = self.inspector_tab.next();
                 self.inspector_scroll = 0;
@@ -799,6 +874,22 @@ impl App {
             return;
         }
         if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+            if self
+                .regions
+                .terminal_attach
+                .is_some_and(|area| point_in_rect(point, area))
+            {
+                self.request_terminal();
+                return;
+            }
+            if self
+                .regions
+                .operator_shell
+                .is_some_and(|area| point_in_rect(point, area))
+            {
+                self.request_shell();
+                return;
+            }
             if self
                 .regions
                 .play
@@ -898,12 +989,18 @@ impl App {
     }
 }
 
-pub fn run(timeline: Timeline, feed: Option<Feed>, detail: DetailStore) -> Result<()> {
-    let _screen = ScreenGuard::enter()?;
+pub fn run(
+    timeline: Timeline,
+    feed: Option<Feed>,
+    detail: DetailStore,
+    launcher: Option<TerminalLauncher>,
+) -> Result<()> {
+    let mut screen = ScreenGuard::enter()?;
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend).context("could not initialize terminal")?;
     terminal.clear()?;
     let mut app = App::new(timeline, feed, detail)?;
+    app.set_launcher(launcher);
     while !app.quit {
         app.update();
         terminal.draw(|frame| draw(frame, &mut app))?;
@@ -928,11 +1025,46 @@ pub fn run(timeline: Timeline, feed: Option<Feed>, detail: DetailStore) -> Resul
                 _ => {}
             }
         }
+        if let Some(action) = app.pending_action.take() {
+            screen.suspend()?;
+            let result = run_external(app.launcher.as_ref(), &action);
+            screen.resume()?;
+            terminal.clear()?;
+            app.flow.request_fit_view();
+            match result {
+                Ok(()) => app.status = "returned from local terminal".to_owned(),
+                Err(error) => app.error = Some(error.to_string()),
+            }
+        }
     }
     Ok(())
 }
 
-struct ScreenGuard;
+fn run_external(launcher: Option<&TerminalLauncher>, action: &ExternalAction) -> Result<()> {
+    let launcher = launcher.context("terminal launcher is unavailable")?;
+    let mut command = Command::new(&launcher.python);
+    command.arg(&launcher.cli);
+    if let Some(state_dir) = &launcher.state_dir {
+        command.arg("--state-dir").arg(state_dir);
+    }
+    match action {
+        ExternalAction::Attach { session_id } => {
+            command.args(["terminal", "attach", "--session", session_id]);
+        }
+        ExternalAction::Shell { project } => {
+            command.args(["terminal", "shell", "--project", project]);
+        }
+    }
+    let status = command.status().context("could not open local terminal")?;
+    if !status.success() {
+        anyhow::bail!("local terminal command exited with {status}")
+    }
+    Ok(())
+}
+
+struct ScreenGuard {
+    active: bool,
+}
 
 impl ScreenGuard {
     fn enter() -> Result<Self> {
@@ -940,21 +1072,56 @@ impl ScreenGuard {
         let mut stdout = io::stdout();
         if let Err(error) = execute!(stdout, EnterAlternateScreen, EnableMouseCapture, Hide) {
             let _ = disable_raw_mode();
+            let _ = execute!(
+                io::stdout(),
+                DisableMouseCapture,
+                LeaveAlternateScreen,
+                Show
+            );
             return Err(error).context("could not enter alternate screen");
         }
-        Ok(Self)
+        Ok(Self { active: true })
+    }
+
+    fn suspend(&mut self) -> Result<()> {
+        if self.active {
+            disable_raw_mode().context("could not disable terminal raw mode")?;
+            execute!(
+                io::stdout(),
+                DisableMouseCapture,
+                LeaveAlternateScreen,
+                Show
+            )
+            .context("could not suspend observer screen")?;
+            self.active = false;
+        }
+        Ok(())
+    }
+
+    fn resume(&mut self) -> Result<()> {
+        if !self.active {
+            enable_raw_mode().context("could not restore terminal raw mode")?;
+            if let Err(error) =
+                execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture, Hide)
+            {
+                let _ = disable_raw_mode();
+                let _ = execute!(
+                    io::stdout(),
+                    DisableMouseCapture,
+                    LeaveAlternateScreen,
+                    Show
+                );
+                return Err(error).context("could not restore observer screen");
+            }
+            self.active = true;
+        }
+        Ok(())
     }
 }
 
 impl Drop for ScreenGuard {
     fn drop(&mut self) {
-        let _ = disable_raw_mode();
-        let _ = execute!(
-            io::stdout(),
-            DisableMouseCapture,
-            LeaveAlternateScreen,
-            Show
-        );
+        let _ = self.suspend();
     }
 }
 
@@ -987,6 +1154,8 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     app.regions.timeline = timeline;
     app.regions.inspector = inspector;
     app.regions.inspector_tabs.clear();
+    app.regions.terminal_attach = None;
+    app.regions.operator_shell = None;
     draw_canvas(frame, canvas, app);
     if let Some(area) = inspector {
         draw_inspector(frame, area, app);
@@ -1052,8 +1221,10 @@ fn draw_inspector(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) {
         .border_style(Style::default().fg(BORDER))
         .style(Style::default().bg(SURFACE))
         .padding(Padding::new(3, 2, 2, 1));
-    let inner = block.inner(area);
+    let full_inner = block.inner(area);
     frame.render_widget(block, area);
+    let [inner, controls] =
+        Layout::vertical([Constraint::Fill(1), Constraint::Length(2)]).areas(full_inner);
     let heading = Style::default()
         .fg(TEXT)
         .bg(SURFACE)
@@ -1136,6 +1307,7 @@ fn draw_inspector(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) {
         InspectorTab::Provenance => append_provenance(&mut lines, app, &card, key, value, dim),
         InspectorTab::Tools => append_tools(&mut lines, app, &card, key, value, dim),
         InspectorTab::Activity => append_activity(&mut lines, app, &card, key, value, dim),
+        InspectorTab::Terminal => append_terminal(&mut lines, app, key, value, dim),
     }
     lines.extend([
         Line::from(""),
@@ -1173,6 +1345,54 @@ fn draw_inspector(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) {
             .scroll((app.inspector_scroll, 0)),
         inner,
     );
+    let mut control_spans = Vec::new();
+    let mut control_x = controls.x;
+    if app
+        .detail
+        .source
+        .terminal
+        .as_ref()
+        .is_some_and(|terminal| terminal.attachable)
+    {
+        let label = " ▣ t ATTACH ";
+        let width = UnicodeWidthStr::width(label) as u16;
+        app.regions.terminal_attach = Some(Rect::new(control_x, controls.y, width, 1));
+        control_spans.push(Span::styled(
+            label,
+            Style::default()
+                .fg(CANVAS)
+                .bg(GREEN)
+                .add_modifier(Modifier::BOLD),
+        ));
+        control_spans.push(Span::raw(" "));
+        control_x = control_x.saturating_add(width + 1);
+    }
+    if app.detail.source.project.is_some()
+        && app
+            .detail
+            .source
+            .terminal
+            .as_ref()
+            .is_some_and(|terminal| terminal.attachable)
+    {
+        let label = " ⌘ s SHELL ";
+        let width = UnicodeWidthStr::width(label) as u16;
+        app.regions.operator_shell = Some(Rect::new(control_x, controls.y, width, 1));
+        control_spans.push(Span::styled(
+            label,
+            Style::default()
+                .fg(CANVAS)
+                .bg(GOLD)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+    if control_spans.is_empty() {
+        control_spans.push(Span::styled("headless session · terminal unavailable", dim));
+    }
+    frame.render_widget(
+        Paragraph::new(Line::from(control_spans)).style(Style::default().bg(SURFACE)),
+        controls,
+    );
     let mut x = inner.x;
     let y = inner.y.saturating_add(1);
     for tab in InspectorTab::ALL {
@@ -1181,6 +1401,75 @@ fn draw_inspector(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) {
             .inspector_tabs
             .push((Rect::new(x, y, width, 1), tab));
         x = x.saturating_add(width + 1);
+    }
+}
+
+fn append_terminal(
+    lines: &mut Vec<Line<'static>>,
+    app: &App,
+    key: Style,
+    value: Style,
+    dim: Style,
+) {
+    let Some(terminal) = app.detail.source.terminal.as_ref() else {
+        lines.extend([
+            Line::from(Span::styled("no attachable terminal metadata", key)),
+            Line::from(Span::styled(
+                "Existing headless -p runs cannot be attached retroactively.",
+                dim,
+            )),
+            Line::from(Span::styled(
+                "Start a new agent with `claude_control terminal start`.",
+                dim,
+            )),
+        ]);
+        return;
+    };
+    lines.extend([
+        detail_line("id", terminal.id.as_deref().unwrap_or("—"), key, value),
+        detail_line(
+            "status",
+            terminal.status.as_deref().unwrap_or("unknown"),
+            key,
+            value,
+        ),
+        detail_line(
+            "kind",
+            terminal.kind.as_deref().unwrap_or("unknown"),
+            key,
+            value,
+        ),
+        detail_line("view", "read-only bounded log tail", key, value),
+        detail_line(
+            "control",
+            if terminal.attachable {
+                "single local operator lease"
+            } else {
+                "unavailable"
+            },
+            key,
+            value,
+        ),
+    ]);
+    if let Some(error) = &terminal.error {
+        lines.push(detail_line("error", error, key, value));
+    }
+    lines.extend([
+        Line::from(""),
+        Line::from(Span::styled("recent terminal output", key)),
+    ]);
+    if terminal.recent_output.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "No captured terminal output.",
+            dim,
+        )));
+    } else {
+        lines.extend(
+            terminal
+                .recent_output
+                .lines()
+                .map(|line| Line::from(Span::styled(line.to_owned(), value))),
+        );
     }
 }
 
@@ -1358,28 +1647,25 @@ fn append_provenance(
         ));
         let agent_owners = BTreeSet::from([agent.key.clone()]);
         let aggregate_visible = app.index == app.timeline.latest_index()
-            || cutoff.is_none_or(|limit| {
-                agent
-                    .finished
-                    .is_some_and(|finished| finished <= limit)
-            });
+            || cutoff.is_none_or(|limit| agent.finished.is_some_and(|finished| finished <= limit));
         let prompt = app
             .detail
             .latest_text(&agent_owners, &["prompt"], cutoff)
-            .or_else(|| aggregate_visible.then_some(agent.prompt.as_deref()).flatten());
+            .or_else(|| {
+                aggregate_visible
+                    .then_some(agent.prompt.as_deref())
+                    .flatten()
+            });
         let reasoning = app
             .detail
             .latest_text(&agent_owners, &["response", "reasoning"], cutoff)
-            .or_else(|| aggregate_visible.then_some(agent.reasoning.as_deref()).flatten());
+            .or_else(|| {
+                aggregate_visible
+                    .then_some(agent.reasoning.as_deref())
+                    .flatten()
+            });
         append_text(lines, "prompt", prompt, key, value, dim);
-        append_text(
-            lines,
-            "response / reasoning",
-            reasoning,
-            key,
-            value,
-            dim,
-        );
+        append_text(lines, "response / reasoning", reasoning, key, value, dim);
         lines.push(Line::from(""));
     }
 }
@@ -1405,10 +1691,7 @@ fn append_tools(
     for tool in tools.iter().rev() {
         let state = tool.state_at(cutoff);
         lines.push(Line::from(vec![
-            Span::styled(
-                "◆ ",
-                Style::default().fg(state_color(state)).bg(SURFACE),
-            ),
+            Span::styled("◆ ", Style::default().fg(state_color(state)).bg(SURFACE)),
             Span::styled(tool.name.clone(), key),
             Span::styled(format!("  {state}"), value),
             Span::styled(
@@ -1878,7 +2161,7 @@ fn draw_footer(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) {
         usize::from(area.right().saturating_sub(x).saturating_sub(25)),
         Style::default().fg(SUBTLE).bg(CANVAS),
     );
-    let hints = "/ search · ? help · q quit ";
+    let hints = "t terminal · / search · ? help · q quit ";
     if area.width > hints.len() as u16 {
         buffer.set_string(
             area.right() - hints.len() as u16,
@@ -1912,6 +2195,10 @@ fn draw_help(frame: &mut ratatui::Frame<'_>) {
             Span::raw("  v tabs · PgUp/PgDn or wheel scroll · m marker filter"),
         ]),
         Line::from(vec![
+            Span::styled("terminal", Style::default().fg(GOLD)),
+            Span::raw(" t attach selected agent · s separate operator shell"),
+        ]),
+        Line::from(vec![
             Span::styled("search", Style::default().fg(GOLD)),
             Span::raw("  / enter query · n/N next/previous match · Esc cancel"),
         ]),
@@ -1920,7 +2207,7 @@ fn draw_help(frame: &mut ratatui::Frame<'_>) {
             Span::raw("  i info · x mouse capture · q quit"),
         ]),
     ];
-    draw_overlay(frame, 78, 12, " controls ", Text::from(lines));
+    draw_overlay(frame, 78, 13, " controls ", Text::from(lines));
 }
 
 fn draw_info(frame: &mut ratatui::Frame<'_>, app: &App) {
@@ -2286,6 +2573,7 @@ fn format_clock(timestamp: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::TerminalDetail;
     use ratatui::backend::TestBackend;
     use serde_json::{Value, json};
 
@@ -2404,6 +2692,63 @@ mod tests {
         assert!(screen.contains("LOCAL DETAIL"), "{screen}");
         app.search_query = "response sentinel".to_owned();
         assert_eq!(app.detail_search_indices(), vec![0]);
+    }
+
+    #[test]
+    fn terminal_tab_renders_local_output_and_exposes_attach_actions() {
+        let mut app = sample_app(1);
+        app.detail
+            .apply_snapshot(&json!({
+                "type":"CLAUDE_CONTROL_DETAIL_SNAPSHOT","version":1,
+                "source":{
+                    "selector":"claude:11111111-1111-4111-8111-111111111111",
+                    "provider":"claude",
+                    "session_id":"11111111-1111-4111-8111-111111111111",
+                    "project":"/work/project",
+                    "partial":false,"truncated":false,
+                    "terminal":{
+                        "id":"11111111",
+                        "session_id":"11111111-1111-4111-8111-111111111111",
+                        "kind":"background","status":"idle","attachable":true,
+                        "recent_output":"terminal output sentinel"
+                    }
+                },
+                "agents":[],"tools":[],"events":[]
+            }))
+            .unwrap();
+        app.inspector_tab = InspectorTab::Terminal;
+        app.flow.select_node("session:session-0");
+        let backend = TestBackend::new(160, 45);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+        let screen = buffer_text(&terminal);
+        assert!(screen.contains("terminal output sentinel"), "{screen}");
+        assert!(screen.contains("ATTACH"), "{screen}");
+        assert!(screen.contains("SHELL"), "{screen}");
+        assert!(app.regions.terminal_attach.is_some());
+        assert!(app.regions.operator_shell.is_some());
+    }
+
+    #[test]
+    fn terminal_key_queues_exact_session_attach_action() {
+        let mut app = sample_app(0);
+        app.detail.source.terminal = Some(TerminalDetail {
+            session_id: Some("11111111-1111-4111-8111-111111111111".into()),
+            attachable: true,
+            ..TerminalDetail::default()
+        });
+        app.set_launcher(Some(TerminalLauncher {
+            python: PathBuf::from("python"),
+            cli: PathBuf::from("claude_control_cli.py"),
+            state_dir: None,
+        }));
+        app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE));
+        assert_eq!(
+            app.pending_action,
+            Some(ExternalAction::Attach {
+                session_id: "11111111-1111-4111-8111-111111111111".into()
+            })
+        );
     }
 
     #[test]

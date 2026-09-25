@@ -92,6 +92,13 @@ picker to inspect local prompt, response/reasoning, tool timing and semantic
 activity. Search, marker filters and prompt navigation stay local; AG-UI, OTLP,
 `--inspect` and `--tree` never receive transcript content.
 
+Version 0.25 adds opt-in interactive agents through Claude Code's native
+background PTY/ConPTY runtime. The Local Detail **TERMINAL** tab shows recent
+screen output; press `t` or click **ATTACH** for single-operator input. Press `s`
+or click **SHELL** for a separate user-operated shell in the authorized project.
+Existing headless `-p` runs cannot be attached retroactively, and terminal text
+never enters default observation exports.
+
 ## Choose the right workflow
 
 | Goal | Use | What it adds |
@@ -106,6 +113,8 @@ activity. Search, marker filters and prompt navigation stay local; AG-UI, OTLP,
 | Save instructions for the next turn | `message` | Explicit next-revision delivery and result handoff |
 | Observe the multi-agent graph and past execution | `monitor viewer` | Focus/recent/all graph, minimap, mouse cameras, activity replay and per-agent run tokens |
 | Inspect local Claude/Codex transcripts | `monitor viewer --local-detail` | Mouse session picker, provenance/tool/activity tabs, search and prompt navigation; never exported |
+| Type directly into a Claude agent terminal | `terminal start` + `monitor viewer --local-detail` | Native PTY/ConPTY, single-operator lease, TERMINAL tab and ATTACH |
+| Run commands directly in the same project | `terminal shell` or viewer `s` | Separate user-operated shell after authorized-root validation |
 | Inspect account limits or use the portable fallback | `monitor tui` / `monitor limits` | Codex, Claude, Gemini and Cursor quotas plus a Python-only screen |
 | List models available to the account | `models catalog` | Current selectors, resolved models and effort levels with account identity removed |
 | Configure model and effort per role | `models show/configure/reset` | Aliases, exact version IDs, atomic replacement and frozen existing work |
@@ -124,6 +133,22 @@ claude_control monitor limits
 claude_control monitor agui stream --after 0 --limit 100
 ```
 
+Create an interactive agent with a unique request ID. It starts idle and waits
+for the attached operator to enter the first instruction directly.
+
+```bash
+claude_control terminal start \
+  --name interactive-editor \
+  --role executor \
+  --project /absolute/project \
+  --request-id terminal-editor-001
+claude_control terminal list
+claude_control terminal logs --id <8-character-id> --bytes 8192
+claude_control terminal attach --id <8-character-id>
+claude_control terminal stop --id <8-character-id>
+claude_control terminal shell --project /absolute/project
+```
+
 See the [live monitor guide](docs/monitor.md) for mouse/keyboard controls and token semantics.
 See the [model settings guide](docs/models.md) for per-role defaults, exact
 version pinning and assignment overrides.
@@ -134,6 +159,12 @@ version pinning and assignment overrides.
   operating-system user**.
 - Claude native tools and MCP are disabled by the controller. Supplied-text
   tasks cannot read a path merely because the prompt names it.
+- `terminal start` uses the same safe mode, empty setting sources, empty MCP and
+  disabled native-tool policy. Attach is for agent conversation input. `terminal
+  shell` is a separate user-operated shell, so its commands and file changes are
+  direct user actions outside controller workspace isolation and approval.
+- Claude sessions created by other tools are catalog-only. Screen text, attach and
+  stop are available only for safe-profile terminals created by this controller.
 - Controlled edits happen in a private copy of a committed Git tree. The source
   repository is not changed automatically.
 - Workspace checks are selected by name from a fixed policy and run in a

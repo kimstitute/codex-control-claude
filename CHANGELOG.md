@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.25.0 — 2026-09-25
+
+- Add an explicit `terminal` command group backed by Claude Code's native
+  background PTY/ConPTY runtime: idempotent safe-profile start, content-free
+  catalog/status, bounded sanitized logs, attach, stop and a separate
+  user-operated project shell.
+- Add a `TERMINAL` Local Detail Inspector tab with recent local terminal output,
+  keyboard and mouse `ATTACH`/`SHELL` controls, and correct alternate-screen
+  suspension while the operator uses the attached terminal.
+- Enforce one host/user-wide operator lease per agent terminal and one shared
+  shell/apply lease per authorized project. Only controller-created safe-profile
+  terminals expose logs, attach or stop; unrelated Claude sessions remain
+  catalog-only. Existing headless `-p` runs remain non-attachable.
+- Start interactive terminals idle so prompt text never enters process argv;
+  bound request and ownership registries and fail explicitly instead of silently
+  dropping ownership metadata.
+- Keep terminal text out of the default observation ledger, AG-UI, OTLP,
+  `--inspect` and `--tree`; only the explicitly selected Local Detail stream
+  reads it, with bounded ANSI-sanitized output.
+
 ## 0.24.0 — 2026-09-24
 
 - Add an explicit local-only transcript catalog and bounded Claude Code/Codex

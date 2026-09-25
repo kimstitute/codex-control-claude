@@ -63,6 +63,46 @@ and a long-lived JSONL stream.
 See the [live monitor guide](monitor.md) for keys and the distinction between live
 estimates and final provider values.
 
+## Interactive agent terminals
+
+Existing `start`, `delegate`, `task` and `workspace` executions use headless `-p`
+sessions and cannot be attached retroactively. Create a separate interactive
+agent when you need to watch its screen and type directly:
+
+```bash
+claude_control terminal start \
+  --name interactive-editor \
+  --role executor \
+  --project /absolute/path/to/project \
+  --model 'opus[1m]' \
+  --effort high \
+  --request-id terminal-editor-001
+
+claude_control terminal list
+claude_control terminal status --id <8-character-id>
+claude_control terminal logs --id <8-character-id> --bytes 16384
+claude_control terminal attach --id <8-character-id>
+claude_control terminal stop --id <8-character-id>
+claude_control terminal shell --project /absolute/path/to/project
+```
+
+Omitting `--model` and `--effort` uses the role defaults. The terminal starts idle,
+and the attached operator enters the first instruction directly. Reusing the same
+request ID with identical settings returns the existing terminal, while changed input is
+rejected. `list` and `status` never include screen text; only `logs` returns a
+bounded ANSI-sanitized tail.
+
+`attach` connects to the exact background terminal and permits one local operator
+per session. Only safe-profile terminals created by this controller expose logs,
+attach or stop; other Claude sessions are catalog-only. Press `Ctrl+Z` to leave Claude Code attach. `shell` does not inject a
+command into the agent. It opens a separate user-operated shell below an allowed
+project root, and its changes bypass controller workspace isolation, named checks
+and the approval ledger.
+
+`terminal start` enables Claude Code safe mode, empty setting sources, empty MCP,
+and disables slash commands and native tools. Typing after attach can trigger a
+model request and is therefore an explicit operator action.
+
 ## Tasks with revisions and approval
 
 Use the [task lifecycle reference](tasks.md) for `task create/list/show/submit/revise/retry/review/accept`
