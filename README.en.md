@@ -108,6 +108,11 @@ self-update removes the pinned version path, a validated stable launcher repairs
 the path for new work while existing headless conversations retain and enforce
 their original binary identity.
 
+Version 0.26.1 keeps an Inspector closed after `Esc`, overview, or right-click
+even while live detail snapshots arrive. Press `b`/`Backspace` or click the
+**HISTORY** footer chip to reopen the session picker for another workflow,
+Claude, or Codex graph; `Esc` in that picker returns to the current graph.
+
 ## Choose the right workflow
 
 | Goal | Use | What it adds |

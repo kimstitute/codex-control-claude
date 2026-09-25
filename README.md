@@ -104,6 +104,11 @@ identity를 유지한 채 `claude:` 상세 관측으로 자동 승격합니다. 
 버전 경로가 사라지면 검증된 stable launcher로 새 작업 경로를 복구하되, 기존 headless
 대화의 binary identity는 바꾸지 않아 재개 시 명시적으로 거부합니다.
 
+0.26.1 버전은 `Esc`, overview 또는 우클릭으로 닫은 Inspector가 실시간 snapshot 때문에
+다시 열리지 않도록 사용자 의도를 유지합니다. graph 화면에서 `b`/`Backspace`를 누르거나
+footer의 **HISTORY**를 클릭하면 session picker로 돌아가 다른 workflow·Claude·Codex 기록을
+열 수 있고, picker의 `Esc`는 현재 graph로 복귀합니다.
+
 ## 어떤 명령을 선택해야 하나요?
 
 | 원하는 일 | 사용할 기능 | 추가되는 보장 |

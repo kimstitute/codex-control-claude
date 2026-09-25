@@ -173,7 +173,7 @@ fn choose_inner(sessions: &[SessionChoice]) -> Result<Option<String>> {
             );
             list_offset = state.offset();
             frame.render_widget(
-                Paragraph::new("↑↓/wheel select · click or Enter open · Esc safe observer")
+                Paragraph::new("↑↓/wheel select · click or Enter open · Esc return")
                     .alignment(Alignment::Center)
                     .style(Style::default().fg(MUTED).bg(SURFACE)),
                 footer,

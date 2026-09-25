@@ -8,7 +8,7 @@ use claude_control_viewer::graph::project;
 use claude_control_viewer::headless::{inspect_v1, render_tree};
 use claude_control_viewer::model::{DetailStore, Timeline};
 use claude_control_viewer::picker::{SessionChoice, choose};
-use claude_control_viewer::ui::TerminalLauncher;
+use claude_control_viewer::ui::{RunOutcome, TerminalLauncher};
 use crossterm::style::force_color_output;
 #[derive(Debug)]
 struct Args {
@@ -58,15 +58,8 @@ fn run() -> Result<()> {
         // remains on unless the viewer-specific flag disables it explicitly.
         force_color_output(args.color);
     }
-    let mut timeline = Timeline::default();
-    let mut detail = DetailStore::default();
-    if let Some(path) = &args.stream_file {
-        for event in read_jsonl_file(path)? {
-            ingest(&mut timeline, &mut detail, event)?;
-        }
-    }
-
     if args.inspect || args.tree {
+        let (mut timeline, mut detail) = initial_state(&args)?;
         if args.stream_file.is_none() {
             for event in snapshot_events(&args)? {
                 ingest(&mut timeline, &mut detail, event)?;
@@ -94,12 +87,39 @@ fn run() -> Result<()> {
             state_dir: args.state_dir.clone(),
         })
     };
-    let feed = if args.stream_file.is_some() {
-        None
-    } else {
-        Some(Feed::spawn(&feed_config(&args)?)?)
-    };
-    claude_control_viewer::ui::run(timeline, feed, detail, launcher)
+    loop {
+        let (timeline, detail) = initial_state(&args)?;
+        let feed = if args.stream_file.is_some() {
+            None
+        } else {
+            Some(Feed::spawn(&feed_config(&args)?)?)
+        };
+        match claude_control_viewer::ui::run(timeline, feed, detail, launcher.clone())? {
+            RunOutcome::Quit => return Ok(()),
+            RunOutcome::History { current_source } => {
+                let previous = current_source.or_else(|| args.detail_source.clone());
+                let sessions = catalog_sessions(&args)?;
+                if let Some(selector) = choose(&sessions)? {
+                    args.local_detail = true;
+                    args.detail_source = Some(selector);
+                } else {
+                    args.local_detail = previous.is_some();
+                    args.detail_source = previous;
+                }
+            }
+        }
+    }
+}
+
+fn initial_state(args: &Args) -> Result<(Timeline, DetailStore)> {
+    let mut timeline = Timeline::default();
+    let mut detail = DetailStore::default();
+    if let Some(path) = &args.stream_file {
+        for event in read_jsonl_file(path)? {
+            ingest(&mut timeline, &mut detail, event)?;
+        }
+    }
+    Ok((timeline, detail))
 }
 
 fn parse_args() -> Result<Args> {

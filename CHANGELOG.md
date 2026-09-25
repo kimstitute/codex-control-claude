@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.26.1 — 2026-09-25
+
+- Preserve an explicit Inspector dismissal across live Local Detail snapshots,
+  transcript promotion and ordinary graph refreshes. `Esc`, overview mode and a
+  right-click now keep the graph unobstructed until the operator selects a node.
+- Add an in-view session history route. Press `b` or `Backspace`, or click the
+  `HISTORY` footer chip, to reopen the keyboard/mouse session picker. Cancelling
+  the picker returns to the current graph; choosing an entry replaces the local
+  feed without restarting the outer viewer process.
+- Add regression coverage for dismissal persistence and keyboard/mouse history
+  navigation. Observation schemas and content-export boundaries are unchanged.
+
 ## 0.26.0 — 2026-09-25
 
 - Aggregate exact input, cache creation, cache read, output and thinking tokens

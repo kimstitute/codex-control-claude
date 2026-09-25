@@ -1,6 +1,6 @@
 # OMX 기능 도입 계획
 
-작성: 2026-09-20 · 갱신: 2026-09-25 · 기준: v0.26.0 · 상태: P1–P5, model catalog, Local Detail, 대화형 terminal 및 self-update 복구 구현
+작성: 2026-09-20 · 갱신: 2026-09-25 · 기준: v0.26.1 · 상태: P1–P5, model catalog, Local Detail, 대화형 terminal 및 self-update 복구 구현
 
 이 문서는 도입 당시의 설계와 단계별 통과 조건을 보존한다. 단계별 구현 상태는 문서 끝의 진행 기록을 따른다. P5는 기존 Claude 도구 비활성화를 유지하는 컨트롤러 작업 요청 방식으로 구체화했다.
 
@@ -898,3 +898,13 @@ manifest JSON과 `git diff --check`가 통과했다. 실제 계정 상태 이관
 - 모든 headless invocation은 binary identity를 저장한다. 복구 뒤 새 세션은 새 binary를 쓰지만
   기존 대화 재개는 identity가 달라지면 `session_binary_changed`로 거부하며 explicit restart만
   허용한다. schema 15와 content-free observation/AG-UI/OTLP/headless 계약은 유지한다.
+
+## 36. Inspector 닫기와 session history 복귀 — v0.26.1
+
+- `Esc`, overview와 우클릭은 Inspector를 명시적으로 닫은 상태로 기록한다. 이후 Local Detail
+  snapshot이나 terminal-to-transcript 승격이 들어와도 자동 선택하지 않으며, 사용자가 카드나
+  키보드 선택을 다시 수행할 때만 Inspector를 연다.
+- viewer footer의 `HISTORY` chip과 `b`/`Backspace`는 로컬 session picker로 복귀한다. 선택하면
+  해당 graph feed로 전환하고 `Esc`로 picker를 취소하면 직전 selector의 graph로 돌아간다.
+- 저장 stream에는 history picker를 제공하지 않는다. observation schema와 transcript의 local-only
+  경계는 변경하지 않는다.

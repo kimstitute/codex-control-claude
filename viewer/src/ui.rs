@@ -214,6 +214,7 @@ struct UiRegions {
     previous_era: Option<Rect>,
     next_era: Option<Rect>,
     marker_filter: Option<Rect>,
+    history: Option<Rect>,
     inspector_tabs: Vec<(Rect, InspectorTab)>,
     terminal_attach: Option<Rect>,
     operator_shell: Option<Rect>,
@@ -261,6 +262,7 @@ pub struct App {
     inspector_viewport_height: u16,
     inspector_follow_latest: bool,
     inspector_selected: Option<String>,
+    inspector_dismissed: bool,
     detail: DetailStore,
     inspector_tab: InspectorTab,
     marker_filter: MarkerFilter,
@@ -268,6 +270,13 @@ pub struct App {
     search_editing: bool,
     launcher: Option<TerminalLauncher>,
     pending_action: Option<ExternalAction>,
+    return_to_history: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RunOutcome {
+    Quit,
+    History { current_source: Option<String> },
 }
 
 impl App {
@@ -314,6 +323,7 @@ impl App {
             inspector_viewport_height: 0,
             inspector_follow_latest: false,
             inspector_selected: None,
+            inspector_dismissed: false,
             detail,
             inspector_tab: InspectorTab::Overview,
             marker_filter: MarkerFilter::All,
@@ -321,6 +331,7 @@ impl App {
             search_editing: false,
             launcher: None,
             pending_action: None,
+            return_to_history: false,
         })
     }
 
@@ -381,6 +392,42 @@ impl App {
         self.display_scene.cards.iter().find(|card| card.key == id)
     }
 
+    fn dismiss_inspector(&mut self) {
+        self.flow.clear_selection();
+        self.inspector_selected = None;
+        self.inspector_dismissed = true;
+    }
+
+    fn reveal_inspector(&mut self) {
+        self.inspector_dismissed = false;
+    }
+
+    fn request_history(&mut self) {
+        if self.launcher.is_none() {
+            self.error = Some("session history is unavailable for saved streams".to_owned());
+            return;
+        }
+        self.return_to_history = true;
+        self.quit = true;
+    }
+
+    fn auto_select_detail_agent(&mut self) {
+        if self.inspector_dismissed || self.selected_id().is_some() {
+            return;
+        }
+        let target = self.detail.agents.values().find_map(|agent| {
+            [agent.parent_key.as_ref(), Some(&agent.key)]
+                .into_iter()
+                .flatten()
+                .find(|key| self.display_scene.index_of(key).is_some())
+                .cloned()
+        });
+        if let Some(target) = target {
+            self.flow.select_node(&target);
+            self.flow.center_on_selected();
+        }
+    }
+
     fn refresh_projection(&mut self) {
         let selected = self.selected_id();
         match self.timeline.state_at(self.index) {
@@ -421,19 +468,7 @@ impl App {
                                     self.detail.tools.len(),
                                     self.detail.events.len()
                                 );
-                                if self.selected_id().is_none() {
-                                    let target = self.detail.agents.values().find_map(|agent| {
-                                        [agent.parent_key.as_ref(), Some(&agent.key)]
-                                            .into_iter()
-                                            .flatten()
-                                            .find(|key| self.display_scene.index_of(key).is_some())
-                                            .cloned()
-                                    });
-                                    if let Some(target) = target {
-                                        self.flow.select_node(&target);
-                                        self.flow.center_on_selected();
-                                    }
-                                }
+                                self.auto_select_detail_agent();
                             }
                             Err(error) => self.error = Some(error.to_string()),
                         }
@@ -704,6 +739,7 @@ impl App {
             .or_else(|| self.scene.cards.first())
             .map(|card| card.key.clone());
         if let Some(id) = candidate {
+            self.reveal_inspector();
             self.flow.select_node(&id);
             self.flow.center_on_selected();
         }
@@ -723,8 +759,12 @@ impl App {
                 FlowEvent::ViewportChanged { .. }
                 | FlowEvent::NodeDragged { .. }
                 | FlowEvent::NodeDragEnded { .. } => self.camera = CameraMode::Manual,
-                FlowEvent::NodeClicked { node_id } => self.flow.select_node(&node_id),
+                FlowEvent::NodeClicked { node_id } => {
+                    self.reveal_inspector();
+                    self.flow.select_node(&node_id);
+                }
                 FlowEvent::SelectionChanged { node_ids, .. } if !node_ids.is_empty() => {
+                    self.reveal_inspector();
                     self.flow.center_on_selected();
                 }
                 _ => {}
@@ -766,7 +806,10 @@ impl App {
         }
         match key.code {
             KeyCode::Char('q') => self.quit = true,
-            KeyCode::Esc => self.flow.clear_selection(),
+            KeyCode::Esc => self.dismiss_inspector(),
+            KeyCode::Backspace | KeyCode::Char('b') | KeyCode::Char('B') => {
+                self.request_history();
+            }
             KeyCode::Char('?') => self.show_help = true,
             KeyCode::Char('i') => self.show_info = true,
             KeyCode::Char(' ') => self.toggle_play(),
@@ -804,7 +847,7 @@ impl App {
             KeyCode::End | KeyCode::Char('g') | KeyCode::Char('G') => self.go_live(),
             KeyCode::Char('o') | KeyCode::Char('O') => {
                 self.camera = CameraMode::Overview;
-                self.flow.clear_selection();
+                self.dismiss_inspector();
                 self.flow.request_fit_view();
             }
             KeyCode::Char('f') | KeyCode::Char('F') => {
@@ -845,10 +888,12 @@ impl App {
                 self.process_flow_response(response);
             }
             KeyCode::Enter => {
+                let first = self.display_scene.cards.first().map(|card| card.key.clone());
                 if self.selected_id().is_none()
-                    && let Some(card) = self.display_scene.cards.first()
+                    && let Some(key) = first
                 {
-                    self.flow.select_node(&card.key);
+                    self.reveal_inspector();
+                    self.flow.select_node(&key);
                     self.flow.center_on_selected();
                 }
             }
@@ -874,6 +919,14 @@ impl App {
             return;
         }
         if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+            if self
+                .regions
+                .history
+                .is_some_and(|area| point_in_rect(point, area))
+            {
+                self.request_history();
+                return;
+            }
             if self
                 .regions
                 .terminal_attach
@@ -979,7 +1032,7 @@ impl App {
             return;
         }
         if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Right)) {
-            self.flow.clear_selection();
+            self.dismiss_inspector();
             return;
         }
         if point_in_rect(point, self.regions.canvas) {
@@ -994,7 +1047,7 @@ pub fn run(
     feed: Option<Feed>,
     detail: DetailStore,
     launcher: Option<TerminalLauncher>,
-) -> Result<()> {
+) -> Result<RunOutcome> {
     let mut screen = ScreenGuard::enter()?;
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend).context("could not initialize terminal")?;
@@ -1037,7 +1090,14 @@ pub fn run(
             }
         }
     }
-    Ok(())
+    if app.return_to_history {
+        Ok(RunOutcome::History {
+            current_source: (!app.detail.source.selector.is_empty())
+                .then(|| app.detail.source.selector.clone()),
+        })
+    } else {
+        Ok(RunOutcome::Quit)
+    }
 }
 
 fn run_external(launcher: Option<&TerminalLauncher>, action: &ExternalAction) -> Result<()> {
@@ -2049,6 +2109,7 @@ fn draw_footer(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) {
     app.regions.previous_era = None;
     app.regions.next_era = None;
     app.regions.marker_filter = None;
+    app.regions.history = None;
     let mut x = area.x;
     let brand = " observer ";
     buffer.set_string(
@@ -2061,6 +2122,17 @@ fn draw_footer(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) {
             .add_modifier(Modifier::BOLD),
     );
     x += brand.len() as u16 + 1;
+    if app.launcher.is_some() {
+        let history = " ☰ HISTORY ";
+        app.regions.history = Some(Rect::new(x, area.y, history.len() as u16, 1));
+        buffer.set_string(
+            x,
+            area.y,
+            history,
+            Style::default().fg(GOLD).bg(SURFACE_RAISED),
+        );
+        x += history.len() as u16 + 1;
+    }
     let play = if app.playback == Playback::Playing {
         " Ⅱ PAUSE "
     } else {
@@ -2191,7 +2263,7 @@ fn draw_footer(frame: &mut ratatui::Frame<'_>, area: Rect, app: &mut App) {
         usize::from(area.right().saturating_sub(x).saturating_sub(25)),
         Style::default().fg(SUBTLE).bg(CANVAS),
     );
-    let hints = "t terminal · / search · ? help · q quit ";
+    let hints = "b history · t terminal · ? help · q quit ";
     if area.width > hints.len() as u16 {
         buffer.set_string(
             area.right() - hints.len() as u16,
@@ -2217,6 +2289,10 @@ fn draw_help(frame: &mut ratatui::Frame<'_>) {
             Span::raw("   tab/arrows select · h/j/k/l pan · esc close detail"),
         ]),
         Line::from(vec![
+            Span::styled("history", Style::default().fg(GOLD)),
+            Span::raw(" b/Backspace session list · click HISTORY"),
+        ]),
+        Line::from(vec![
             Span::styled("replay", Style::default().fg(GOLD)),
             Span::raw("  space play/pause · [ ] step · { } run · p/P prompt · ,/. speed"),
         ]),
@@ -2237,7 +2313,7 @@ fn draw_help(frame: &mut ratatui::Frame<'_>) {
             Span::raw("  i info · x mouse capture · q quit"),
         ]),
     ];
-    draw_overlay(frame, 78, 13, " controls ", Text::from(lines));
+    draw_overlay(frame, 78, 14, " controls ", Text::from(lines));
 }
 
 fn draw_info(frame: &mut ratatui::Frame<'_>, app: &App) {
@@ -2698,6 +2774,56 @@ mod tests {
         let panel = app.regions.inspector.expect("selection should open detail");
         assert!(panel.width > app.regions.canvas.width);
         assert!(buffer_text(&terminal).contains("SAFE INSPECTOR"));
+    }
+
+    #[test]
+    fn escaped_inspector_stays_closed_across_detail_refreshes() {
+        let mut app = sample_app(1);
+        app.detail
+            .apply_snapshot(&json!({
+                "type":"CLAUDE_CONTROL_DETAIL_SNAPSHOT","version":1,
+                "source":{"selector":"claude:session-0","provider":"claude","session_id":"session-0","partial":false,"truncated":false},
+                "agents":[{"key":"session:session-0","agent_id":"session-0","session_id":"session-0","started":1.0}],
+                "tools":[],"events":[]
+            }))
+            .unwrap();
+
+        app.auto_select_detail_agent();
+        assert_eq!(app.selected_id().as_deref(), Some("session:session-0"));
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(app.selected_id().is_none());
+
+        app.auto_select_detail_agent();
+        assert!(app.selected_id().is_none());
+        assert!(app.inspector_dismissed);
+    }
+
+    #[test]
+    fn history_key_and_chip_request_the_session_picker() {
+        let launcher = TerminalLauncher {
+            python: PathBuf::from("python"),
+            cli: PathBuf::from("claude_control_cli.py"),
+            state_dir: None,
+        };
+        let mut app = sample_app(1);
+        app.set_launcher(Some(launcher.clone()));
+        app.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE));
+        assert!(app.quit);
+        assert!(app.return_to_history);
+
+        let mut app = sample_app(1);
+        app.set_launcher(Some(launcher));
+        let backend = TestBackend::new(160, 45);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+        let history = app.regions.history.expect("history chip should be clickable");
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            history.x,
+            history.y,
+        ));
+        assert!(app.quit);
+        assert!(app.return_to_history);
     }
 
     #[test]

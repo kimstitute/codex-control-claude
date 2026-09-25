@@ -32,7 +32,9 @@ claude_control monitor viewer --detail-source '<selector>'
 
 Local Detail은 관리 run artifact와 기본 `~/.claude/projects`, `~/.codex/sessions`
 아래 JSONL만 bounded scan합니다. `--claude-root`와 `--codex-root`로 대체 root를
-지정할 수 있습니다. picker를 `Esc`로 닫으면 전사를 열지 않고 Safe Observer로 진행합니다.
+지정할 수 있습니다. 시작 picker를 `Esc`로 닫으면 전사를 열지 않고 Safe Observer로 진행합니다.
+graph 안에서는 `b`/`Backspace` 또는 footer의 `HISTORY`를 사용해 picker를 다시 열 수 있습니다.
+여기서 `Esc`를 누르면 직전에 보던 graph로 돌아가고, 항목을 선택하면 해당 history로 전환합니다.
 `monitor local stream`은 prompt와 응답을 JSONL stdout으로 그대로 내보내므로 민감한
 로컬 출력으로 취급해야 합니다. 파일로 저장하거나 다른 프로세스에 전달할 때는 사용자가
 명시적으로 선택해야 합니다.
@@ -64,9 +66,10 @@ Codex/Claude 프로세스가 기계 출력용 `NO_COLOR=1`을 설정해도 대�
 | `GAP` chip 클릭 | 고정 간격과 기록 시각 기반 압축 재생 전환 |
 | `M:*` chip 클릭 | all, prompt, tool, failure, agent marker filter 순환 |
 | Inspector tab 클릭 | Overview, Provenance, Tools, Activity, Terminal 전환 |
+| `HISTORY` 클릭 | workflow·Claude·Codex session picker 다시 열기 |
 | `ATTACH` 클릭 | 선택한 native background agent terminal에 단독 조작자로 연결 |
 | `SHELL` 클릭 | 선택 소스의 허용된 project에 별도 사용자 shell 열기 |
-| 우클릭 | inspector 닫기 |
+| 우클릭 | inspector를 닫고 새 snapshot의 자동 재열기 억제 |
 
 | 키 | 동작 |
 |---|---|
@@ -82,6 +85,8 @@ Codex/Claude 프로세스가 기계 출력용 `NO_COLOR=1`을 설정해도 대�
 | `PageUp`, `PageDown` | 열린 inspector를 한 화면씩 스크롤 |
 | `Tab`, `Shift-Tab`, 방향키 | 다음·이전·공간상 인접 카드 선택 |
 | `Enter` | 선택이 없을 때 첫 카드 선택 |
+| `Esc` | inspector를 닫고 사용자가 다시 카드를 선택할 때까지 유지 |
+| `b`, `Backspace` | session history picker로 돌아가기 |
 | `o`, `f`, `r`, `c` | overview, 최신 작업 follow, 재배치, 선택 카드 중앙 정렬 |
 | `a` | `focus` → `recent` → `all` graph scope 순환 |
 | `HJKL`, `+`, `-`, `0` | manual pan, zoom, zoom 초기화 |

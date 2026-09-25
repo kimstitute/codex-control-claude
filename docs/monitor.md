@@ -32,8 +32,10 @@ claude_control monitor viewer --detail-source '<selector>'
 
 Local Detail scans bounded JSONL data only from managed run artifacts and the
 default `~/.claude/projects` and `~/.codex/sessions` roots. Override them with
-`--claude-root` and `--codex-root`. `Esc` closes the picker and continues with
-the Safe Observer without opening transcript content.
+`--claude-root` and `--codex-root`. `Esc` closes the initial picker and continues
+with the Safe Observer without opening transcript content. From the graph, press
+`b`/`Backspace` or click `HISTORY` to reopen the picker. `Esc` there returns to
+the graph that was already open; selecting an entry switches history feeds.
 `monitor local stream` writes prompt and response bodies directly to JSONL
 stdout. Treat that stream as sensitive local output, and redirect or pipe it
 only when explicitly intended.
@@ -66,9 +68,10 @@ when an explicitly monochrome screen is required.
 | Click the `GAP` chip | Toggle uniform and timestamp-compressed playback |
 | Click the `M:*` chip | Rotate all, prompt, tool, failure and agent marker filters |
 | Click an Inspector tab | Open Overview, Provenance, Tools, Activity or Terminal |
+| Click `HISTORY` | Reopen the workflow, Claude and Codex session picker |
 | Click `ATTACH` | Attach as the single operator of the selected native background terminal |
 | Click `SHELL` | Open a separate user shell in the selected source's authorized project |
-| Right-click | Close the inspector |
+| Right-click | Close the inspector and suppress live snapshot auto-reopen |
 
 | Key | Action |
 |---|---|
@@ -84,6 +87,8 @@ when an explicitly monochrome screen is required.
 | `PageUp`, `PageDown` | Scroll the open inspector by one viewport |
 | `Tab`, `Shift-Tab`, arrows | Select the next, previous, or spatially adjacent card |
 | `Enter` | Select the first card when nothing is selected |
+| `Esc` | Close the Inspector until the operator selects a node again |
+| `b`, `Backspace` | Return to the session history picker |
 | `o`, `f`, `r`, `c` | Overview, follow latest work, relayout, or center selection |
 | `a` | Rotate graph scope: `focus` → `recent` → `all` |
 | `HJKL`, `+`, `-`, `0` | Pan, zoom, or reset zoom |
