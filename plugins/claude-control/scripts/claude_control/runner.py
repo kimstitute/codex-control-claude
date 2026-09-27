@@ -248,19 +248,33 @@ def exec_claude(state_dir, run_id):
 
 
 def kill_group(proc, graceful=True):
-    if graceful:
+    def group_finished():
+        # The unreaped leader keeps its PGID reserved while this check runs.
+        return child_exited(proc) and not group_alive(proc.pid)
+
+    def signal_group(sig):
         try:
-            os.killpg(proc.pid, signal.SIGTERM)
+            os.killpg(proc.pid, sig)
         except ProcessLookupError:
             pass
+        except PermissionError:
+            # Darwin can report EPERM for a process group whose only member is
+            # an unreaped zombie. Accept that race only after proving no live
+            # member remains; otherwise preserve the fail-closed behavior.
+            if not group_finished():
+                raise
+
+    if group_finished():
+        return proc.wait()
+    if graceful:
+        signal_group(signal.SIGTERM)
         deadline = time.monotonic() + 3
         while time.monotonic() < deadline and not child_exited(proc):
             time.sleep(0.05)
+        if group_finished():
+            return proc.wait()
     # Never call poll()/wait() before the last killpg: a reaped PGID could be reused.
-    try:
-        os.killpg(proc.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
+    signal_group(signal.SIGKILL)
     deadline = time.monotonic() + 5
     while group_alive(proc.pid):
         if time.monotonic() >= deadline:

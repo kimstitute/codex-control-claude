@@ -91,6 +91,42 @@ class EnvironmentSelectionTests(unittest.TestCase):
 
         identity.assert_called_once_with(42)
 
+    def test_finished_process_group_is_reaped_without_redundant_signal(self) -> None:
+        process = mock.Mock(pid=42)
+        process.wait.return_value = 0
+        with (
+            mock.patch.object(runner, "child_exited", return_value=True),
+            mock.patch.object(runner, "group_alive", return_value=False),
+            mock.patch.object(runner.os, "killpg") as killpg,
+        ):
+            self.assertEqual(runner.kill_group(process, graceful=False), 0)
+
+        killpg.assert_not_called()
+        process.wait.assert_called_once_with()
+
+    def test_macos_eperm_is_accepted_only_after_group_finishes(self) -> None:
+        process = mock.Mock(pid=42)
+        process.wait.return_value = 0
+        with (
+            mock.patch.object(runner, "child_exited", side_effect=[False, True]),
+            mock.patch.object(runner, "group_alive", return_value=False),
+            mock.patch.object(runner.os, "killpg", side_effect=PermissionError(1, "denied")),
+        ):
+            self.assertEqual(runner.kill_group(process, graceful=False), 0)
+
+        process.wait.assert_called_once_with()
+
+    def test_macos_eperm_remains_an_error_for_a_live_group(self) -> None:
+        process = mock.Mock(pid=42)
+        with (
+            mock.patch.object(runner, "child_exited", return_value=False),
+            mock.patch.object(runner.os, "killpg", side_effect=PermissionError(1, "denied")),
+        ):
+            with self.assertRaises(PermissionError):
+                runner.kill_group(process, graceful=False)
+
+        process.wait.assert_not_called()
+
 
 class ControllerTestCase(unittest.TestCase):
     max_parallel = 2
