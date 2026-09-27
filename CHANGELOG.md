@@ -17,6 +17,8 @@
   identity, and canonicalize `/var`/`/private/var` source aliases.
 - Treat Darwin's `EPERM` signal race as a completed cleanup only after the
   unreaped leader has exited and the owned process group has no live members.
+- Canonicalize macOS `/var` aliases in portable fixtures and keep Linux-only
+  parent-death/subreaper assertions out of Darwin validation.
 - Resume from the latest actually launched turn when a newer follow-up reservation
   expired before launch, while retaining exact Claude-binary verification.
 - Add deterministic Darwin host/capability/durability tests, macOS Python CI and

@@ -11,6 +11,7 @@ import signal
 import subprocess
 import sys
 import time
+import unittest
 from pathlib import Path
 from unittest import mock
 
@@ -211,6 +212,7 @@ class WorkspaceLaunchTests(ControllerTestCase):
             released = workspace.reconcile(Store(self.state), created["id"])
         self.assertEqual(released["receipts"][0]["result"]["outcome"], "unknown")
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "requires Linux child subreaper")
     def test_owner_death_after_identity_checkpoint_exits_125_before_exec(self) -> None:
         created = self.ready_workspace()
         child_ready_r, child_ready_w = os.pipe()

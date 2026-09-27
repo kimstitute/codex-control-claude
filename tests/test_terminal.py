@@ -67,7 +67,7 @@ class FakeStore:
         self.path = root / "state"
         self.path.mkdir()
         self.config = {"claude_bin": str(binary)}
-        self._project = str(project)
+        self._project = str(project.resolve())
 
     def role_defaults(self):
         return {"executor": {"model": "opus", "effort": "high"}}

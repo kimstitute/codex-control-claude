@@ -40,7 +40,7 @@ def legacy_store(root):
     os.chmod(state / "state.sqlite3", 0o600)
     config["schema"] = 3
     write_json(state / "config.json", config)
-    return state, project
+    return state, project.resolve()
 
 
 class MigrationTests(unittest.TestCase):

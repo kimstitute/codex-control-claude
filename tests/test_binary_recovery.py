@@ -105,13 +105,14 @@ class BinaryRecoveryTests(unittest.TestCase):
         config_path.write_text(json.dumps(config), encoding="utf-8")
         config_path.chmod(0o600)
         seeded = Store(self.state)
-        self.assertEqual(seeded.config["claude_launcher"], str(self.launcher.absolute()))
+        canonical_launcher = self.launcher.parent.resolve() / self.launcher.name
+        self.assertEqual(seeded.config["claude_launcher"], str(canonical_launcher))
         new = self.rotate()
 
         reopened = Store(self.state)
 
         self.assertEqual(reopened.config["claude_bin"], str(new.resolve()))
-        self.assertEqual(reopened.config["claude_launcher"], str(self.launcher.absolute()))
+        self.assertEqual(reopened.config["claude_launcher"], str(canonical_launcher))
 
     def test_recovered_binary_cannot_silently_resume_an_existing_headless_session(self):
         Store.initialize(self.state, self.launcher, [self.project])

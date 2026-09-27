@@ -685,7 +685,7 @@ class ControllerProcessTests(ControllerTestCase):
 
     def test_killed_worker_becomes_unknown_and_is_not_relaunched(self) -> None:
         run = self.start(
-            "killed-worker", {"behavior": "sleep", "sleep_seconds": 10}, "killed-worker"
+            "killed-worker", {"behavior": "sleep", "sleep_seconds": 1}, "killed-worker"
         )
         deadline = time.monotonic() + 4
         row = None
