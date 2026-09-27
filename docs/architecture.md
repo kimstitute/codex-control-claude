@@ -46,9 +46,9 @@ See [OMX adoption notes](omx-adoption.md) for the source analysis and later phas
 
 ## Process control
 
-Workers record process IDs alongside Linux start ticks, boot identity, and PID namespace. Cancellation is a durable request handled by the owning worker; the public CLI does not kill an arbitrary saved PID.
+Workers record process IDs alongside platform-specific start identity, boot identity, and execution scope. Linux uses `/proc` start ticks and PID namespaces; macOS uses the base-system process start timestamp, process group and a hardware/boot marker; Windows uses process creation time and Job Object ownership. Cancellation is a durable request handled by the owning worker; the public CLI does not kill an arbitrary saved PID.
 
-The worker keeps the process-group leader unreaped while signalling and checking group cleanup. A Linux parent-death signal and the exec wrapper address launch/worker-death races. If the controller cannot establish the execution's outcome, it records `unknown` and requires reconciliation rather than automatically retrying.
+On POSIX systems the worker keeps the process-group leader unreaped while signalling and checking group cleanup. Linux also uses a parent-death signal; macOS closes the launch race with the exec wrapper and quarantines a still-live group after abnormal worker loss. If the controller cannot establish the execution's outcome, it records `unknown` and requires reconciliation rather than automatically retrying.
 
 These mechanisms manage the owned process group. They are not a cgroup sandbox and do not contain a process that deliberately escapes the group. Project allowlists constrain the selected working directory, not all filesystem access.
 
@@ -109,7 +109,7 @@ is used to recover. See [the task guide](tasks.md#schema-and-migration).
 
 ## Installation
 
-`install.py` uses Codex's bundled personal-marketplace helpers and `codex plugin add`. A host-local file lock serializes installations. The new tree is staged and validated before replacement; the previous tree is retained for rollback. Runtime state is neither packaged nor removed by updates. Optional viewer and Windows supervisor binaries are supplied locally with an exact SHA-256; update preservation revalidates their manifests and bytes.
+`install.py` uses Codex's bundled personal-marketplace helpers and `codex plugin add`. A host-local file lock serializes installations. The new tree is staged and validated before replacement; the previous tree is retained for rollback. Runtime state is neither packaged nor removed by updates. Optional Linux/macOS/Windows viewer and Windows supervisor binaries are supplied locally with an exact SHA-256; update preservation revalidates their manifests and bytes.
 
 `ccc-viewer` is a separate Rust/Ratatui presentation process. It never opens the
 controller database. The Python controller streams content-free AG-UI JSONL from

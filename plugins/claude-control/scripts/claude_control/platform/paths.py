@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 
-def default_state_dir(environ=None, home=None, os_name=None):
+def default_state_dir(environ=None, home=None, os_name=None, sys_platform=None):
     """Return the controller state directory for injected or current host facts."""
     environ = os.environ if environ is None else environ
     os_name = os.name if os_name is None else os_name
+    sys_platform = sys.platform if sys_platform is None else sys_platform
     if os_name == "nt":
         base = environ.get("LOCALAPPDATA")
         if not base:
@@ -24,4 +26,6 @@ def default_state_dir(environ=None, home=None, os_name=None):
     if base:
         return Path(base) / "claude-control"
     home = Path.home() if home is None else Path(home)
+    if sys_platform == "darwin":
+        return home / "Library" / "Application Support" / "codex-control-claude" / "state"
     return home / ".local" / "state" / "claude-control"

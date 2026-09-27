@@ -1,11 +1,13 @@
 """Portable host identity and private-state behavior."""
 
+import errno
 import json
 import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "plugins/claude-control/scripts"))
@@ -16,7 +18,10 @@ from claude_control.platform.host import (  # noqa: E402
     FILE_ALL_ACCESS,
     HostError,
     LinuxHost,
+    MacOSHost,
     WindowsHost,
+    _MacOSApi,
+    select_host,
 )
 from claude_control.store import ControlError, Store, write_json  # noqa: E402
 
@@ -87,6 +92,7 @@ class FakeWinApi:
         self.calls.append(("flush_file_buffers", handle))
 
 
+@unittest.skipUnless(sys.platform.startswith("linux"), "Linux /proc behavior")
 class LinuxHostCompatibilityTests(unittest.TestCase):
     def test_linux_module_wrappers_preserve_identity_and_liveness(self):
         host = LinuxHost()
@@ -119,6 +125,95 @@ class LinuxHostCompatibilityTests(unittest.TestCase):
             config.pop("principal_id")
             write_json(config_path, config)
             self.assertNotIn("platform", Store(state).config)
+
+
+class FakeMacApi:
+    def __init__(self):
+        self.processes = {42: {"start": "Sat Sep 27 12:34:56 2026", "state": "S", "group": 42}}
+        self.live_groups = {42}
+        self.sync_calls = 0
+
+    def hardware_uuid(self):
+        return "11111111-2222-3333-4444-555555555555"
+
+    def boot_marker(self):
+        return "mac-boot:100:200"
+
+    def process_identity(self, pid):
+        value = self.processes.get(int(pid))
+        return dict(value) if value else None
+
+    def group_alive(self, group):
+        return int(group) in self.live_groups
+
+    def sync(self):
+        self.sync_calls += 1
+
+
+class MacOSHostTests(unittest.TestCase):
+    def test_base_system_output_is_parsed_without_locale_dependent_dates(self):
+        outputs = {
+            "/usr/sbin/ioreg": '    "IOPlatformUUID" = "hardware-uuid"\n',
+            "/usr/sbin/sysctl": "{ sec = 123, usec = 456 } Sat Sep 27 00:00:00 2026\n",
+            "/bin/ps": "Sat Sep 27 12:34:56 2026  S+  42\n",
+        }
+
+        def run(argv, **_kwargs):
+            return SimpleNamespace(returncode=0, stdout=outputs[argv[0]], stderr="")
+
+        api = _MacOSApi(run=run, sync=lambda: None)
+
+        self.assertEqual(api.hardware_uuid(), "hardware-uuid")
+        self.assertEqual(api.boot_marker(), "mac-boot:123:456")
+        self.assertEqual(
+            api.process_identity(42),
+            {"start": "Sat Sep 27 12:34:56 2026", "state": "S", "group": 42},
+        )
+
+    def test_selects_darwin_and_preserves_process_identity(self):
+        api = FakeMacApi()
+        host = select_host("posix", "darwin", api=api)
+
+        self.assertIsInstance(host, MacOSHost)
+        self.assertEqual(host.name, "macos")
+        self.assertEqual(len(host.host_identity()), 64)
+        self.assertTrue(host.pid_namespace().startswith("mac-host:"))
+        self.assertTrue(host.alive(42, api.processes[42]["start"], host.boot_id()))
+        self.assertTrue(host.group_alive(42))
+
+    def test_reused_or_dead_process_is_not_alive(self):
+        api = FakeMacApi()
+        host = MacOSHost(api=api)
+
+        self.assertFalse(host.alive(42, "different start", host.boot_id()))
+        api.processes[42]["state"] = "Z"
+        self.assertFalse(host.alive(42, api.processes[42]["start"], host.boot_id()))
+
+    def test_directory_fsync_falls_back_to_system_sync_when_darwin_rejects_it(self):
+        api = FakeMacApi()
+        host = MacOSHost(api=api)
+        with (
+            tempfile.TemporaryDirectory() as root,
+            mock.patch.object(
+                host_module.os, "fsync", side_effect=OSError(errno.EINVAL, "directory fsync")
+            ),
+        ):
+            host.flush_directory(root)
+
+        self.assertEqual(api.sync_calls, 1)
+
+    def test_state_records_macos_platform_and_posix_principal(self):
+        fake = MacOSHost(api=FakeMacApi())
+        with tempfile.TemporaryDirectory() as root, mock.patch.object(host_module, "HOST", fake):
+            project = Path(root) / "project"
+            project.mkdir()
+            state = Path(root) / "state"
+
+            config = Store.initialize(state, sys.executable, [project])
+
+            self.assertEqual(config["platform"], "macos")
+            self.assertEqual(config["principal_id"], f"uid:{os.getuid()}")
+            self.assertEqual(Store(state).config["platform"], "macos")
 
 
 class WindowsHostTests(unittest.TestCase):

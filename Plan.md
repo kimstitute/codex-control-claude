@@ -1,6 +1,6 @@
 # OMX 기능 도입 계획
 
-작성: 2026-09-20 · 갱신: 2026-09-25 · 기준: v0.26.1 · 상태: P1–P5, model catalog, Local Detail, 대화형 terminal 및 self-update 복구 구현
+작성: 2026-09-20 · 갱신: 2026-09-27 · 기준: v0.27.0 · 상태: P1–P5, model catalog, Local Detail, 대화형 terminal, self-update 복구 및 macOS core 지원 구현
 
 이 문서는 도입 당시의 설계와 단계별 통과 조건을 보존한다. 단계별 구현 상태는 문서 끝의 진행 기록을 따른다. P5는 기존 Claude 도구 비활성화를 유지하는 컨트롤러 작업 요청 방식으로 구체화했다.
 
@@ -908,3 +908,20 @@ manifest JSON과 `git diff --check`가 통과했다. 실제 계정 상태 이관
   해당 graph feed로 전환하고 `Esc`로 picker를 취소하면 직전 selector의 graph로 돌아간다.
 - 저장 stream에는 history picker를 제공하지 않는다. observation schema와 transcript의 local-only
   경계는 변경하지 않는다.
+
+## 37. macOS core 지원과 fail-closed workspace — v0.27.0
+
+- Intel·Apple Silicon macOS에서 hardware UUID, boot time, PID start time과 process group을
+  결합한 host-local execution identity를 사용한다. 상태는 UID와 Mac 전용 Application Support
+  경로에 묶으며 XDG override는 유지한다.
+- supplied-text session, task, queue, workflow, model catalog, telemetry, provider limits,
+  Python TUI, native viewer와 interactive terminal을 지원한다. viewer는 기존 CI의
+  `x86_64-apple-darwin`과 `aarch64-apple-darwin` artifact를 그대로 사용한다.
+- Linux 전용 parent-death signal과 Bubblewrap path를 Darwin에서 호출하지 않는다. macOS
+  child는 launch race를 닫고 독립 POSIX process group으로 실행하며 worker가 정상 종료할 때
+  group 전체를 회수한다. 비정상 worker 소실 뒤 살아 있는 group은 unknown으로 격리한다.
+- Apple App Sandbox는 signed app entitlement 경계이고 deprecated `sandbox-exec`는 장기 지원
+  계약이 아니므로 native workspace backend로 채택하지 않는다. `workspace doctor`와 capability
+  report는 이유가 있는 unsupported를 반환하며 composition edit/check/freeze도 fail-closed한다.
+- Linux에서 실행되는 injected Darwin unit tests와 macOS Python CI를 추가한다. 실제 Claude 계정
+  호출과 terminal attach는 대상 Mac에서 opt-in smoke를 거쳐 stable 표기로 승격한다.

@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.27.0 — 2026-09-27
+
+- Add native macOS host identity, boot identity, PID-start and process-group
+  liveness primitives for same-user controller sessions on Intel and Apple Silicon.
+- Enable macOS session/task/workflow control, model catalog, telemetry, provider
+  limits, Python TUI, interactive terminals and the existing Rataflow viewer builds.
+- Report macOS capabilities explicitly and fail closed for `workspace`, sandboxed
+  checks and composition edit/freeze stages; no deprecated `sandbox-exec`, Docker,
+  VM or unconfined fallback is selected automatically.
+- Use the macOS Application Support state path by default while preserving an
+  explicit `XDG_STATE_HOME` override.
+- Keep Linux parent-death signaling Linux-only and use a portable launch-race
+  check plus owned POSIX process groups on macOS.
+- Resume from the latest actually launched turn when a newer follow-up reservation
+  expired before launch, while retaining exact Claude-binary verification.
+- Add deterministic Darwin host/capability/durability tests, macOS Python CI and
+  bilingual setup/support documentation. Physical-Mac account smoke remains opt-in.
+
 ## 0.26.1 — 2026-09-25
 
 - Preserve an explicit Inspector dismissal across live Local Detail snapshots,

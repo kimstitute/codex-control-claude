@@ -800,7 +800,18 @@ class Store:
                 ).fetchone()
             )
             if not restart and not resume_unstarted:
-                self._assert_resume_binary(latest)
+                resume_source = db.execute(
+                    "SELECT * FROM runs WHERE session_id=? AND "
+                    "(started IS NOT NULL OR child_pid IS NOT NULL OR actual_models != '[]') "
+                    "ORDER BY rowid DESC LIMIT 1",
+                    (session["id"],),
+                ).fetchone()
+                if not resume_source:
+                    raise ControlError(
+                        "session_binary_unknown",
+                        "Cannot identify the Claude binary used by this backend conversation.",
+                    )
+                self._assert_resume_binary(dict(resume_source))
             if latest["status"] == "completed" and not self.result_valid(latest):
                 db.execute(
                     "UPDATE runs SET status='failed',reason='result_integrity' WHERE id=?",

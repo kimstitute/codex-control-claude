@@ -389,7 +389,7 @@ make no model calls. Delivery receipts bind only at explicit submit or dispatch.
 
 ## Controlled workspaces
 
-`workspace doctor/create/task/run/status/list/export/apply/stop/reconcile` are documented in the [workspace guide](workspaces.md). Creation reserves one immutable workspace identity before copying. Use explicit file/check policies, a finite run admission window, and a frozen export for review. Schema 12 adds guarded source application. Linux workspaces require Bubblewrap; Windows workspaces require the pinned native supervisor and Bubblewrap inside WSL2.
+`workspace doctor/create/task/run/status/list/export/apply/stop/reconcile` are documented in the [workspace guide](workspaces.md). Creation reserves one immutable workspace identity before copying. Use explicit file/check policies, a finite run admission window, and a frozen export for review. Schema 12 adds guarded source application. Linux workspaces require Bubblewrap; Windows workspaces require the pinned native supervisor and Bubblewrap inside WSL2. macOS reports this surface unavailable and never falls back to unconfined execution.
 
 ## Explicit execution settings
 

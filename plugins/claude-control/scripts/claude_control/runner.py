@@ -12,6 +12,7 @@ from pathlib import Path
 
 from .execution_settings import binary_identity, validate_effort
 from .platform.environment import select_environment
+from .platform.host import HOST
 from .platform.locks import file_lock
 from .protocol import build_argv, parse_stream
 from .store import (
@@ -114,10 +115,13 @@ def launch_worker(store, run_id):
 
 
 def bind_parent(parent):
-    """Single-threaded Linux child pre-exec: die if the owning worker disappears."""
+    """Prepare a POSIX child and close the launch race with its owning worker."""
     signal.signal(signal.SIGHUP, signal.SIG_DFL)
-    libc = ctypes.CDLL(None, use_errno=True)
-    if libc.prctl(1, signal.SIGTERM, 0, 0, 0) != 0 or os.getppid() != parent:
+    if sys.platform.startswith("linux"):
+        libc = ctypes.CDLL(None, use_errno=True)
+        if libc.prctl(1, signal.SIGTERM, 0, 0, 0) != 0:
+            os._exit(125)
+    if os.getppid() != parent:
         os._exit(125)
 
 
@@ -294,7 +298,7 @@ def run_worker(state_dir, run_id):
                 ),
             ).rowcount
             if claimed and store.config["schema"] >= 13:
-                platform_name = "windows" if os.name == "nt" else "linux"
+                platform_name = HOST.name
                 worker_identity = json.dumps(
                     {
                         "pid": os.getpid(),

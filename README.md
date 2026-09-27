@@ -7,7 +7,7 @@
 <p align="center">Codex에서 여러 로컬 Claude Code 세션을 지속적으로 관리합니다.</p>
 
 <p align="center">
-  <strong>Linux · Windows 10/11</strong> · <strong>Python 3.10+</strong> · <strong>실행 시 외부 Python 의존성 없음</strong>
+  <strong>Linux · macOS 10.15+ · Windows 10/11</strong> · <strong>Python 3.10+</strong> · <strong>실행 시 외부 Python 의존성 없음</strong>
 </p>
 
 <p align="center">
@@ -109,6 +109,13 @@ identity를 유지한 채 `claude:` 상세 관측으로 자동 승격합니다. 
 footer의 **HISTORY**를 클릭하면 session picker로 돌아가 다른 workflow·Claude·Codex 기록을
 열 수 있고, picker의 `Esc`는 현재 graph로 복귀합니다.
 
+0.27 버전은 macOS에서 같은 사용자로 실행되는 Claude 세션, task, workflow, 모델 catalog,
+telemetry, Python TUI, Intel·Apple Silicon graph viewer와 대화형 terminal을 지원합니다.
+하드웨어 UUID·부팅 시각·프로세스 시작 시각으로 실행 신원을 확인하고 POSIX process group으로
+자식 실행을 정리합니다. Apple이 지원하는 App Sandbox는 서명된 앱 entitlement 경계이므로
+일반 CLI workspace에 그대로 적용할 수 없습니다. 따라서 macOS `workspace`와 composition의
+편집·검사 단계는 명시적으로 fail-closed하며 비격리 대체 실행을 제공하지 않습니다.
+
 ## 어떤 명령을 선택해야 하나요?
 
 | 원하는 일 | 사용할 기능 | 추가되는 보장 |
@@ -117,8 +124,8 @@ footer의 **HISTORY**를 클릭하면 session picker로 돌아가 다른 workflo
 | 역할과 출력 형식을 정해 한 번 위임하기 | `delegate` | 역할 지침과 구조화된 보고서 검증 |
 | 수정 요청과 최종 승인을 기록하기 | `task` | 불변 개정, 정확한 결과 해시, 기준별 승인 근거 |
 | 계획을 만들고 별도 Fable에게 비평시키기 | `workflow` | 호출·수정·시간 예산이 고정된 P4 흐름 |
-| Claude가 제한된 파일을 수정하게 하기 | `workspace` | 비공개 Git 사본, 정확한 쓰기 경로, 이름 있는 검사 |
-| 계획부터 구현·검토까지 연결하기 | `composition` | P4 계획과 P5 편집·동결 검토의 명시적 연결 |
+| Claude가 제한된 파일을 수정하게 하기 | `workspace` | Linux/Windows 전용 비공개 Git 사본, 정확한 쓰기 경로, 이름 있는 검사 |
+| 계획부터 구현·검토까지 연결하기 | `composition` | Linux/Windows에서 P4 계획과 P5 편집·동결 검토의 명시적 연결 |
 | 의존 작업을 순서대로 실행하기 | `task enqueue` + `dispatch` | FIFO 대기열과 정확한 부모 승인 조건 |
 | 다음 턴에 전달할 지시를 저장하기 | `message` | 선택된 개정에만 전달되는 지시와 결과 인수인계 |
 | multi-agent graph와 과거 실행 관찰하기 | `monitor viewer` | focus/recent/all graph, minimap, mouse camera, activity replay, agent별 실행 토큰 |
@@ -194,7 +201,7 @@ Claude 서비스에 모델 요청을 보냅니다.
 
 ### 공통
 
-- Linux 또는 Windows 10/11
+- Linux, macOS 10.15 이상 또는 Windows 10/11
 - Python 3.10 이상
 - 같은 사용자로 설치하고 로그인한 Claude Code
 - 플러그인 기능과 `plugin-creator` 도구가 포함된 Codex CLI
@@ -217,6 +224,15 @@ Claude 서비스에 모델 요청을 보냅니다.
 
 Windows 네이티브 세션만 사용할 때는 WSL2가 필요하지 않습니다. 자세한 설치와
 지원 범위는 [Windows 안내](docs/windows.ko.md)를 참고하세요.
+
+### macOS
+
+- Intel 또는 Apple Silicon Mac
+- `/bin`·`/usr/sbin`의 기본 `ps`, `sysctl`, `ioreg`
+- viewer를 직접 빌드할 때만 Rust 1.88 이상
+
+macOS는 세션 제어와 관측 기능을 지원하지만 격리된 workspace 실행은 지원하지
+않습니다. 정확한 지원표와 검증 명령은 [macOS 안내](docs/macos.ko.md)를 참고하세요.
 
 첫 편집 전에 `workspace doctor`를 실행하세요. 격리를 사용할 수 없으면
 workspace 실행을 거절하며, 격리 없는 대체 경로는 없습니다.
@@ -253,10 +269,12 @@ python3 install.py --update \
   --viewer-sha256 "$viewer_sha"
 ```
 
+macOS에서는 hash 줄만 `viewer_sha=$(shasum -a 256 viewer/target/release/ccc-viewer | awk '{print $1}')`로 바꿉니다.
+
 viewer를 직접 빌드할 때만 Rust 1.88 이상이 필요합니다. 조작법, offline JSONL 재생,
 headless inspect와 Windows 명령은 [실시간 모니터 안내](docs/monitor.ko.md)에 있습니다.
 
-helper가 없거나 해시가 다르면 설치 또는 Windows session control이 fail-closed로
+Windows helper가 없거나 해시가 다르면 설치 또는 Windows session control이 fail-closed로
 중단되며 다른 실행 경로로 대체되지 않습니다.
 
 설치기는 다음 작업을 수행합니다.
@@ -843,6 +861,8 @@ SQLite 백업과 영속 migration journal을 만들면서 순서대로 이관됩
 | 지정 모델 호출 실패 | 계정의 모델 사용 가능 여부 확인; 자동 대체 없음 |
 | `project_not_allowed` | 초기화한 `--allow-root` 내부 경로 사용; 새 state store로 우회하지 않음 |
 | Linux에서 `workspace doctor` 실패 | Bubblewrap 또는 비특권 namespace를 복구; 비격리 실행은 하지 않음 |
+| macOS에서 `workspace doctor`가 비활성 보고 | 정상 동작; 지원되는 fail-closed sandbox backend가 없어 workspace와 composition 편집 단계를 실행하지 않음 |
+| macOS에서 session control 비활성 | `doctor --platform`에서 `ps`, `sysctl`, `ioreg` 기본 도구 탐지 결과 확인 |
 | Windows에서 session control 비활성 | 아키텍처에 맞는 `ccc-win-supervisor.exe`와 설치 시 고정한 SHA-256을 확인 |
 | Windows에서 workspace 비활성 | WSL2, WSL 내부 `bwrap`, private ext4 상태 경로를 확인; `/mnt` 아래 상태는 거절됨 |
 | `capacity_full` 또는 session busy | 기존 실행을 확인하고 기다리거나 소유 실행을 의도적으로 중단 |
@@ -867,6 +887,7 @@ SQLite 백업과 영속 migration journal을 만들면서 순서대로 이관됩
 - [테스트와 선택적 live test](docs/testing.ko.md)
 - [실제 프로젝트 파일럿 기록](docs/real-project-pilot.ko.md)
 - [OMX에서 도입한 설계](docs/omx-adoption.ko.md)
+- [macOS 설치와 지원 범위](docs/macos.ko.md)
 - [Windows 설치와 운영](docs/windows.ko.md)
 - [Windows 지원 설계 기록](docs/windows-support-plan.ko.md)
 
@@ -884,15 +905,17 @@ ruff format --check .
 
 ## 현재 범위
 
-0.18 버전은 Linux와 Windows 10/11에서 텍스트 위임, 영속 세션,
+0.27 버전은 Linux, macOS 10.15 이상과 Windows 10/11에서 텍스트 위임, 영속 세션,
 검토·승인 가능한 task 개정, 유한 대기열과 workflow, 명시적
 계획·편집·검토 composition, 다중 composition dispatch, 라우팅 출처와 평가,
 검증된 scout 재사용, 역할별 모델·effort 설정, 계정 model catalog와 read-only
-실시간 TUI를 지원합니다. Linux
-workspace는 네이티브 Bubblewrap, Windows workspace는 WSL2 내부 Bubblewrap을
-사용합니다. Claude의 직접 파일·shell 도구, 임의 기존 세션 인수, 대화 fork,
-macOS, AppContainer, MCP adapter, 서버 간 전달, Codex 자동 깨우기는 현재
-범위 밖입니다. Windows 네이티브 helper, Job Object와 도구 없는 실제 Sonnet
+실시간 TUI와 native graph viewer를 지원합니다. Linux workspace는 네이티브
+Bubblewrap, Windows workspace는 WSL2 내부 Bubblewrap을 사용합니다. macOS는
+세션·관측·terminal을 지원하고 workspace와 composition 편집·검사는 fail-closed합니다.
+Claude의 직접 파일·shell 도구, 임의 기존 세션 인수, 대화 fork, macOS native
+sandbox, AppContainer, MCP adapter, 서버 간 전달, Codex 자동 깨우기는 현재
+범위 밖입니다. macOS Python 코어는 Linux에서 결정적 단위 테스트와 macOS CI로
+검증하며 실제 계정 호출은 사용자 Mac에서 별도 smoke가 필요합니다. Windows 네이티브 helper, Job Object와 도구 없는 실제 Sonnet
 호출은 실기기에서 통과했습니다. WSL2/Bubblewrap 최종 검증은 Codex sandbox의
 WSL 서비스 `E_ACCESSDENIED` 때문에 일반 Windows 터미널 실행이 남아 있으므로
 Windows workspace 지원은 beta입니다.

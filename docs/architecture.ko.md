@@ -57,13 +57,16 @@ Codex 태스크는 영속화된 기록을 발견할 수 있습니다. 이 패키
 
 ## 프로세스 제어
 
-워커는 프로세스 ID와 함께 Linux 시작 틱(start tick), 부팅 아이덴티티, PID
-네임스페이스를 기록합니다. 취소는 소유 워커가 처리하는 영속적인 요청이며,
+워커는 프로세스 ID와 함께 플랫폼별 시작 신원, 부팅 아이덴티티와 실행 scope를
+기록합니다. Linux는 `/proc` 시작 틱과 PID namespace, macOS는 기본 `ps`의 프로세스
+시작 시각·process group과 hardware/boot marker, Windows는 process creation time과
+Job Object 소유권을 사용합니다. 취소는 소유 워커가 처리하는 영속적인 요청이며,
 공개 CLI가 임의로 저장된 PID를 종료시키지는 않습니다.
 
-워커는 신호를 보내고 그룹 정리를 확인하는 동안 프로세스 그룹 리더를
-회수(reap)하지 않고 유지합니다. Linux의 parent-death 시그널과 exec
-래퍼는 시작/워커 종료 경쟁 상태를 해결합니다. 컨트롤러가 실행 결과를 확정할
+POSIX 워커는 신호를 보내고 그룹 정리를 확인하는 동안 프로세스 그룹 리더를
+회수(reap)하지 않고 유지합니다. Linux는 parent-death 시그널을 함께 사용하고,
+macOS는 exec wrapper로 launch race를 닫은 뒤 비정상 worker 소실 뒤 살아 있는
+group을 격리합니다. 컨트롤러가 실행 결과를 확정할
 수 없는 경우, 자동으로 재시도하는 대신 `unknown`으로 기록하고 reconcile을
 요구합니다.
 
@@ -154,7 +157,7 @@ SHA-256 다이제스트가 저장됩니다. 상태 조회와 후속 승인 절�
 `install.py`는 Codex에 번들된 개인 마켓플레이스 헬퍼와 `codex plugin add`를
 사용합니다. 호스트 로컬 파일 락이 설치를 직렬화합니다. 새 트리는 교체 전에
 스테이징되고 검증되며, 이전 트리는 롤백을 위해 보존됩니다. 런타임 상태는
-패키징되지도, 업데이트에 의해 제거되지도 않습니다. 선택적인 viewer와 Windows
+패키징되지도, 업데이트에 의해 제거되지도 않습니다. 선택적인 Linux/macOS/Windows viewer와 Windows
 supervisor 바이너리는 정확한 SHA-256과 함께 로컬에서 제공해야 하며, 업데이트 시
 manifest와 실제 바이트를 다시 검증한 뒤에만 보존합니다.
 

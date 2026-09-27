@@ -26,6 +26,11 @@ private ext4 상태에 전달되고, 검증 뒤 기존 networkless Bubblewrap ba
 실패한 live probe는 모두 workspace 실행 전에 거절됩니다. 자세한 절차는
 [Windows 설치와 운영](windows.ko.md)을 참고하세요.
 
+macOS의 session control은 지원하지만 workspace 실행은 지원하지 않습니다. Apple이
+지원하는 App Sandbox는 이 계약이 요구하는 일반 CLI 자식 process 경계를 제공하지
+않으므로 `workspace doctor`는 비활성을 보고하고 workspace/composition 편집 단계는
+fail-closed합니다. [macOS 설치와 지원 범위](macos.ko.md)를 참고하세요.
+
 [실제 프로젝트 파일럿](real-project-pilot.ko.md)에는 실제 타임아웃과 보고서
 형식 실패, 독립적인 검증, 그리고 다음 신뢰성 게이트(gate)가 기록되어
 있습니다.

@@ -67,6 +67,18 @@ class EnvironmentSelectionTests(unittest.TestCase):
         self.assertEqual(environment["HTTPS_PROXY"], "upper")
         self.assertEqual(environment["https_proxy"], "lower")
 
+    def test_macos_parent_binding_uses_race_check_without_linux_prctl(self) -> None:
+        with (
+            mock.patch.object(runner.sys, "platform", "darwin"),
+            mock.patch.object(runner.os, "getppid", return_value=123),
+            mock.patch.object(runner.ctypes, "CDLL") as cdll,
+            mock.patch.object(runner.os, "_exit") as exit_process,
+        ):
+            runner.bind_parent(123)
+
+        cdll.assert_not_called()
+        exit_process.assert_not_called()
+
 
 class ControllerTestCase(unittest.TestCase):
     max_parallel = 2

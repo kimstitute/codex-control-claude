@@ -7,7 +7,7 @@
 <p align="center">Let Codex coordinate persistent local Claude Code sessions.</p>
 
 <p align="center">
-  <strong>Linux · Windows 10/11</strong> · <strong>Python 3.10+</strong> · <strong>Standard-library runtime</strong>
+  <strong>Linux · macOS 10.15+ · Windows 10/11</strong> · <strong>Python 3.10+</strong> · <strong>Standard-library runtime</strong>
 </p>
 
 <p align="center">
@@ -113,6 +113,14 @@ even while live detail snapshots arrive. Press `b`/`Backspace` or click the
 **HISTORY** footer chip to reopen the session picker for another workflow,
 Claude, or Codex graph; `Esc` in that picker returns to the current graph.
 
+Version 0.27 adds same-user Claude sessions, tasks, workflows, model catalog,
+telemetry, the Python TUI, Intel/Apple Silicon graph viewers and interactive
+terminals on macOS. It binds execution identity to the hardware UUID, boot time
+and process start time and owns children through POSIX process groups. Apple's
+supported App Sandbox is an entitlement boundary for signed apps, so it cannot
+be applied directly to this ordinary CLI workspace. macOS `workspace` and the
+edit/check stages of compositions therefore fail closed with no unconfined fallback.
+
 ## Choose the right workflow
 
 | Goal | Use | What it adds |
@@ -121,8 +129,8 @@ Claude, or Codex graph; `Esc` in that picker returns to the current graph.
 | Get one structured answer | `delegate` | Role instructions and a validated report contract |
 | Revise and approve a task | `task` | Immutable revisions, exact result hashes and acceptance evidence |
 | Generate and critique a plan | `workflow` | A bounded worker plus an independent Fable critic |
-| Let Claude edit selected files | `workspace` | Private Git snapshot, exact write paths and named checks |
-| Plan, implement and review | `composition` | P4 planning plus P5 editing and frozen Fable verification |
+| Let Claude edit selected files | `workspace` | Linux/Windows private Git snapshot, exact write paths and named checks |
+| Plan, implement and review | `composition` | Linux/Windows P4 planning plus P5 editing and frozen Fable verification |
 | Schedule dependent tasks | `task enqueue` + `dispatch` | FIFO admission and exact accepted-parent gates |
 | Save instructions for the next turn | `message` | Explicit next-revision delivery and result handoff |
 | Observe the multi-agent graph and past execution | `monitor viewer` | Focus/recent/all graph, minimap, mouse cameras, activity replay and per-agent run tokens |
@@ -198,7 +206,7 @@ requests to the Claude service through your existing login.
 
 ### Common
 
-- Linux or Windows 10/11
+- Linux, macOS 10.15 or newer, or Windows 10/11
 - Python 3.10 or newer
 - Claude Code installed and signed in for the same user
 - Codex CLI with plugin support and its bundled `plugin-creator` helpers
@@ -221,6 +229,16 @@ installer does not install missing packages.
 
 Native Windows sessions do not require WSL2. See the [Windows guide](docs/windows.md)
 for the exact setup and support boundary.
+
+### macOS
+
+- An Intel or Apple Silicon Mac
+- The base-system `ps`, `sysctl` and `ioreg` tools under `/bin` and `/usr/sbin`
+- Rust 1.88 or newer only when building the viewer locally
+
+macOS supports session control and observation but not isolated workspace
+execution. See the [macOS guide](docs/macos.md) for the exact feature table and
+validation commands.
 
 Run `workspace doctor` before the first controlled edit. The controller refuses
 workspace work if isolation is unavailable; it has no unconfined fallback.
@@ -256,11 +274,14 @@ python3 install.py --update \
   --viewer-sha256 "$viewer_sha"
 ```
 
+On macOS, replace only the hash line with
+`viewer_sha=$(shasum -a 256 viewer/target/release/ccc-viewer | awk '{print $1}')`.
+
 Rust 1.88 or newer is needed only when building the viewer. See the
 [live monitor guide](docs/monitor.md) for controls, offline JSONL replay,
 headless inspection and Windows commands.
 
-A missing or mismatched helper fails closed; session control is never silently
+A missing or mismatched Windows helper fails closed; session control is never silently
 routed through another launcher.
 
 The installer:
@@ -846,6 +867,8 @@ a single copied SQLite file.
 | Explicit model fails | Confirm the account can use that alias; there is no model fallback |
 | `project_not_allowed` | Use a path inside an initialized `--allow-root`; do not create a second state store |
 | `workspace doctor` fails on Linux | Fix Bubblewrap or unprivileged namespaces; checks will not run unconfined |
+| `workspace doctor` reports unavailable on macOS | Expected: no supported fail-closed sandbox backend is bundled, so workspace and composition edit stages do not run |
+| Session control is disabled on macOS | Inspect the `ps`, `sysctl` and `ioreg` probes in `doctor --platform` |
 | Session control is disabled on Windows | Verify the architecture-matching `ccc-win-supervisor.exe` and the SHA-256 pin used during installation |
 | Workspace is disabled on Windows | Verify WSL2, `bwrap` inside WSL and a private ext4 state path; state below `/mnt` is rejected |
 | `capacity_full` or busy session | Inspect existing runs, wait, or intentionally stop the owned run |
@@ -870,6 +893,7 @@ a single copied SQLite file.
 - [Testing and live-test opt-in](docs/testing.md)
 - [Observed real-project pilot](docs/real-project-pilot.md)
 - [OMX adoption decisions](docs/omx-adoption.md)
+- [macOS setup and support boundary](docs/macos.md)
 - [Windows setup and operations](docs/windows.md)
 
 ## Tests
@@ -885,15 +909,19 @@ are opt-in and use your own Claude account; see [docs/testing.md](docs/testing.m
 
 ## Current scope
 
-Version 0.18 supports supplied-text delegation, persistent sessions,
+Version 0.27 supports supplied-text delegation, persistent sessions,
 review-gated task revisions, finite queues/workflows, explicit plan/edit/review
 compositions, multi-composition dispatch, routing provenance and evaluation,
 verified scout reuse, per-role model/effort settings, an account model catalog,
-and a read-only live TUI on Linux and Windows 10/11. Linux workspaces
-use native Bubblewrap; Windows workspaces use Bubblewrap inside WSL2. Native
-Claude file/shell tools, arbitrary existing-session adoption, conversation forks,
-macOS, AppContainer, an MCP adapter, cross-host dispatch and automatic Codex
-wake-up remain outside this release. The native Windows helper, Job Object and a
+and a read-only live TUI plus native graph viewer on Linux, macOS 10.15+ and
+Windows 10/11. Linux workspaces use native Bubblewrap; Windows workspaces use
+Bubblewrap inside WSL2. macOS supports sessions, observation and terminals while
+workspace and composition edit/check stages fail closed. Native Claude file/shell
+tools, arbitrary existing-session adoption, conversation forks, a native macOS
+sandbox, AppContainer, an MCP adapter, cross-host dispatch and automatic Codex
+wake-up remain outside this release. The macOS Python core has deterministic unit
+coverage plus macOS CI; a real-account call remains an opt-in smoke on the user's
+Mac. The native Windows helper, Job Object and a
 real tool-free Sonnet call passed on physical Windows hardware. Final
 WSL2/Bubblewrap validation remains blocked by WSL-service `E_ACCESSDENIED` under
 the Codex sandbox token and must run from a normal Windows terminal, so Windows

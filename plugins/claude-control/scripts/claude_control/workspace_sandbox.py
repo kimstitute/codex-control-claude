@@ -29,16 +29,17 @@ ENVIRONMENT = {
 }
 
 
-def _require_posix():
-    if os.name != "posix" or resource is None:
+def _require_linux():
+    if not sys.platform.startswith("linux") or os.name != "posix" or resource is None:
         raise ControlError(
             "sandbox_unavailable",
-            "Bubblewrap checks require Linux process and resource primitives.",
+            "Bubblewrap checks require native Linux process, namespace and resource primitives; "
+            "no unconfined fallback is allowed.",
         )
 
 
 def _process_limit():
-    _require_posix()
+    _require_linux()
     # Account for visible existing UID threads before namespace bootstrap. Kernel
     # accounting is namespace-hierarchical; this is not an aggregate cgroup quota.
     threads = 0
@@ -57,7 +58,7 @@ def _process_limit():
 
 
 def argv_for(directory, argv):
-    _require_posix()
+    _require_linux()
     binary = shutil.which("bwrap")
     if not binary:
         raise ControlError("sandbox_unavailable", "Bubblewrap is required; no unconfined fallback.")
@@ -170,6 +171,7 @@ def execute(
             started=started,
             managed=managed,
         )
+    _require_linux()
     parent = os.getpid()
     process_limit = _process_limit()
 
@@ -265,6 +267,12 @@ def probe():
     """Exercise production namespace flags without reading login data or making a model call."""
     if os.name == "nt":
         return windows_wsl_sandbox.probe()
+    if not sys.platform.startswith("linux"):
+        return {
+            "ready": False,
+            "backend": None,
+            "reason": "No supported fail-closed macOS workspace sandbox backend is available",
+        }
     with tempfile.TemporaryDirectory(prefix="claude-workspace-probe-") as directory:
         try:
             result = execute(directory, ["/usr/bin/true"], 5)
@@ -283,6 +291,7 @@ def probe():
 def require():
     if os.name == "nt":
         return windows_wsl_sandbox.require()
+    _require_linux()
     result = probe()
     if not result["ready"]:
         raise ControlError("sandbox_unavailable", result["reason"] or "Sandbox probe failed.")

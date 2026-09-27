@@ -9,7 +9,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "plugins/claude-control/scripts"))
 
-from claude_control import cli, monitor  # noqa: E402
+from claude_control import cli, monitor, workspace_sandbox  # noqa: E402
 from claude_control.platform import (  # noqa: E402
     capability_report,
     default_state_dir,
@@ -101,6 +101,55 @@ class CapabilityTests(unittest.TestCase):
         self.assertTrue(report["capabilities"]["workspace"]["supported"])
         self.assertTrue(report["capabilities"]["sandbox"]["supported"])
 
+    def test_macos_supports_local_control_but_fails_closed_for_workspace(self):
+        report = self.report(
+            "posix",
+            "darwin",
+            {"curses"},
+            {"ps": "/bin/ps", "sysctl": "/usr/sbin/sysctl", "ioreg": "/usr/sbin/ioreg"},
+        )
+
+        self.assertEqual(report["platform"], "macos")
+        self.assertTrue(report["capabilities"]["provider_usage"]["supported"])
+        self.assertTrue(report["capabilities"]["tui"]["supported"])
+        self.assertTrue(report["capabilities"]["session_control"]["supported"])
+        self.assertFalse(report["capabilities"]["workspace"]["supported"])
+        self.assertFalse(report["capabilities"]["sandbox"]["supported"])
+        self.assertIn("fail-closed", report["capabilities"]["workspace"]["reason"])
+
+    def test_macos_session_control_requires_base_system_process_tools(self):
+        report = self.report("posix", "darwin", {"curses"}, {"ps": "/bin/ps"})
+
+        self.assertFalse(report["capabilities"]["session_control"]["supported"])
+        self.assertIn("sysctl", report["capabilities"]["session_control"]["reason"])
+
+    def test_macos_finds_base_tools_by_absolute_path_when_gui_path_is_minimal(self):
+        report = self.report(
+            "posix",
+            "darwin",
+            {"curses"},
+            {
+                "/bin/ps": "/bin/ps",
+                "/usr/sbin/sysctl": "/usr/sbin/sysctl",
+                "/usr/sbin/ioreg": "/usr/sbin/ioreg",
+            },
+        )
+
+        self.assertTrue(report["capabilities"]["session_control"]["supported"])
+
+    def test_macos_workspace_probe_never_enters_linux_bubblewrap_path(self):
+        with (
+            mock.patch.object(workspace_sandbox.os, "name", "posix"),
+            mock.patch.object(workspace_sandbox.sys, "platform", "darwin"),
+        ):
+            report = workspace_sandbox.probe()
+            with self.assertRaises(ControlError) as caught:
+                workspace_sandbox.require()
+
+        self.assertFalse(report["ready"])
+        self.assertIsNone(report["backend"])
+        self.assertEqual(caught.exception.code, "sandbox_unavailable")
+
 
 class DefaultPathTests(unittest.TestCase):
     def test_posix_preserves_xdg_and_home_fallbacks(self):
@@ -111,6 +160,16 @@ class DefaultPathTests(unittest.TestCase):
         self.assertEqual(
             default_state_dir({}, "/home/user", "posix"),
             Path("/home/user/.local/state/claude-control"),
+        )
+
+    def test_macos_uses_application_support_without_xdg_override(self):
+        self.assertEqual(
+            default_state_dir({}, "/Users/test", "posix", "darwin"),
+            Path("/Users/test/Library/Application Support/codex-control-claude/state"),
+        )
+        self.assertEqual(
+            default_state_dir({"XDG_STATE_HOME": "/state"}, "/Users/test", "posix", "darwin"),
+            Path("/state/claude-control"),
         )
 
     def test_windows_prefers_localappdata_and_supports_profile_fallback(self):

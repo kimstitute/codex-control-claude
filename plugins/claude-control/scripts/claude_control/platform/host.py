@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
+import re
 import stat
+import subprocess
 import sys
 import uuid
 from pathlib import Path
@@ -82,7 +85,7 @@ class LinuxHost:
             raise HostError("unsafe_state", f"Refusing a symlink: {path}")
 
     def flush_directory(self, path):
-        directory_fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+        directory_fd = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
         try:
             os.fsync(directory_fd)
         finally:
@@ -108,9 +111,140 @@ class LinuxHost:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(tmp, path)
-        directory_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        self.flush_directory(path.parent)
+
+
+class _MacOSApi:
+    """Small wrapper around macOS base-system identity and process tools."""
+
+    _ENVIRONMENT = {
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "LANG": "C",
+        "LC_ALL": "C",
+    }
+
+    def __init__(self, run=None, sync=None):
+        self._run_impl = subprocess.run if run is None else run
+        self._sync_impl = getattr(os, "sync", None) if sync is None else sync
+
+    def _run(self, argv):
+        return self._run_impl(
+            argv,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+            env=self._ENVIRONMENT,
+        )
+
+    def hardware_uuid(self):
+        result = self._run(["/usr/sbin/ioreg", "-rd1", "-c", "IOPlatformExpertDevice"])
+        match = re.search(r'"IOPlatformUUID"\s*=\s*"([^"]+)"', result.stdout or "")
+        if result.returncode or not match:
+            raise HostError("host_identity", "Could not read the macOS hardware UUID.")
+        return match.group(1)
+
+    def boot_marker(self):
+        result = self._run(["/usr/sbin/sysctl", "-n", "kern.boottime"])
+        match = re.search(r"sec\s*=\s*(\d+).*usec\s*=\s*(\d+)", result.stdout or "")
+        if result.returncode or not match:
+            raise HostError("host_identity", "Could not read the macOS boot identity.")
+        return f"mac-boot:{match.group(1)}:{match.group(2)}"
+
+    def process_identity(self, pid):
+        result = self._run(
+            [
+                "/bin/ps",
+                "-p",
+                str(int(pid)),
+                "-o",
+                "lstart=",
+                "-o",
+                "state=",
+                "-o",
+                "pgid=",
+            ]
+        )
+        if result.returncode:
+            return None
+        fields = (result.stdout or "").strip().rsplit(None, 2)
+        if len(fields) != 3:
+            return None
+        start, state, group = fields
         try:
-            os.fsync(directory_fd)
+            return {"start": start, "state": state[:1], "group": int(group)}
+        except (TypeError, ValueError):
+            return None
+
+    def group_alive(self, group):
+        result = self._run(["/bin/ps", "-axo", "pgid=", "-o", "state="])
+        if result.returncode:
+            raise HostError("process_query", "Could not inspect macOS process groups.")
+        for line in (result.stdout or "").splitlines():
+            fields = line.split()
+            try:
+                candidate = int(fields[0])
+                state = fields[1][:1]
+            except (IndexError, TypeError, ValueError):
+                continue
+            if candidate == int(group) and state not in ("Z", "X"):
+                return True
+        return False
+
+    def sync(self):
+        if self._sync_impl is None:
+            result = self._run(["/bin/sync"])
+            if result.returncode:
+                raise HostError("write_failed", "Could not synchronize macOS state metadata.")
+            return
+        self._sync_impl()
+
+
+class MacOSHost(LinuxHost):
+    """Darwin host primitives with POSIX private-state enforcement."""
+
+    name = "macos"
+
+    def __init__(self, api=None):
+        self._api = _MacOSApi() if api is None else api
+
+    def host_identity(self):
+        machine = (self._api.hardware_uuid() or "").strip()
+        if not machine:
+            raise HostError("host_identity", "A nonempty macOS hardware UUID is required.")
+        return hashlib.sha256(machine.encode()).hexdigest()
+
+    def boot_id(self):
+        return self._api.boot_marker()
+
+    def pid_namespace(self):
+        return f"mac-host:{self.host_identity()}"
+
+    def proc_identity(self, pid):
+        if not pid:
+            return None
+        return self._api.process_identity(pid)
+
+    def alive(self, pid, start, boot):
+        if boot != self.boot_id():
+            return False
+        info = self.proc_identity(pid)
+        return bool(info and info["start"] == start and info["state"] not in ("Z", "X"))
+
+    def group_alive(self, group):
+        return self._api.group_alive(group)
+
+    def flush_directory(self, path):
+        directory_fd = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            try:
+                os.fsync(directory_fd)
+            except OSError as exc:
+                if exc.errno not in (errno.EINVAL, getattr(errno, "ENOTSUP", errno.EINVAL)):
+                    raise
+                # Darwin filesystems may reject fsync on directory descriptors.
+                # A system sync is slower but preserves the fail-closed durability contract.
+                self._api.sync()
         finally:
             os.close(directory_fd)
 
@@ -535,6 +669,8 @@ def select_host(os_name=None, sys_platform=None, **kwargs):
         return WindowsHost(**kwargs)
     if sys_platform.startswith("linux"):
         return LinuxHost()
+    if sys_platform == "darwin":
+        return MacOSHost(**kwargs)
     raise HostError("unsupported_platform", f"Unsupported platform: {sys_platform}")
 
 

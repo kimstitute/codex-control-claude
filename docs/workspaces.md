@@ -26,3 +26,8 @@ On Windows 10/11, an architecture-matching SHA-256-pinned native supervisor owns
 are verified in private WSL2 ext4 state, and then enter the existing networkless
 Bubblewrap backend. State below `/mnt`, reparse points, incomplete mode sidecars,
 or a failed live probe stop workspace execution. See [Windows setup](windows.md).
+
+macOS session control is supported, but workspace execution is not. Apple's
+supported App Sandbox does not provide the ordinary CLI child-process boundary
+required by this contract, so `workspace doctor` reports unavailable and all
+workspace/composition edit stages fail closed. See [macOS setup](macos.md).

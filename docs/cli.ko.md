@@ -337,7 +337,7 @@ Dependency JSON은 정확한 `task_id`/`revision` 참조의 배열입니다. 승
 
 ## 통제된 Workspace
 
-`workspace doctor/create/task/run/status/list/export/apply/stop/reconcile`은 [workspace 가이드](workspaces.ko.md)에 문서화되어 있습니다. 생성 시 복사하기 전에 하나의 불변 workspace identity를 예약합니다. schema 12는 원본 HEAD와 clean worktree를 검사하는 명시적 apply를 추가합니다. Linux workspace는 Bubblewrap을, Windows workspace는 고정된 네이티브 supervisor와 WSL2 내부 Bubblewrap을 필요로 합니다.
+`workspace doctor/create/task/run/status/list/export/apply/stop/reconcile`은 [workspace 가이드](workspaces.ko.md)에 문서화되어 있습니다. 생성 시 복사하기 전에 하나의 불변 workspace identity를 예약합니다. schema 12는 원본 HEAD와 clean worktree를 검사하는 명시적 apply를 추가합니다. Linux workspace는 Bubblewrap을, Windows workspace는 고정된 네이티브 supervisor와 WSL2 내부 Bubblewrap을 필요로 합니다. macOS는 이 surface를 비지원으로 보고하며 비격리 실행으로 대체하지 않습니다.
 
 ## 명시적 실행 설정
 
