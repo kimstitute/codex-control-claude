@@ -154,11 +154,13 @@ class CapabilityTests(unittest.TestCase):
 class DefaultPathTests(unittest.TestCase):
     def test_posix_preserves_xdg_and_home_fallbacks(self):
         self.assertEqual(
-            default_state_dir({"XDG_STATE_HOME": "/state"}, "/home/user", "posix"),
+            default_state_dir(
+                {"XDG_STATE_HOME": "/state"}, "/home/user", "posix", "linux"
+            ),
             Path("/state/claude-control"),
         )
         self.assertEqual(
-            default_state_dir({}, "/home/user", "posix"),
+            default_state_dir({}, "/home/user", "posix", "linux"),
             Path("/home/user/.local/state/claude-control"),
         )
 

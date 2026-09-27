@@ -127,7 +127,13 @@ def bind_parent(parent):
 
 def child_exited(proc):
     # WNOWAIT retains the group leader identity until all killpg calls have finished.
-    return os.waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None
+    waitid = getattr(os, "waitid", None)
+    if waitid is not None:
+        return waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None
+    # Darwin's Python build does not expose waitid. Inspect the unreaped leader
+    # through the host adapter so the PGID cannot be reused before the last killpg.
+    identity = proc_identity(proc.pid)
+    return identity is None or identity["state"] in ("Z", "X")
 
 
 def checked_effort(store, row, session, *, probe=True):

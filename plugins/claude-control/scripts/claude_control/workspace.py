@@ -230,7 +230,13 @@ def bind(store, workspace_id, assignment, operation_id):
         row = _get(db, workspace_id)
         policy = json.loads(row["policy"])
         assignment = dict(assignment)
-        if assignment.get("project") != row["source_repo"]:
+        try:
+            assignment_project = store.project(assignment.get("project"))
+        except (ControlError, TypeError, ValueError):
+            raise ControlError(
+                "workspace_project", "Assignment project must match the source repository."
+            ) from None
+        if assignment_project != row["source_repo"]:
             raise ControlError(
                 "workspace_project", "Assignment project must match the source repository."
             )

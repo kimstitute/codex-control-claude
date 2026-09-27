@@ -13,6 +13,8 @@
   explicit `XDG_STATE_HOME` override.
 - Keep Linux parent-death signaling Linux-only and use a portable launch-race
   check plus owned POSIX process groups on macOS.
+- Detect unreaped macOS child exits without `waitid`, cache stable host/boot
+  identity, and canonicalize `/var`/`/private/var` source aliases.
 - Resume from the latest actually launched turn when a newer follow-up reservation
   expired before launch, while retaining exact Claude-binary verification.
 - Add deterministic Darwin host/capability/durability tests, macOS Python CI and

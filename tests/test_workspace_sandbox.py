@@ -27,9 +27,10 @@ def namespace_alive(namespace):
 
 class SandboxPortabilityTests(unittest.TestCase):
     def test_missing_resource_module_fails_closed(self):
+        directory = Path("C:/workspace")
         with patch.object(sandbox, "resource", None), patch.object(sandbox.os, "name", "nt"):
             with self.assertRaises(sandbox.ControlError) as caught:
-                sandbox.argv_for(Path("C:/workspace"), ["python", "-V"])
+                sandbox.argv_for(directory, ["python", "-V"])
 
         self.assertEqual(caught.exception.code, "sandbox_unavailable")
 

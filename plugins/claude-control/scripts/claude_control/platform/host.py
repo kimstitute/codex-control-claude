@@ -207,15 +207,21 @@ class MacOSHost(LinuxHost):
 
     def __init__(self, api=None):
         self._api = _MacOSApi() if api is None else api
+        self._host_id = None
+        self._boot_marker = None
 
     def host_identity(self):
-        machine = (self._api.hardware_uuid() or "").strip()
-        if not machine:
-            raise HostError("host_identity", "A nonempty macOS hardware UUID is required.")
-        return hashlib.sha256(machine.encode()).hexdigest()
+        if self._host_id is None:
+            machine = (self._api.hardware_uuid() or "").strip()
+            if not machine:
+                raise HostError("host_identity", "A nonempty macOS hardware UUID is required.")
+            self._host_id = hashlib.sha256(machine.encode()).hexdigest()
+        return self._host_id
 
     def boot_id(self):
-        return self._api.boot_marker()
+        if self._boot_marker is None:
+            self._boot_marker = self._api.boot_marker()
+        return self._boot_marker
 
     def pid_namespace(self):
         return f"mac-host:{self.host_identity()}"

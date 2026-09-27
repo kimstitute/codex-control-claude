@@ -156,6 +156,10 @@ class WorkspaceFilesTests(unittest.TestCase):
                 )
 
     def test_snapshot_rejects_windows_name_collisions_before_creating_destination(self) -> None:
+        probe = self.root / "case-probe"
+        probe.write_text("probe\n", encoding="utf-8")
+        if (self.root / "CASE-PROBE").exists():
+            self.skipTest("Host filesystem cannot materialize case-colliding source paths")
         for index, sources in enumerate(
             (
                 {"File.txt": "a\n", "file.txt": "b\n"},

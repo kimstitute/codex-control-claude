@@ -189,6 +189,16 @@ class MacOSHostTests(unittest.TestCase):
         api.processes[42]["state"] = "Z"
         self.assertFalse(host.alive(42, api.processes[42]["start"], host.boot_id()))
 
+    def test_stable_host_and_boot_identity_are_cached_for_the_process_lifetime(self):
+        api = mock.Mock(wraps=FakeMacApi())
+        host = MacOSHost(api=api)
+
+        self.assertEqual(host.host_identity(), host.host_identity())
+        self.assertEqual(host.boot_id(), host.boot_id())
+
+        api.hardware_uuid.assert_called_once_with()
+        api.boot_marker.assert_called_once_with()
+
     def test_directory_fsync_falls_back_to_system_sync_when_darwin_rejects_it(self):
         api = FakeMacApi()
         host = MacOSHost(api=api)

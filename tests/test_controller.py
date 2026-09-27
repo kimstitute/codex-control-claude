@@ -79,6 +79,18 @@ class EnvironmentSelectionTests(unittest.TestCase):
         cdll.assert_not_called()
         exit_process.assert_not_called()
 
+    def test_macos_child_exit_check_does_not_reap_the_group_leader(self) -> None:
+        process = mock.Mock(pid=42)
+        with (
+            mock.patch.object(runner.os, "waitid", None, create=True),
+            mock.patch.object(
+                runner, "proc_identity", return_value={"start": "time", "state": "Z", "group": 42}
+            ) as identity,
+        ):
+            self.assertTrue(runner.child_exited(process))
+
+        identity.assert_called_once_with(42)
+
 
 class ControllerTestCase(unittest.TestCase):
     max_parallel = 2
@@ -763,6 +775,11 @@ class ControllerProcessTests(ControllerTestCase):
         second_error = ControlError("second_cleanup", "second cleanup failed")
         with (
             mock.patch.object(runner.signal, "signal"),
+            mock.patch.object(
+                runner,
+                "proc_identity",
+                return_value={"start": "test-start", "state": "S", "group": os.getpgrp()},
+            ),
             mock.patch.object(runner.subprocess, "Popen", return_value=fake_process),
             mock.patch.object(runner, "child_exited", return_value=True),
             mock.patch.object(runner, "kill_group", side_effect=[first_error, second_error]),
