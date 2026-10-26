@@ -23,6 +23,7 @@ def git(cwd, *args):
     return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
 
 
+@unittest.skipUnless(sys.platform.startswith("linux"), "autonomous harness is Linux-only")
 class HarnessTests(unittest.TestCase):
     def test_agents_snapshot_tracks_mission_model_tokens_and_elapsed(self):
         with tempfile.TemporaryDirectory() as directory:
