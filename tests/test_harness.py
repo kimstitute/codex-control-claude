@@ -247,6 +247,7 @@ class HarnessTests(unittest.TestCase):
             state = Path(directory)
             harness = state / "harness"
             harness.mkdir(mode=0o777)
+            harness.chmod(0o777)
             args = argparse.Namespace(state_dir=state, harness_command="agents", all=False)
             with self.assertRaises(ControlError) as exc:
                 harness_cli.execute(args)
