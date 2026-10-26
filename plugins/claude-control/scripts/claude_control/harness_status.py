@@ -110,13 +110,16 @@ def _worker(path, data, now):
     }
 
 
-def snapshot(root: Path, *, include_all=False, now=None):
+def snapshot(root: Path | None, *, include_all=False, now=None):
     """Read private task records without changing worker state or calling Claude."""
     from .harness_cli import CONTRACT
 
     now = time.time() if now is None else now
     workers = []
     warnings = []
+    if root is None:
+        return {"scope": "managed Claude harness workers", "observed_at": now,
+                "workers": workers, "active_count": 0, "warnings": warnings}
     tasks = root / "tasks"
     if tasks.is_dir():
         for path in sorted(tasks.iterdir()):

@@ -223,6 +223,56 @@ class HarnessTests(unittest.TestCase):
             (work / "outside-link").symlink_to("../outside.txt")
             self.assertEqual(harness_cli._outside_symlinks(work), ["outside-link"])
 
+    def test_agents_read_only_no_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            args = argparse.Namespace(state_dir=Path(directory), harness_command="agents", all=False)
+            result = harness_cli.execute(args)
+            self.assertEqual(result["workers"], [])
+            self.assertEqual(result["active_count"], 0)
+            self.assertFalse((Path(directory) / "harness").exists())
+
+    def test_agents_read_only_rejects_symlink(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            target = state / "target"
+            target.mkdir()
+            (state / "harness").symlink_to(target)
+            args = argparse.Namespace(state_dir=state, harness_command="agents", all=False)
+            with self.assertRaises(ControlError) as exc:
+                harness_cli.execute(args)
+            self.assertEqual(exc.exception.code, "unsafe_state_dir")
+
+    def test_agents_read_only_rejects_unsafe_permissions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            harness = state / "harness"
+            harness.mkdir(mode=0o777)
+            args = argparse.Namespace(state_dir=state, harness_command="agents", all=False)
+            with self.assertRaises(ControlError) as exc:
+                harness_cli.execute(args)
+            self.assertEqual(exc.exception.code, "unsafe_state_dir")
+
+    def test_agents_read_only_with_existing_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory) / "state"
+            root = state / "harness"
+            root.mkdir(parents=True, mode=0o700)
+            task_id = str(uuid.uuid4())
+            path = root / "tasks" / task_id
+            path.mkdir(parents=True)
+            harness_cli._write(path / "task.json", {
+                "contract": harness_cli.CONTRACT, "id": task_id,
+                "status": "running", "model": "sonnet", "mission": "Test task",
+                "turns": [{"number": 1, "started": 100.0, "status": "running",
+                           "process": {"pid": 123, "start": 5}}],
+            })
+            args = argparse.Namespace(state_dir=state, harness_command="agents", all=False)
+            with patch.object(harness_cli, "_process_alive", return_value=True):
+                result = harness_cli.execute(args)
+            self.assertEqual(result["active_count"], 1)
+            self.assertEqual(result["workers"][0]["id"], task_id)
+            self.assertEqual(result["workers"][0]["mission"], "Test task")
+
 
 if __name__ == "__main__":
     unittest.main()

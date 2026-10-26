@@ -88,6 +88,20 @@ def register(commands):
                          help="Explicitly approve a commit without an independent check.")
 
 
+def _root_readonly(args):
+    if not sys.platform.startswith("linux"):
+        raise ControlError("harness_platform", "Autonomous harness currently requires Linux.")
+    root = args.state_dir / "harness"
+    if root.is_symlink():
+        raise ControlError("unsafe_state_dir", "Harness state directory may not be a symlink.")
+    if not root.is_dir():
+        return None
+    info = root.stat()
+    if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077:
+        raise ControlError("unsafe_state_dir", "Harness state directory must be private to its owner.")
+    return root
+
+
 def _root(args):
     if not sys.platform.startswith("linux"):
         raise ControlError("harness_platform", "Autonomous harness currently requires Linux.")
@@ -395,12 +409,13 @@ def _process_alive(turn):
 
 
 def execute(args):
-    root = _root(args)
     operation = args.harness_command
     if operation == "agents":
         from .harness_status import snapshot
 
+        root = _root_readonly(args)
         return snapshot(root, include_all=args.all)
+    root = _root(args)
     if operation == "init":
         current_path = root / "config.json"
         if current_path.exists() and not args.rebind:
