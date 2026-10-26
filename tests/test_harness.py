@@ -185,7 +185,8 @@ class HarnessTests(unittest.TestCase):
             executable.chmod(0o700)
             config = {"socat_bin": str(executable),
                       "socat_identity": list(harness_cli.binary_identity(executable))}
-            with patch("claude_control.workspace_sandbox.probe", return_value={"ready": True}):
+            with patch.object(harness_cli.shutil, "which", return_value="/usr/bin/bwrap"), \
+                    patch("claude_control.workspace_sandbox.probe", return_value={"ready": True}):
                 harness_cli._execution_preflight(config)
                 executable.write_text("#!/bin/sh\necho changed\n")
                 with self.assertRaises(ControlError) as changed:
