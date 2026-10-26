@@ -8,6 +8,7 @@ htmlcov/
 .venv/
 venv/
 .fake-claude/
+.runtime/
 
 # Build and runtime output
 dist/

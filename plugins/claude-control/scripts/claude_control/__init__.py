@@ -1,3 +1,3 @@
-"""Host-local, tools-disabled Claude session management."""
+"""Host-local Claude session management with an opt-in autonomous harness."""
 
-__version__ = "0.27.0"
+__version__ = "0.28.0"

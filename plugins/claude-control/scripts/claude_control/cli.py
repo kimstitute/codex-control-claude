@@ -15,6 +15,7 @@ from pathlib import Path
 from . import (
     __version__,
     composition_cli,
+    harness_cli,
     message_cli,
     monitor_cli,
     task_cli,
@@ -112,6 +113,7 @@ def parser():
     composition_cli.register(commands)
     monitor_cli.register(commands)
     terminal_cli.register(commands)
+    harness_cli.register(commands)
     command = commands.add_parser("_workspace_exec")
     command.add_argument("--run", required=True)
     command.add_argument("--seq", type=int, required=True)
@@ -209,6 +211,8 @@ def doctor(store, check_auth, check_platform=False):
 
 
 def execute(args):
+    if args.command == "harness":
+        return harness_cli.execute(args)
     if args.command == "terminal":
         return terminal_cli.execute(args)
     if args.command == "monitor":

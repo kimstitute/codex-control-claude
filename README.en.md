@@ -20,6 +20,16 @@ approval decisions in a durable host-local store. Each role can use a Sonnet,
 Opus, Haiku or Fable family alias or an exact versioned model ID with an optional
 effort level while preserving the exact conversation session.
 
+Version 0.28 adds an opt-in Linux `harness` path. It pins the lab-provided
+claude.ai Team organization, lets restricted Claude Code explore and edit an
+independent clone, and freezes controller-owned commits and isolated check
+results for exact-SHA approval. The older tools-disabled commands remain
+separate. See the [harness v1 guide](docs/harness-v1.ko.md).
+Use `harness agents` or the `claude-worker-status` skill for a one-screen view of
+managed workers, missions, models, token usage and elapsed time.
+The skill also lists subagents in the current Codex chat and leaves unavailable
+Codex usage metrics blank.
+
 Version 0.9 adds an explicit **plan → review → accept → edit → frozen review →
 accept** composition. It connects the existing bounded planning workflow to a
 private controlled workspace without adding automatic acceptance, retry, merge,

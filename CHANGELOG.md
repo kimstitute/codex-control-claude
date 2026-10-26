@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.28.0 — 2026-10-26
+
+- Add an opt-in Linux `harness` route using the pinned, signed-in Claude Code
+  Team subscription. Reject API-key/provider billing, organization changes and
+  binary changes before model execution.
+- Run restricted Claude Code with its required Bash sandbox in an independent
+  clone; controller-owned commits, bounded evidence, isolated checks and exact
+  SHA approval never update the source repository automatically.
+- Keep the legacy tools-disabled controller and schema-15 records intact.
+- Add a read-only `harness agents` snapshot and `claude-worker-status` skill for
+  worker missions, observed models, token usage and elapsed time.
+- Include current-chat Codex subagents in the skill's combined snapshot, without
+  inventing model, token or timing data missing from the collaboration tool.
+
 ## 0.27.0 — 2026-09-27
 
 - Add native macOS host identity, boot identity, PID-start and process-group

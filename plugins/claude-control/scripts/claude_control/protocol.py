@@ -71,6 +71,7 @@ def _collect_text(
     lineno: int,
     *,
     allow_structured_output: bool = False,
+    allowed_tool_names: frozenset[str] | None = None,
 ) -> tuple[str, int]:
     """Extract text and count executable tool calls in assistant content.
 
@@ -89,8 +90,11 @@ def _collect_text(
         if btype == "text" and isinstance(block.get("text"), str):
             text_parts.append(block["text"])
         elif btype == "tool_use":
-            if not (allow_structured_output and block.get("name") == "StructuredOutput"):
+            name = block.get("name")
+            if not (allow_structured_output and name == "StructuredOutput"):
                 tool_uses += 1
+                if allowed_tool_names is not None and name not in allowed_tool_names:
+                    errors.append(f"line {lineno}: unexpected tool_use {name!r}")
     return "".join(text_parts), tool_uses
 
 
@@ -100,6 +104,7 @@ def parse_stream(
     expected_session: str,
     *,
     expect_structured_output: bool = False,
+    allowed_tool_names: frozenset[str] | None = None,
 ) -> dict:
     """Parse a bounded stream-json transcript produced by one finished CLI run."""
     with Path(path).open("rb") as handle:
@@ -174,6 +179,7 @@ def parse_stream(
                 errors,
                 lineno,
                 allow_structured_output=expect_structured_output,
+                allowed_tool_names=allowed_tool_names,
             )
             if text:
                 assistant_texts.append(text)
@@ -230,7 +236,7 @@ def parse_stream(
         errors.append("missing actual assistant model")
     for model in sorted(bad_models):
         errors.append(f"model mismatch: {model!r} does not match selector {expected_model!r}")
-    if tool_use_count:
+    if tool_use_count and allowed_tool_names is None:
         errors.append(f"tool_use blocks present: {tool_use_count}")
     for sid in sorted(bad_sessions):
         errors.append(f"session_id mismatch: {sid!r} != {expected_session!r}")
