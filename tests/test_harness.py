@@ -252,6 +252,15 @@ class HarnessTests(unittest.TestCase):
                 harness_cli.execute(args)
             self.assertEqual(exc.exception.code, "unsafe_state_dir")
 
+    def test_agents_read_only_rejects_non_directory_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            (state / "harness").write_text("not a directory")
+            args = argparse.Namespace(state_dir=state, harness_command="agents", all=False)
+            with self.assertRaises(ControlError) as exc:
+                harness_cli.execute(args)
+            self.assertEqual(exc.exception.code, "unsafe_state_dir")
+
     def test_agents_read_only_with_existing_state(self):
         with tempfile.TemporaryDirectory() as directory:
             state = Path(directory) / "state"

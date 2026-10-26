@@ -94,8 +94,10 @@ def _root_readonly(args):
     root = args.state_dir / "harness"
     if root.is_symlink():
         raise ControlError("unsafe_state_dir", "Harness state directory may not be a symlink.")
-    if not root.is_dir():
+    if not root.exists():
         return None
+    if not root.is_dir():
+        raise ControlError("unsafe_state_dir", "Harness state directory must be a directory.")
     info = root.stat()
     if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077:
         raise ControlError("unsafe_state_dir", "Harness state directory must be private to its owner.")
