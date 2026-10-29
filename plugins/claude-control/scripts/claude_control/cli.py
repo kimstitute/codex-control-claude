@@ -46,6 +46,12 @@ def parser():
     init.add_argument("--allow-root", action="append", required=True)
     init.add_argument("--max-parallel", type=int, default=2)
     init.add_argument("--max-queued", type=int, default=100)
+    limits = commands.add_parser("limits", help="Inspect or change admission limits after initialization.")
+    limit_commands = limits.add_subparsers(dest="limits_command", required=True)
+    limit_commands.add_parser("show")
+    configure_limits = limit_commands.add_parser("configure")
+    for name in ("max-parallel", "max-queued", "max-unbound-messages", "max-selected-messages"):
+        configure_limits.add_argument("--" + name, type=int)
     doctor = commands.add_parser("doctor")
     doctor.add_argument(
         "--auth", action="store_true", help="Check login, excluding account identifiers."
@@ -245,6 +251,13 @@ def execute(args):
         exec_check(args.state_dir, args.run, args.seq, args.scratch)
         return None
     store = Store(args.state_dir)
+    if args.command == "limits":
+        if args.limits_command == "show":
+            return store.limits_report()
+        updates = {name: value for name in
+                   ("max_parallel", "max_queued", "max_unbound_messages", "max_selected_messages")
+                   if (value := getattr(args, name)) is not None}
+        return store.configure_limits(updates)
     if args.command == "doctor":
         return doctor(store, args.auth, args.platform)
     if args.command == "list":

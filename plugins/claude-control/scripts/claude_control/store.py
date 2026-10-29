@@ -38,12 +38,34 @@ from .schema import (
 ACTIVE = ("pending", "claimed", "launching", "running", "stopping", "unknown")
 TERMINAL = ("completed", "failed", "cancelled", "launch_failed", "interrupted")
 CLAIM_SECONDS = 30
+RUNTIME_LIMITS = {
+    "max_parallel": (2, 1, 32),
+    "max_queued": (100, 1, 10000),
+    "max_unbound_messages": (100, 1, 10000),
+    "max_selected_messages": (64, 1, 512),
+}
 
 
 class ControlError(Exception):
     def __init__(self, code, message):
         super().__init__(message)
         self.code = code
+
+
+def runtime_limits(config):
+    """Validate adjustable admission limits, including defaults for older stores."""
+    result = {}
+    for name, (default, minimum, maximum) in RUNTIME_LIMITS.items():
+        value = config.get(name, default)
+        if type(value) is not int or not minimum <= value <= maximum:
+            raise ControlError("invalid_limit", f"{name} must be an integer from {minimum} to {maximum}.")
+        result[name] = value
+    return result
+
+
+def _same_fixed_config(left, right):
+    return ({key: value for key, value in left.items() if key not in RUNTIME_LIMITS}
+            == {key: value for key, value in right.items() if key not in RUNTIME_LIMITS})
 
 
 def _launcher_path(value):
@@ -261,10 +283,7 @@ class Store:
             raise ControlError(
                 "invalid_roots", "At least one existing project directory is required."
             )
-        if not 1 <= max_parallel <= 32:
-            raise ControlError("invalid_limit", "max-parallel must be between 1 and 32.")
-        if type(max_queued) is not int or not 1 <= max_queued <= 10000:
-            raise ControlError("invalid_limit", "max-queued must be between 1 and 10000.")
+        limits = runtime_limits({"max_parallel": max_parallel, "max_queued": max_queued})
         with file_lock(directory / "init.lock", exclusive=True):
             if (directory / "config.json").exists():
                 raise ControlError(
@@ -282,8 +301,7 @@ class Store:
                 claude_launcher_kind="symlink" if launcher else None,
                 claude_binary_dir=str(binary.parent),
                 allowed_roots=allowed,
-                max_parallel=max_parallel,
-                max_queued=max_queued,
+                **limits,
             )
             if os.name == "posix":
                 config["uid"] = os.getuid()
@@ -319,12 +337,36 @@ class Store:
         if self.config.get("schema") not in tuple(range(3, VERSION + 1)):
             raise ControlError("schema_mismatch", "Unsupported state schema.")
         check_host_and_principal(self.config)
+        runtime_limits(self.config)
         for name in ("config.json", "state.sqlite3", "runs"):
             verify_private_entry(self.path / name)
         self._seed_legacy_launcher()
         self._recover_missing_binary()
         with self.db():
             pass
+
+    def limits_report(self):
+        return {
+            "limits": runtime_limits(self.config),
+            "bounds": {name: {"min": minimum, "max": maximum}
+                       for name, (_, minimum, maximum) in RUNTIME_LIMITS.items()},
+        }
+
+    def configure_limits(self, updates):
+        if not updates or set(updates) - set(RUNTIME_LIMITS):
+            raise ControlError("invalid_limit", "Specify at least one supported runtime limit.")
+        runtime_limits({**self.config, **updates})
+        with file_lock(self.path / "lifecycle.lock", exclusive=True):
+            path = self.path / "config.json"
+            current = json.loads(path.read_text(encoding="utf-8"))
+            if not _same_fixed_config(current, self.config):
+                raise ControlError("schema_mismatch", "State changed; reopen or finish migrate.")
+            check_host_and_principal(current)
+            current.update(updates)
+            runtime_limits(current)
+            write_json(path, current)
+            self.config = current
+        return self.limits_report()
 
     def _unfinished_controller_work(self, db):
         active = db.execute(
@@ -456,8 +498,11 @@ class Store:
         # Schema-3 clients predating this lock must be stopped by the offline operator.
         with file_lock(self.path / "lifecycle.lock", exclusive=False):
             config = json.loads((self.path / "config.json").read_text())
-            if config != self.config or config.get("schema") not in tuple(range(3, VERSION + 1)):
+            if (not _same_fixed_config(config, self.config)
+                    or config.get("schema") not in tuple(range(3, VERSION + 1))):
                 raise ControlError("schema_mismatch", "State changed; reopen or finish migrate.")
+            runtime_limits(config)
+            self.config = config
             db = sqlite3.connect(self.path / "state.sqlite3", timeout=10, isolation_level=None)
             db.row_factory = sqlite3.Row
             db.execute("PRAGMA foreign_keys=ON")

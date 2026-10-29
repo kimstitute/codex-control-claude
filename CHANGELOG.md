@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.29.0 — 2026-10-29
+
+- Add `limits show/configure` to change existing host-local execution, queue and
+  task-message limits without resetting the state store. Running work is not
+  interrupted; new admissions use the updated values.
+- Add `harness limits show/configure` for cross-task concurrency and Claude turn
+  limits, plus per-turn `--max-turns` overrides for `start` and `followup`.
+  Existing harness stores use the new 2-worker and 30-turn defaults when these
+  fields are absent, and can change them without rebinding.
+- Keep finite validation bounds and protocol/sandbox safety limits. Existing
+  workflow, composition, workspace-policy and per-call timeout knobs remain
+  independently configurable.
+
 ## 0.28.0 — 2026-10-26
 
 - Add an opt-in Linux `harness` route using the pinned, signed-in Claude Code

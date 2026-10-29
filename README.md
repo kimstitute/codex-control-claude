@@ -14,7 +14,7 @@
   <a href="README.en.md">English</a> · 한국어 · <a href="docs/harness-v1.ko.md">하네스 안내</a> · <a href="docs/cli.ko.md">CLI 레퍼런스</a> · <a href="docs/architecture.ko.md">아키텍처</a> · <a href="CHANGELOG.md">변경 기록</a>
 </p>
 
-## 현재 버전: 0.28.0
+## 현재 버전: 0.29.0
 
 Codex Control Claude는 **Codex 플러그인과 같은 호스트에서 실행하는 Python 컨트롤러**입니다.
 두 실행 경로의 권한과 목적은 다릅니다.
@@ -28,7 +28,12 @@ Codex Control Claude는 **Codex 플러그인과 같은 호스트에서 실행하
    `composition`, `terminal`, `monitor`)**: 텍스트 위임과 단계별 검토를 제공합니다.
    비대화형 텍스트 작업은 Claude의 직접 파일·shell 도구와 MCP를 끈 상태로 실행합니다.
    파일 작업은 별도의 제한된 `workspace` 정책과 명시적 검사·적용 절차를 따릅니다.
-   기존 schema 15 기록과 명령은 0.28에서도 유지됩니다.
+   기존 schema 15 기록과 명령은 0.29에서도 유지됩니다.
+
+0.29.0에서는 **기존 상태 저장소의 동시 실행·대기열·메시지 한도를 다시 초기화하지
+않고 조정**할 수 있습니다. Linux 하네스에는 작업 간 동시 실행 수와 Claude
+행동 턴 수 설정을 추가했습니다. 현재 값·허용 범위·명령은
+[실행 한도 설정 안내](docs/limits.ko.md)에 모았습니다.
 
 두 경로 모두 **로컬 제어가 로컬 추론을 뜻하지는 않습니다.** 모델 요청은 로그인된
 Claude 서비스에 전달됩니다. 하네스는 개인 Anthropic API 과금을 피하도록 인증 경로를
@@ -57,6 +62,7 @@ Claude 서비스에 전달됩니다. 하네스는 개인 Anthropic API 과금을
 | 랩실 Team Claude Code가 저장소를 직접 탐색·수정하게 하기 | `harness init/doctor/start` | Linux, 고정된 Team 조직·바이너리, 독립 clone, 제한된 도구와 필수 샌드박스 |
 | 자율 수정 결과를 별도로 검사·승인하기 | `harness show/check/approve` | 깨끗한 작업 트리와 정확한 SHA, 격리된 검사 기록, 명시적 승인 |
 | 실행 중인 Claude 작업과 현재 Codex 서브에이전트 보기 | `harness agents` + `$claude-control:claude-worker-status` | 읽기 전용 임무·상태·모델·토큰·경과 시간 스냅샷; 알 수 없는 값은 공란 |
+| 기존 컨트롤러와 하네스의 실행 한도 조정하기 | `limits show/configure`, `harness limits show/configure` | 기존 상태를 보존하며 새 작업의 동시 실행·대기·턴 수 설정 변경 |
 | Claude에게 질문 한 번 보내기 | `start` | 지속 가능한 비정형 대화 세션 |
 | 역할과 출력 형식을 정해 한 번 위임하기 | `delegate` | 역할 지침과 구조화된 보고서 검증 |
 | 수정 요청과 최종 승인을 기록하기 | `task` | 불변 개정, 정확한 결과 해시, 기준별 승인 근거 |
@@ -85,6 +91,9 @@ Claude 서비스에 전달됩니다. 하네스는 개인 Anthropic API 과금을
 `harness`의 상태·인증 고정·clone 계약은 기존 `workspace`와 별개입니다.
 `harness init`은 기존 컨트롤러의 `init`을 대신하지 않으며, 기존 명령만
 사용할 때는 아래 [호스트 초기화](#이-호스트-초기화)를 따릅니다.
+두 경로의 동시 실행 한도도 별도입니다. 기존 상태 저장소가 1로 초기화됐다면
+플러그인 업데이트만으로 값이 바뀌지 않으며 `limits configure --max-parallel 2`
+처럼 명시적으로 변경합니다.
 
 Codex 앱에서 사용할 때는 설치된 `$claude-control` 스킬을 명시하면 됩니다.
 직접 상태를 확인하거나 운영하려면 아래 CLI를 사용하세요.
@@ -420,13 +429,16 @@ claude_control harness show --task TASK_UUID
 `--base`는 실행 시 정확한 Git 커밋으로 해석됩니다. 컨트롤러는 원본과 Git
 메타데이터를 공유하지 않는 `--no-local --no-hardlinks` clone을 만들고 remote를
 제거합니다. Claude Code는 `--restricted` 아래에서 `Read`, `Edit`, `Bash`만 사용하고
-최대 30번의 Claude 턴 동안 탐색·편집·가능한 자체 검증을 진행합니다. Bash는
+기본 최대 30번의 Claude 턴 동안 탐색·편집·가능한 자체 검증을 진행합니다.
+`harness limits configure --max-turns N`으로 이후 호출의 기본값을 바꾸거나,
+`start`·`followup --max-turns N`으로 한 호출만 지정할 수 있습니다. Bash는
 필수 샌드박스에서 실행되며 샌드박스 밖 재시도는 허용되지 않습니다. 성공한
 실행의 변경은 **컨트롤러가 clone 안에 커밋**합니다. 결과가 없거나 검증되지
 않은 턴은 `ready`로 인정하지 않습니다. 이벤트 스트림이 16MiB를 넘거나
 제한 시간이 지나면 실행을 중단하고 원인을 기록합니다.
 
-같은 `--request-id`와 같은 저장소·기준 SHA·모델·명세·제한 시간으로 다시
+같은 `--request-id`와 같은 저장소·기준 SHA·모델·명세·제한 시간·적용된
+`max_turns`로 다시
 호출하면 기존 task를 재사용합니다. 이미 실행을 시작한 task라면 현재 기록을
 반환합니다. 같은 ID로 입력을 바꾸면 `request_conflict`로
 거절합니다. 네트워크나 호출 응답이 불명확할 때 중복 작업을 만드는 일을 막기
@@ -442,6 +454,7 @@ claude_control harness show --task TASK_UUID
 | `evidence.clean`, `evidence.remotes` | 커밋 뒤 깨끗한 작업 트리와 remote 부재 |
 | `evidence_current` | 지금의 clone이 저장된 증거와 여전히 같은지 여부 |
 | `last_turn.actual_models`, `last_turn.errors`, `report` | 관측된 모델, 실행·검증 오류, Claude의 짧은 보고 |
+| `last_turn.max_turns` | 해당 Claude 호출에 고정한 행동 턴 수 |
 
 `status: ready`이고 `evidence_current: true`여도 내용을 직접 읽고 확인해야
 합니다. 예를 들어 반환된 `clone`, `base_sha`, `head_sha`를 사용해
@@ -546,6 +559,24 @@ Codex 대화의 에이전트는 조회하지 않습니다. 현재 하네스는 C
 가리킵니다. 명령 계약과 제한은 [하네스 v1 안내](docs/harness-v1.ko.md), 스킬의
 표시 원칙은 [스킬 원문](plugins/claude-control/skills/claude-worker-status/SKILL.md)에
 있습니다.
+
+### 실행 한도 변경
+
+```bash
+claude_control limits show
+claude_control limits configure --max-parallel 4 --max-queued 250
+claude_control limits configure --max-unbound-messages 300 --max-selected-messages 96
+
+claude_control harness limits show
+claude_control harness limits configure --max-parallel 3 --max-turns 80
+```
+
+첫 두 명령은 기존 텍스트·workspace 컨트롤러의 슬롯과 대기열을, 뒤의 두 명령은
+Linux 하네스의 서로 다른 task 간 동시 실행과 Claude 턴 수를 조정합니다.
+한도 축소는 실행 중인 프로세스를 중단하거나 대기 항목을 지우지 않습니다.
+`unknown` 실행은 새 작업 수용 한도에 포함됩니다. 허용 범위와 기존에
+작업별로 조정할 수 있던 `workflow`·`composition`·`workspace` 예산은
+[실행 한도 설정 안내](docs/limits.ko.md)를 참고하세요.
 
 ## 첫 CLI 실습: 대화 하나 시작하기
 
@@ -1080,6 +1111,7 @@ SQLite 백업과 영속 migration journal을 만들면서 순서대로 이관됩
 ## 문서 안내
 
 - [Linux Claude Code Team 자율 하네스](docs/harness-v1.ko.md)
+- [실행 한도 설정과 안전 경계](docs/limits.ko.md)
 - [워커 현황 스킬의 표시 원칙](plugins/claude-control/skills/claude-worker-status/SKILL.md)
 - [CLI와 보고서 계약](docs/cli.ko.md)
 - [Task 개정, 승인 근거와 migration](docs/tasks.ko.md)
@@ -1107,12 +1139,13 @@ ruff format --check .
 ```
 
 일반 테스트는 가짜 Claude 프로세스를 사용하므로 모델을 호출하지 않습니다.
-실제 Claude 계정을 쓰는 live test는 명시적으로 선택해야 하며,
+실제 Claude 계정을 쓰는 live test는 명시적으로 선택해야 합니다. 하네스 live
+검증은 랩실 Team 조직에 로그인된 상태에서만 실행하며,
 [테스트 문서](docs/testing.ko.md)에 절차가 있습니다.
 
 ## 현재 범위
 
-0.28.0은 Linux, macOS 10.15 이상과 Windows 10/11에서 텍스트 위임, 영속 세션,
+0.29.0은 Linux, macOS 10.15 이상과 Windows 10/11에서 텍스트 위임, 영속 세션,
 검토·승인 가능한 task 개정, 유한 대기열과 workflow, 명시적
 계획·편집·검토 composition, 다중 composition dispatch, 라우팅 출처와 평가,
 검증된 scout 재사용, 역할별 모델·effort 설정, 계정 model catalog와 read-only

@@ -19,11 +19,11 @@ def _require(store):
         raise ControlError("migration_required", "Messages require migrate --offline.")
 
 
-def normalize_ids(ids):
+def normalize_ids(ids, max_selected=MAX_SELECTED):
     if ids is None:
         return []
-    if not isinstance(ids, (list, tuple)) or len(ids) > MAX_SELECTED:
-        raise ControlError("invalid_messages", "Select at most 64 distinct message UUIDs.")
+    if not isinstance(ids, (list, tuple)) or len(ids) > max_selected:
+        raise ControlError("invalid_messages", f"Select at most {max_selected} distinct message UUIDs.")
     for value in ids:
         try:
             if not isinstance(value, str) or str(uuid.UUID(value)) != value:
@@ -202,9 +202,10 @@ def enqueue_in(
         "AND NOT EXISTS(SELECT 1 FROM message_cancellations c WHERE c.message_id=m.id)",
         (task_id,),
     ).fetchone()[0]
-    if count >= MAX_QUEUED:
+    max_queued = store.config.get("max_unbound_messages", MAX_QUEUED)
+    if count >= max_queued:
         raise ControlError(
-            "message_full", "Task has 100 unbound messages; cancel stale instructions first."
+            "message_full", f"Task has {max_queued} unbound messages; cancel stale instructions first."
         )
     backend = None
     if task["session_id"]:

@@ -37,6 +37,22 @@ ownership, version directory, executability and a version probe before an atomic
 repair for new work. Recovery waits for active controller work to finish, and an
 existing conversation rejects a changed recorded binary identity.
 
+## Configure limits in an existing store
+
+```bash
+claude_control limits show
+claude_control limits configure --max-parallel 4 --max-queued 250
+claude_control limits configure --max-unbound-messages 300 --max-selected-messages 96
+claude_control harness limits show
+claude_control harness limits configure --max-parallel 3 --max-turns 80
+```
+
+Top-level `limits` controls the legacy text/workspace controller. `harness
+limits` controls the optional Linux autonomous harness independently. `monitor
+limits` is a different command: it reads provider account usage and quota.
+Existing work is not cancelled by a configuration change. See the
+[runtime limits guide](limits.md) for ranges and other per-task budgets.
+
 ## Live monitor and usage history
 
 ```bash

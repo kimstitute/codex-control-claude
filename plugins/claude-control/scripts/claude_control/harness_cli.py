@@ -29,6 +29,7 @@ from .store import ControlError, alive, boot_id, proc_identity
 CONTRACT = "claude-control.harness.v1"
 MAX_SPEC_BYTES = 64 * 1024
 MAX_EVENTS_BYTES = 16 * 1024 * 1024
+HARNESS_LIMITS = {"max_parallel": (2, 1, 32), "max_turns": (30, 1, 1000)}
 TOOLS = frozenset({"Bash", "Read", "Edit"})
 AUTH_VARIABLES = (
     "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
@@ -53,20 +54,30 @@ def register(commands):
     init = sub.add_parser("init", help="Pin the signed-in Team organization and Claude binary.")
     init.add_argument("--claude-bin", default="claude")
     init.add_argument("--socat-bin", help="Explicit local socat executable when it is not on PATH.")
+    init.add_argument("--max-parallel", type=int, default=2)
+    init.add_argument("--max-turns", type=int, default=30)
     init.add_argument("--rebind", action="store_true",
                       help="Explicitly replace the pinned runtime after reviewing existing tasks.")
     sub.add_parser("doctor")
+    limits = sub.add_parser("limits", help="Inspect or change harness admission and turn limits.")
+    limit_commands = limits.add_subparsers(dest="limits_command", required=True)
+    limit_commands.add_parser("show")
+    configure = limit_commands.add_parser("configure")
+    configure.add_argument("--max-parallel", type=int)
+    configure.add_argument("--max-turns", type=int)
     start = sub.add_parser("start")
     start.add_argument("--repo", type=Path, required=True)
     start.add_argument("--spec-file", type=Path, required=True)
     start.add_argument("--model", required=True)
     start.add_argument("--base", default="HEAD")
     start.add_argument("--timeout", type=int, default=1800)
+    start.add_argument("--max-turns", type=int, help="Override the configured Claude turn limit for this task.")
     start.add_argument("--request-id", required=True)
     followup = sub.add_parser("followup")
     followup.add_argument("--task", required=True)
     followup.add_argument("--spec-file", type=Path, required=True)
     followup.add_argument("--timeout", type=int, default=1800)
+    followup.add_argument("--max-turns", type=int, help="Override the configured Claude turn limit for this turn.")
     followup.add_argument("--acknowledge-unknown", action="store_true")
     followup.add_argument("--restart-session", action="store_true",
                           help="Start a new Claude conversation in the same isolated clone.")
@@ -138,6 +149,41 @@ def _read(path: Path):
         raise ControlError("harness_missing", f"Cannot read {path.name}: {exc}") from None
 
 
+def _limits(config):
+    result = {}
+    for name, (default, minimum, maximum) in HARNESS_LIMITS.items():
+        value = config.get(name, default)
+        if type(value) is not int or not minimum <= value <= maximum:
+            raise ControlError("invalid_limit", f"{name} must be an integer from {minimum} to {maximum}.")
+        result[name] = value
+    return result
+
+
+def _limits_report(config):
+    return {"limits": _limits(config),
+            "bounds": {name: {"min": minimum, "max": maximum}
+                       for name, (_, minimum, maximum) in HARNESS_LIMITS.items()}}
+
+
+def _active_other_tasks(root, task_id):
+    count = 0
+    tasks = root / "tasks"
+    if not tasks.exists():
+        return 0
+    for path in tasks.iterdir():
+        if not path.is_dir() or path.is_symlink() or path.name == task_id:
+            continue
+        record = path / "task.json"
+        if record.is_symlink():
+            raise ControlError("unsafe_state_dir", "Harness task record may not be a symlink.")
+        if not record.is_file():
+            continue
+        data = _read(record)
+        if data.get("status") in ("running", "unknown"):
+            count += 1
+    return count
+
+
 def _settings_arg():
     return json.dumps(SETTINGS, sort_keys=True, separators=(",", ":"))
 
@@ -187,6 +233,7 @@ def _config(root, *, require_auth=True):
     config = _read(root / "config.json")
     if config.get("contract") != CONTRACT:
         raise ControlError("harness_config", "Unsupported harness configuration.")
+    _limits(config)
     binary = config["claude_bin"]
     if list(binary_identity(binary)) != config["binary_identity"]:
         raise ControlError("claude_binary_changed", "Pinned Claude binary changed; run harness init after review.")
@@ -256,14 +303,14 @@ def _mission(spec):
     return next((line.strip()[:160] for line in spec.splitlines() if line.strip()), "")
 
 
-def _argv(binary, model, session_id, resume):
+def _argv(binary, model, session_id, resume, max_turns=30):
     validate_model(model)
     return [
         binary, "--restricted", "--settings", _settings_arg(),
         "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
         "--disallowedTools", "mcp__*", "--disable-slash-commands",
         "--tools", "Bash,Read,Edit", "--permission-mode", "acceptEdits",
-        "--model", model, "--max-turns", "30",
+        "--model", model, "--max-turns", str(max_turns),
         *( ["--resume", session_id] if resume else ["--session-id", session_id] ),
         "--output-format", "stream-json", "--verbose", "-p",
     ]
@@ -297,9 +344,11 @@ def _outside_symlinks(work):
     return escaped
 
 
-def _run(path, data, config, spec, timeout, *, resume):
+def _run(path, data, config, spec, timeout, *, resume, max_turns=None):
     if not 1 <= timeout <= 7200:
         raise ControlError("invalid_timeout", "Timeout must be 1–7200 seconds.")
+    max_turns = _limits(config)["max_turns"] if max_turns is None else max_turns
+    _limits({"max_turns": max_turns})
     if list(binary_identity(config["claude_bin"])) != config["binary_identity"]:
         raise ControlError("claude_binary_changed", "Pinned Claude binary changed before execution.")
     _auth(config["claude_bin"], config["org_sha256"])
@@ -314,13 +363,21 @@ def _run(path, data, config, spec, timeout, *, resume):
         "successful changes after this turn. Finish with a concise report of changes and "
         "checks.\n\nTask specification:\n" + spec
     )
-    data["status"] = "running"
-    data.pop("check", None)
-    data["turns"].append({"number": turn, "started": time.time(), "status": "running",
-                          "spec_sha256": hashlib.sha256(spec.encode()).hexdigest(),
-                          "mission": _mission(spec)})
-    _write(path / "task.json", data)
-    argv = _argv(config["claude_bin"], data["model"], session, resume)
+    root = path.parent.parent
+    with file_lock(root / "admission.lock", exclusive=True):
+        current = _read(root / "config.json")
+        if current.get("contract") != CONTRACT:
+            raise ControlError("harness_config", "Unsupported harness configuration.")
+        capacity = _limits(current)["max_parallel"]
+        if _active_other_tasks(root, data["id"]) >= capacity:
+            raise ControlError("capacity", "Harness concurrency limit reached, including unknown turns.")
+        data["status"] = "running"
+        data.pop("check", None)
+        data["turns"].append({"number": turn, "started": time.time(), "status": "running",
+                              "spec_sha256": hashlib.sha256(spec.encode()).hexdigest(),
+                              "mission": _mission(spec), "max_turns": max_turns})
+        _write(path / "task.json", data)
+    argv = _argv(config["claude_bin"], data["model"], session, resume, max_turns)
     started = time.monotonic()
     reason = None
     with events.open("wb") as out, stderr.open("wb") as err:
@@ -393,7 +450,7 @@ def _summary(data):
     if data["turns"]:
         last = data["turns"][-1]
         result["last_turn"] = {k: last.get(k) for k in
-                               ("number", "status", "reason", "errors", "tool_use_count",
+                               ("number", "status", "reason", "errors", "tool_use_count", "max_turns",
                                 "actual_models", "provider_cost_usd")}
         result["report"] = last.get("response", "")[:2000]
     if data.get("approved_sha"):
@@ -418,6 +475,25 @@ def execute(args):
         root = _root_readonly(args)
         return snapshot(root, include_all=args.all)
     root = _root(args)
+    if operation == "limits":
+        path = root / "config.json"
+        if args.limits_command == "show":
+            config = _read(path)
+            if config.get("contract") != CONTRACT:
+                raise ControlError("harness_config", "Unsupported harness configuration.")
+            return _limits_report(config)
+        updates = {name: value for name in ("max_parallel", "max_turns")
+                   if (value := getattr(args, name)) is not None}
+        if not updates:
+            raise ControlError("invalid_limit", "Specify at least one harness limit.")
+        with file_lock(root / "admission.lock", exclusive=True):
+            config = _read(path)
+            if config.get("contract") != CONTRACT:
+                raise ControlError("harness_config", "Unsupported harness configuration.")
+            config.update(updates)
+            _limits(config)
+            _write(path, config)
+        return _limits_report(config)
     if operation == "init":
         current_path = root / "config.json"
         if current_path.exists() and not args.rebind:
@@ -440,12 +516,15 @@ def execute(args):
             socat = str(Path(socat).resolve())
             if not Path(socat).is_file() or not os.access(socat, os.X_OK):
                 raise ControlError("socat_missing", "Selected socat must be an executable file.")
+        limits = _limits({"max_parallel": getattr(args, "max_parallel", 2),
+                          "max_turns": getattr(args, "max_turns", 30)})
         _write(root / "config.json", {"contract": CONTRACT, "claude_bin": binary,
                                       "binary_identity": list(binary_identity(binary)),
                                       "org_sha256": org, "socat_bin": socat,
-                                      "socat_identity": list(binary_identity(socat)) if socat else None})
+                                      "socat_identity": list(binary_identity(socat)) if socat else None,
+                                      **limits})
         return {"org_pinned": True, "billing": "claude.ai Team subscription",
-                "next": "harness doctor"}
+                "limits": limits, "next": "harness doctor"}
     config = _config(root, require_auth=operation in ("doctor", "start", "followup"))
     if operation == "doctor":
         try:
@@ -455,28 +534,37 @@ def execute(args):
             sandbox = {"ready": False, "reason": str(exc)}
         return {"ready": sandbox["ready"], "billing": "claude.ai Team subscription",
                 "claude_bin": config["claude_bin"], "binary_pinned": True,
-                "sandbox": sandbox, "platform": sys.platform}
+                "sandbox": sandbox, "platform": sys.platform, "limits": _limits(config)}
     if operation == "start":
         _execution_preflight(config)
         if not 1 <= args.timeout <= 7200:
             raise ControlError("invalid_timeout", "Timeout must be 1–7200 seconds.")
         model = validate_model(args.model)
         spec = _spec(args.spec_file)
+        max_turns = getattr(args, "max_turns", None)
+        max_turns = _limits(config)["max_turns"] if max_turns is None else max_turns
+        _limits({"max_turns": max_turns})
         repo = Path(_git("rev-parse", "--show-toplevel", cwd=args.repo)).resolve()
         base = _git("rev-parse", "--verify", f"{args.base}^{{commit}}", cwd=repo)
         if not args.request_id or len(args.request_id) > 128:
             raise ControlError("invalid_request", "Request id must be 1–128 characters.")
         requests = root / "requests.json"
         intent = json.dumps({"repo": str(repo), "base": base, "model": model,
-                             "spec": spec, "timeout": args.timeout}, sort_keys=True)
+                             "spec": spec, "timeout": args.timeout,
+                             "max_turns": max_turns}, sort_keys=True)
         fingerprint = hashlib.sha256(intent.encode()).hexdigest()
+        legacy_intent = json.dumps({"repo": str(repo), "base": base, "model": model,
+                                    "spec": spec, "timeout": args.timeout}, sort_keys=True)
+        legacy_fingerprint = hashlib.sha256(legacy_intent.encode()).hexdigest()
         deduplicated = False
         with file_lock(root / "requests.lock", exclusive=True):
             mapping = _read(requests) if requests.exists() else {}
             if args.request_id in mapping:
                 deduplicated = True
                 record = mapping[args.request_id]
-                if record["fingerprint"] != fingerprint:
+                if record["fingerprint"] != fingerprint and not (
+                    max_turns == 30 and record["fingerprint"] == legacy_fingerprint
+                ):
                     raise ControlError("request_conflict", "Request id already belongs to a different task intent.")
                 path, data = _task(root, record["id"])
                 if data["status"] != "created":
@@ -504,7 +592,8 @@ def execute(args):
             data = _task(root, path.name)[1]
             if data["status"] != "created":
                 return {**_summary(data), "deduplicated": True}
-            return {**_run(path, data, config, spec, args.timeout, resume=False),
+            return {**_run(path, data, config, spec, args.timeout, resume=False,
+                           max_turns=max_turns),
                     "deduplicated": deduplicated}
     path, data = _task(root, args.task)
     if operation == "show":
@@ -552,6 +641,9 @@ def execute(args):
     if operation == "followup":
         _execution_preflight(config)
         spec = _spec(args.spec_file)
+        max_turns = getattr(args, "max_turns", None)
+        max_turns = _limits(config)["max_turns"] if max_turns is None else max_turns
+        _limits({"max_turns": max_turns})
         with file_lock(path / "task.lock", exclusive=True, blocking=False):
             data = _task(root, args.task)[1]
             if data["status"] == "unknown" and not args.acknowledge_unknown:
@@ -564,7 +656,7 @@ def execute(args):
                 data.setdefault("session_history", []).append(data["session_id"])
                 data["session_id"] = str(uuid.uuid4())
             return _run(path, data, config, spec, args.timeout,
-                        resume=not args.restart_session)
+                        resume=not args.restart_session, max_turns=max_turns)
     if operation == "approve":
         with file_lock(path / "task.lock", exclusive=True, blocking=False):
             data = _task(root, args.task)[1]

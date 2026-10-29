@@ -36,6 +36,21 @@ self-update로 그 파일이 사라졌을 때만 launcher의 종류·소유권·
 version probe를 확인해 새 작업의 경로를 원자적으로 복구합니다. 진행 중인 작업이 있으면
 복구하지 않으며, 기존 대화 재개는 기록된 binary identity가 달라지면 거부됩니다.
 
+## 기존 저장소의 실행 한도 변경
+
+```bash
+claude_control limits show
+claude_control limits configure --max-parallel 4 --max-queued 250
+claude_control limits configure --max-unbound-messages 300 --max-selected-messages 96
+claude_control harness limits show
+claude_control harness limits configure --max-parallel 3 --max-turns 80
+```
+
+최상위 `limits`는 기존 텍스트·workspace 컨트롤러에, `harness limits`는 Linux
+자율 하네스에 적용됩니다. `monitor limits`는 **계정 제공자의 사용량·할당량을
+조회하는 별도 명령**입니다. 이미 실행 중인 작업은 설정 변경으로 중단되지
+않습니다. 범위와 기존 작업별 예산은 [실행 한도 안내](limits.ko.md)를 참고하세요.
+
 ## 실시간 모니터와 사용 기록
 
 ```bash

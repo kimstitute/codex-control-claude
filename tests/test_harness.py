@@ -1,6 +1,7 @@
 """Subscription gate and isolated autonomous task contract, without model calls."""
 
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -127,6 +128,12 @@ class HarnessTests(unittest.TestCase):
             init = argparse.Namespace(state_dir=state, harness_command="init", claude_bin=str(fake),
                                       socat_bin=None, rebind=False)
             self.assertTrue(harness_cli.execute(init)["org_pinned"])
+            limits = argparse.Namespace(state_dir=state, harness_command="limits",
+                                        limits_command="configure", max_parallel=1, max_turns=7)
+            self.assertEqual(harness_cli.execute(limits)["limits"],
+                             {"max_parallel": 1, "max_turns": 7})
+            limits.limits_command = "show"
+            self.assertEqual(harness_cli.execute(limits)["limits"]["max_turns"], 7)
             with self.assertRaises(ControlError) as already:
                 harness_cli.execute(init)
             self.assertEqual(already.exception.code, "already_initialized")
@@ -138,6 +145,7 @@ class HarnessTests(unittest.TestCase):
             with patch.object(harness_cli, "_execution_preflight"):
                 result = harness_cli.execute(start)
             self.assertEqual(result["status"], "ready")
+            self.assertEqual(result["last_turn"]["max_turns"], 7)
             self.assertEqual(result["evidence"]["base_sha"], base)
             self.assertEqual(result["last_turn"]["tool_use_count"], 1)
             task = result["id"]
@@ -145,6 +153,16 @@ class HarnessTests(unittest.TestCase):
             self.assertEqual(git(work, "remote"), "")
             self.assertEqual(git(work, "rev-parse", "--git-common-dir"), ".git")
             self.assertEqual(git(repo, "rev-parse", "HEAD"), base)
+            with patch.object(harness_cli, "_execution_preflight"):
+                self.assertTrue(harness_cli.execute(start)["deduplicated"])
+            legacy_intent = json.dumps({"repo": str(repo), "base": base, "model": "sonnet",
+                                        "spec": "Change README.", "timeout": 30}, sort_keys=True)
+            request_path = state / "harness" / "requests.json"
+            request_map = harness_cli._read(request_path)
+            request_map["same-request"]["fingerprint"] = hashlib.sha256(
+                legacy_intent.encode()).hexdigest()
+            harness_cli._write(request_path, request_map)
+            start.max_turns = 30
             with patch.object(harness_cli, "_execution_preflight"):
                 self.assertTrue(harness_cli.execute(start)["deduplicated"])
             spec.write_text("A different task.")
@@ -170,13 +188,64 @@ class HarnessTests(unittest.TestCase):
             self.assertEqual(harness_cli.execute(approve)["status"], "approved")
 
     def test_cli_flags_require_restricted_sandbox_and_no_mcp(self):
-        args = harness_cli._argv("claude", "sonnet", str(uuid.uuid4()), False)
+        args = harness_cli._argv("claude", "sonnet", str(uuid.uuid4()), False, 19)
         self.assertIn("--restricted", args)
         self.assertEqual(args[args.index("--tools") + 1], "Bash,Read,Edit")
         self.assertEqual(args[args.index("--disallowedTools") + 1], "mcp__*")
+        self.assertEqual(args[args.index("--max-turns") + 1], "19")
         settings = json.loads(args[args.index("--settings") + 1])
         self.assertTrue(settings["sandbox"]["failIfUnavailable"])
         self.assertFalse(settings["sandbox"]["allowUnsandboxedCommands"])
+
+    def test_global_admission_counts_other_running_and_unknown_tasks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "harness"
+            root.mkdir(mode=0o700)
+            task_id = str(uuid.uuid4())
+            other_id = str(uuid.uuid4())
+            path = root / "tasks" / task_id
+            other = root / "tasks" / other_id
+            path.mkdir(parents=True)
+            other.mkdir()
+            binary = root / "claude"
+            binary.write_text("#!/bin/sh\nexit 0\n")
+            binary.chmod(0o700)
+            config = {"contract": harness_cli.CONTRACT, "claude_bin": str(binary),
+                      "binary_identity": list(harness_cli.binary_identity(binary)),
+                      "org_sha256": "0" * 64, "max_parallel": 1, "max_turns": 30}
+            harness_cli._write(root / "config.json", config)
+            data = {"id": task_id, "status": "created", "model": "sonnet",
+                    "session_id": str(uuid.uuid4()), "turns": []}
+            for state in ("running", "unknown"):
+                harness_cli._write(other / "task.json", {"status": state})
+                with patch.object(harness_cli, "_auth"):
+                    with self.assertRaises(ControlError) as error:
+                        harness_cli._run(path, data.copy(), config, "Change file", 30,
+                                         resume=False)
+                self.assertEqual(error.exception.code, "capacity")
+                self.assertEqual(data["status"], "created")
+            harness_cli._write(other / "task.json", {"status": "ready"})
+            self.assertEqual(harness_cli._active_other_tasks(root, task_id), 0)
+            (root / "tasks" / str(uuid.uuid4())).mkdir()
+            self.assertEqual(harness_cli._active_other_tasks(root, task_id), 0)
+
+    def test_limit_validation_preserves_previous_configuration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            root = state / "harness"
+            root.mkdir(mode=0o700)
+            config = {"contract": harness_cli.CONTRACT, "max_parallel": 2,
+                      "max_turns": 30}
+            harness_cli._write(root / "config.json", config)
+            args = argparse.Namespace(state_dir=state, harness_command="limits",
+                                      limits_command="configure", max_parallel=0,
+                                      max_turns=None)
+            with self.assertRaises(ControlError) as error:
+                harness_cli.execute(args)
+            self.assertEqual(error.exception.code, "invalid_limit")
+            self.assertEqual(harness_cli._read(root / "config.json"), config)
+            self.assertEqual(harness_cli._limits({}),
+                             {"max_parallel": 2, "max_turns": 30})
 
     def test_custom_socat_binary_is_pinned(self):
         with tempfile.TemporaryDirectory() as directory:

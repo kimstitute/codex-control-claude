@@ -121,6 +121,20 @@ class MessageTests(ControllerTestCase):
         self.assertEqual([item["id"] for item in prompt["messages"]], [first["id"], second["id"]])
         self.assertEqual(Store(self.state).get_run(next_run)["resume"], 1)
 
+    def test_message_backlog_and_selection_limits_are_configurable(self) -> None:
+        store = Store(self.state)
+        store.configure_limits({"max_unbound_messages": 2, "max_selected_messages": 1})
+        task = self.create("configured-message-limits")
+        first = self.enqueue_message(task, "First")
+        second = self.enqueue_message(task, "Second")
+        self.assert_error("message_full", self.enqueue_message, task, "Third")
+        self.assert_error("invalid_messages", messages.normalize_ids,
+                          [first["id"], second["id"]], 1)
+        store.configure_limits({"max_unbound_messages": 3, "max_selected_messages": 2})
+        third = self.enqueue_message(task, "Third")
+        self.assertEqual(len(messages.normalize_ids([first["id"], second["id"]], 2)), 2)
+        self.assertNotEqual(third["id"], second["id"])
+
     def test_selected_messages_are_materialized_in_sequence_order(self) -> None:
         task = self.create("ordered-messages")
         first = self.enqueue_message(task, "First")

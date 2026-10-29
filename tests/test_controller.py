@@ -864,6 +864,21 @@ class SingleCapacityTests(ControllerTestCase):
         self.cli("stop", "--run", active["id"])
         self.assertEqual(self.wait_terminal(active["id"])["status"], "cancelled")
 
+    def test_limit_change_admits_second_run_without_reinitializing(self) -> None:
+        active = self.start("first", {"behavior": "sleep", "sleep_seconds": 5}, "first-active")
+        limits = self.cli("limits", "configure", "--max-parallel", "2", "--max-queued", "7")
+        self.assertEqual(limits["limits"]["max_parallel"], 2)
+        self.assertEqual(limits["limits"]["max_queued"], 7)
+        self.assertEqual(self.cli("limits", "show")["limits"]["max_parallel"], 2)
+        second = self.start("second", {"behavior": "sleep", "sleep_seconds": 5}, "second-active")
+        self.assertIn(second["status"], ACTIVE)
+        rejected = self.cli("limits", "configure", "--max-parallel", "0", expected=2)
+        self.assertEqual(rejected["error"], "invalid_limit")
+        self.assertEqual(self.cli("limits", "show")["limits"]["max_parallel"], 2)
+        for run in (active, second):
+            self.cli("stop", "--run", run["id"])
+            self.assertEqual(self.wait_terminal(run["id"])["status"], "cancelled")
+
 
 if __name__ == "__main__":
     unittest.main()

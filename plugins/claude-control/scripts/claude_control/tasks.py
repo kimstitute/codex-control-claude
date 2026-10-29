@@ -275,7 +275,9 @@ def revise_in(
     )
     from . import messages
 
-    selected_ids = messages.normalize_ids(message_ids)
+    selected_ids = messages.normalize_ids(
+        message_ids, store.config.get("max_selected_messages", messages.MAX_SELECTED)
+    )
     if type(redeliver_messages) is not bool:
         raise ControlError("invalid_messages", "redeliver-messages must be a boolean.")
     if selected_ids or redeliver_messages:

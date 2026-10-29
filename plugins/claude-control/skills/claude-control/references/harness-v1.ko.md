@@ -25,6 +25,11 @@ python3 plugins/claude-control/scripts/claude_control_cli.py harness start \
 
 시스템 `socat`이 없다면 첫 줄에 `--socat-bin /absolute/path/to/socat`을 추가합니다. 플러그인은 시스템 패키지를 자동 설치하지 않습니다.
 
+
+## 실행 한도
+
+`harness limits show`로 현재 동시 작업 수와 Claude의 기본 행동 턴 수를 확인합니다. `harness limits configure --max-parallel 4 --max-turns 60`처럼 기존 작업 상태를 유지하면서 변경할 수 있습니다. 각 `start`와 `followup`에는 `--max-turns`로 해당 턴만 덮어쓸 수 있습니다. 동시 작업의 기본값은 2, 행동 턴의 기본값은 30입니다. 자세한 범위와 고정 안전 제한은 [한도 설정 안내](https://github.com/kimstitute/codex-control-claude/blob/main/docs/limits.ko.md)를 참고하세요.
+
 `start`는 동기 호출입니다. 같은 request ID와 같은 입력으로 다시 호출하면 기존 결과를 돌려주고, 입력이 바뀌면 거부합니다. Claude는 탐색·수정·가능한 자체 검증을 수행합니다. 성공한 턴 뒤에는 **컨트롤러가** 변경을 커밋합니다. Claude에게 Git 설정을 바꾸거나 `git commit`을 승인할 필요가 없습니다.
 
 ```sh

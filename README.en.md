@@ -20,6 +20,13 @@ approval decisions in a durable host-local store. Each role can use a Sonnet,
 Opus, Haiku or Fable family alias or an exact versioned model ID with an optional
 effort level while preserving the exact conversation session.
 
+Version 0.29 adds configurable runtime limits to an existing state store:
+`limits show/configure` changes legacy concurrency, queue and message budgets,
+while `harness limits show/configure` changes independent harness concurrency
+and Claude turn limits. `harness start/followup --max-turns` overrides one call.
+See the [runtime limits guide](docs/limits.md) for defaults, bounds and safety
+limits that remain fixed.
+
 Version 0.28 adds an opt-in Linux `harness` path. It pins the lab-provided
 claude.ai Team organization, lets restricted Claude Code explore and edit an
 independent clone, and freezes controller-owned commits and isolated check
@@ -890,6 +897,8 @@ a single copied SQLite file.
 
 ## Documentation map
 
+- [Configurable runtime limits](docs/limits.md)
+- [Linux Team harness](docs/harness-v1.ko.md)
 - [CLI and report contracts](docs/cli.md)
 - [Task revisions, evidence and migration](docs/tasks.md)
 - [Queues, dependencies and dispatch](docs/queue.md)
@@ -915,19 +924,24 @@ ruff format --check .
 ```
 
 The normal suite uses fake Claude processes and makes no model calls. Live tests
-are opt-in and use your own Claude account; see [docs/testing.md](docs/testing.md).
+are opt-in and consume the explicitly selected signed-in account; the harness
+requires the lab-provided Team organization. See [docs/testing.md](docs/testing.md).
 
 ## Current scope
 
-Version 0.27 supports supplied-text delegation, persistent sessions,
+Version 0.29 supports supplied-text delegation, persistent sessions,
 review-gated task revisions, finite queues/workflows, explicit plan/edit/review
 compositions, multi-composition dispatch, routing provenance and evaluation,
 verified scout reuse, per-role model/effort settings, an account model catalog,
 and a read-only live TUI plus native graph viewer on Linux, macOS 10.15+ and
 Windows 10/11. Linux workspaces use native Bubblewrap; Windows workspaces use
 Bubblewrap inside WSL2. macOS supports sessions, observation and terminals while
-workspace and composition edit/check stages fail closed. Native Claude file/shell
-tools, arbitrary existing-session adoption, conversation forks, a native macOS
+workspace and composition edit/check stages fail closed. The optional Linux
+harness permits restricted Read, Edit and sandboxed Bash in an independent clone
+under the pinned lab Team login. Its concurrency and Claude turn limits, along
+with the legacy controller's admission and message limits, are configurable in
+existing stores. The legacy supplied-text path still disables native Claude
+file/shell tools. Arbitrary existing-session adoption, conversation forks, a native macOS
 sandbox, AppContainer, an MCP adapter, cross-host dispatch and automatic Codex
 wake-up remain outside this release. The macOS Python core has deterministic unit
 coverage plus macOS CI; a real-account call remains an opt-in smoke on the user's
